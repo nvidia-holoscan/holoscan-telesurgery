@@ -1,0 +1,678 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#76b900" />
+        <title>Holoscan Telesurgery</title>
+        <link rel="stylesheet" href="/static/style.css" />
+        <link rel="stylesheet" href="/static/metrics.css" />
+        <script type="module" src="/static/app.js"></script>
+    </head>
+    <body>
+        <header class="app-header">
+            <a
+                class="brand"
+                href="#overview"
+                aria-label="Holoscan Telesurgery home"
+                ><span class="mark" aria-hidden="true">H</span
+                ><span
+                    ><strong>Holoscan <span>Telesurgery</span></strong
+                    ><small id="subtitle"
+                        >Connecting to local service</small
+                    ></span
+                ></a
+            >
+            <div class="header-actions">
+                <span id="role" class="badge role-badge"></span
+                ><span id="connection" class="badge"></span
+                ><span id="control-summary" class="muted"></span
+                ><button id="disconnect" class="secondary small" hidden>
+                    Disconnect
+                </button>
+            </div>
+        </header>
+        <div
+            id="metrics-backdrop"
+            class="metrics-backdrop"
+            aria-hidden="true"
+            hidden
+        ></div>
+        <aside
+            id="metrics-page"
+            class="metrics-sheet"
+            role="dialog"
+            aria-labelledby="metrics-title"
+            hidden
+        >
+            <div class="metrics-sheet-heading">
+                <div>
+                    <p class="eyebrow">METRICS</p>
+                    <h2 id="metrics-title">Metrics</h2>
+                </div>
+                <div class="metrics-heading-actions">
+                    <button
+                        id="popout-metrics"
+                        class="secondary small icon-button"
+                        data-icon="popout"
+                    >
+                        Pop out
+                    </button>
+                    <button
+                        id="close-metrics"
+                        class="secondary small icon-button"
+                        data-icon="close"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+            <div id="stream-metrics"></div>
+        </aside>
+        <div id="notice" role="status" hidden></div>
+        <div class="app-shell">
+            <nav
+                id="patient-nav"
+                class="sidebar"
+                aria-label="Patient navigation"
+                hidden
+            >
+                <p class="eyebrow">ROOM MANAGEMENT</p>
+                <a href="#overview" data-page-link="overview"
+                    ><span>Overview</span></a
+                >
+                <a href="#nodes" data-page-link="nodes"
+                    ><span>Nodes</span
+                    ><span id="nav-node-count" class="nav-count"></span
+                ></a>
+                <a href="#surgeons" data-page-link="surgeons"
+                    ><span>Surgeons</span
+                    ><span id="nav-request-count" class="nav-count"></span
+                ></a>
+                <div class="sidebar-footer">
+                    <span id="sdk" class="badge"></span
+                    ><small>Powered by NVIDIA Holoscan</small>
+                </div>
+            </nav>
+            <main id="content">
+                <section id="overview-page" data-page="overview" hidden>
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow">PATIENT WORKSPACE</p>
+                            <h1>Room overview</h1>
+                            <p>
+                                Your devices, streams, and connected surgeons.
+                            </p>
+                        </div>
+                        <a class="button secondary" href="#nodes"
+                            >Manage nodes</a
+                        >
+                    </div>
+                    <div class="summary" id="summary">
+                        <a href="#nodes"
+                            ><strong id="node-count">0</strong
+                            ><span>Nodes online</span></a
+                        ><a href="#nodes"
+                            ><strong id="camera-count">0</strong
+                            ><span>Cameras streaming</span></a
+                        ><a href="#surgeons"
+                            ><strong id="people-count">0</strong
+                            ><span>Surgeons approved</span></a
+                        ><a href="#nodes"
+                            ><strong id="robot-count">0</strong
+                            ><span>Robots available</span></a
+                        >
+                    </div>
+                    <div class="overview-grid">
+                        <section class="panel">
+                            <div class="section-title">
+                                <h2>Needs attention</h2>
+                            </div>
+                            <div id="attention"></div>
+                        </section>
+                        <section class="panel">
+                            <div class="section-title">
+                                <h2>Room activity</h2>
+                            </div>
+                            <div id="room-activity"></div>
+                        </section>
+                    </div>
+                </section>
+                <section id="nodes-page" data-page="nodes" hidden>
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow">PATIENT WORKSPACE</p>
+                            <h1>Nodes</h1>
+                            <p>
+                                Each node brings its cameras and robot
+                                controllers.
+                            </p>
+                        </div>
+                        <button
+                            id="add-node"
+                            aria-haspopup="dialog"
+                            data-icon="add"
+                        >
+                            Add node
+                        </button>
+                    </div>
+                    <div id="nodes" class="node-directory"></div>
+                </section>
+                <section id="surgeons-page" data-page="surgeons" hidden>
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow">PATIENT WORKSPACE</p>
+                            <h1>Surgeon access</h1>
+                            <p>
+                                Approve requests and manage access to this room.
+                            </p>
+                        </div>
+                        <span
+                            id="request-count"
+                            class="count-badge"
+                            hidden
+                        ></span>
+                    </div>
+                    <div id="surgeons" class="device-grid"></div>
+                </section>
+                <section id="join" class="connection-card" hidden>
+                    <span class="section-kicker">SURGEON ACCESS</span>
+                    <h2>Connect to a patient</h2>
+                    <p>
+                        Request access to the room’s cameras and robot controls.
+                    </p>
+                    <form id="join-form">
+                        <label
+                            >Patient connection address<input
+                                name="address"
+                                value="127.0.0.1:7447"
+                                placeholder="patient-host:7447"
+                                aria-describedby="patient-address-hint"
+                                required
+                            /><small
+                                id="patient-address-hint"
+                                class="field-hint"
+                            >
+                                Use the patient’s connection port (default
+                                7447). On this computer: 127.0.0.1:7447.
+                            </small></label
+                        >
+                        <label
+                            >Your name<input
+                                name="name"
+                                autocomplete="name"
+                                placeholder="Your name"
+                                maxlength="80"
+                                required
+                        /></label>
+                        <label class="check"
+                            ><input name="robot" type="checkbox" /><span
+                                >Request robot access<small
+                                    >The patient decides which permissions to
+                                    grant.</small
+                                ></span
+                            ></label
+                        >
+                        <button type="submit">
+                            Request access <span aria-hidden="true">→</span>
+                        </button>
+                    </form>
+                </section>
+
+                <section id="session" class="session-banner" hidden>
+                    <h2>Waiting for patient approval</h2>
+                    <p id="session-status"></p>
+                </section>
+                <div id="device-workspace" hidden>
+                    <div id="patient-node-header" hidden>
+                        <a class="back-link" href="#nodes">← All nodes</a>
+                        <div class="page-heading">
+                            <div>
+                                <p class="eyebrow">NODE WORKSPACE</p>
+                                <h1 id="node-name"></h1>
+                                <div id="node-identity"></div>
+                            </div>
+                            <div id="node-actions" class="actions">
+                                <button
+                                    id="node-environment"
+                                    class="secondary small"
+                                    aria-haspopup="dialog"
+                                    hidden
+                                >
+                                    Environment
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            id="simulation-progress"
+                            class="session-banner"
+                            hidden
+                        ></div>
+                    </div>
+                    <div id="operating-workspace" class="operating-workspace">
+                        <div id="camera-workspace">
+                            <section id="camera-panel" class="panel" hidden>
+                                <div class="section-title">
+                                    <h2>Cameras</h2>
+                                    <button
+                                        id="all-cameras"
+                                        class="secondary small"
+                                    >
+                                        Stream all
+                                    </button>
+                                </div>
+                                <div id="cameras" class="device-grid"></div>
+                            </section>
+                            <section id="views-panel" class="views-panel">
+                                <div class="workspace-heading">
+                                    <div>
+                                        <p
+                                            class="eyebrow"
+                                            id="workspace-kicker"
+                                        >
+                                            SURGEON WORKSPACE
+                                        </p>
+                                        <h1 id="workspace-title">Live views</h1>
+                                    </div>
+                                    <span
+                                        id="stream-count"
+                                        class="muted"
+                                    ></span>
+                                </div>
+                                <div id="view-toolbar" class="view-toolbar">
+                                    <button
+                                        id="add-feeds"
+                                        aria-haspopup="dialog"
+                                        data-icon="add"
+                                    >
+                                        Add feeds</button
+                                    ><label
+                                        >Layout<select
+                                            id="view-layout"
+                                            aria-label="View layout"
+                                        >
+                                            <option value="auto">
+                                                Auto grid
+                                            </option>
+                                            <option value="two">
+                                                Two columns
+                                            </option>
+                                            <option value="focus">Focus</option>
+                                        </select></label
+                                    ><button
+                                        id="edit-layout"
+                                        class="secondary small"
+                                        aria-pressed="false"
+                                        data-icon="layout"
+                                    >
+                                        Edit layout</button
+                                    ><button
+                                        id="hide-all"
+                                        class="secondary small"
+                                    >
+                                        Hide all</button
+                                    ><span class="toolbar-spacer"></span
+                                    ><button
+                                        id="workspace-fullscreen"
+                                        class="secondary small icon-button"
+                                        data-icon="expand"
+                                    >
+                                        Fullscreen
+                                    </button>
+                                </div>
+                                <div id="videos" class="video-grid"></div>
+                                <div
+                                    id="native-views"
+                                    class="native-views"
+                                ></div>
+                                <div id="empty-video" class="empty">
+                                    <span
+                                        class="empty-symbol"
+                                        aria-hidden="true"
+                                        >▣</span
+                                    >
+                                    <h2 id="empty-title">Choose your views</h2>
+                                    <p id="empty-description">
+                                        Add a live feed to start building your
+                                        workspace.
+                                    </p>
+                                    <button
+                                        id="empty-add-feeds"
+                                        data-icon="add"
+                                    >
+                                        Add feeds
+                                    </button>
+                                </div>
+                            </section>
+                        </div>
+                        <section
+                            id="robots-panel"
+                            class="panel robot-panel"
+                            hidden
+                        >
+                            <div class="section-title">
+                                <h2>Robot control</h2>
+                                <span class="section-kicker"
+                                    >EXCLUSIVE ACCESS</span
+                                >
+                            </div>
+                            <label id="robot-choice"
+                                ><span class="sr-only">Selected robot</span
+                                ><select
+                                    id="robot-selector"
+                                    aria-label="Selected robot"
+                                ></select
+                            ></label>
+                            <div id="robots"></div>
+                        </section>
+                    </div>
+                </div>
+            </main>
+        </div>
+        <dialog
+            id="feed-dialog"
+            aria-labelledby="feed-title"
+            data-dismiss-outside
+        >
+            <div class="dialog-heading">
+                <div>
+                    <h2 id="feed-title">Add live feeds</h2>
+                    <p>Choose the cameras you want in your workspace.</p>
+                </div>
+                <button
+                    id="close-feeds"
+                    class="secondary small icon-button"
+                    data-icon="close"
+                >
+                    Close
+                </button>
+            </div>
+            <div class="feed-toolbar">
+                <label class="search-label"
+                    ><span class="sr-only">Search cameras</span
+                    ><input
+                        id="camera-search"
+                        type="search"
+                        placeholder="Search cameras…"
+                /></label>
+                <div class="feed-actions">
+                    <button id="show-all" class="secondary small">
+                        Show all
+                    </button>
+                </div>
+            </div>
+            <div id="feed-list"></div>
+        </dialog>
+        <dialog
+            id="log-dialog"
+            aria-labelledby="log-title"
+            data-dismiss-outside
+        >
+            <div class="log-heading">
+                <h2 id="log-title">Log</h2>
+                <div class="actions">
+                    <button
+                        id="copy-log"
+                        type="button"
+                        class="secondary small icon-button"
+                        data-icon="copy"
+                        disabled
+                    >
+                        Copy logs
+                    </button>
+                    <button
+                        id="close-log"
+                        type="button"
+                        class="secondary small icon-button"
+                        data-icon="close"
+                        autofocus
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+            <p id="log-status" class="muted" role="status"></p>
+            <pre id="log-output" tabindex="0" aria-label="Log output"></pre>
+        </dialog>
+        <dialog id="stream-dialog" aria-labelledby="stream-title">
+            <form id="stream-form">
+                <p class="eyebrow">CAMERA SETTINGS</p>
+                <h2 id="stream-title">Start stream</h2>
+                <p id="stream-camera"></p>
+                <div class="stream-fields">
+                    <label
+                        >Resolution<select
+                            id="stream-resolution"
+                            aria-label="Resolution"
+                        ></select
+                    ></label>
+                    <label
+                        >Frame rate<select
+                            id="stream-fps"
+                            aria-label="Frame rate"
+                        ></select
+                    ></label>
+                    <label
+                        >Capture format<select
+                            id="stream-format"
+                            aria-label="Capture format"
+                        ></select
+                    ></label>
+                    <label
+                        >Stream codec<select
+                            id="stream-codec"
+                            aria-label="Stream codec"
+                        ></select
+                    ></label>
+                </div>
+                <details id="stream-encoder">
+                    <summary>Encoder settings</summary>
+                    <div class="stream-fields">
+                        <label id="stream-qp-field"
+                            >Quality (QP)<input
+                                id="stream-quality"
+                                type="number"
+                                min="0"
+                                max="51"
+                                value="24"
+                                required
+                        /></label>
+                        <label id="stream-jpeg-field" hidden
+                            >JPEG quality<input
+                                id="stream-jpeg-quality"
+                                type="number"
+                                min="1"
+                                max="100"
+                                value="85"
+                                required
+                        /></label>
+                        <label id="stream-speed-field"
+                            >Encoder speed<select
+                                id="stream-preset"
+                                aria-label="Encoder speed"
+                            >
+                                <option value="P1">Fastest · P1</option>
+                                <option value="P3">Fast · P3</option>
+                                <option value="P5">
+                                    Better compression · P5
+                                </option>
+                            </select></label
+                        >
+                    </div>
+                    <p id="stream-quality-note" class="muted">
+                        Lower QP gives higher quality and uses more bandwidth.
+                        Slower presets use more GPU time.
+                    </p>
+                </details>
+                <p id="stream-viewing" class="muted"></p>
+                <p id="stream-mode-note" class="muted"></p>
+                <p id="stream-summary"></p>
+                <p id="stream-error" class="error-text" role="alert" hidden></p>
+                <div class="actions">
+                    <button type="button" id="cancel-stream" class="secondary">
+                        Cancel
+                    </button>
+                    <button type="submit" id="start-stream">
+                        Start stream
+                    </button>
+                </div>
+            </form>
+        </dialog>
+        <dialog
+            id="remove-node-dialog"
+            aria-labelledby="remove-node-title"
+            data-dismiss-outside
+        >
+            <form id="remove-node-form">
+                <h2 id="remove-node-title">Remove node?</h2>
+                <p>
+                    <strong id="remove-node-name"></strong> will be disconnected
+                    and removed from this patient.
+                </p>
+                <p>
+                    Its streams and robot control will stop. You can add it
+                    again later.
+                </p>
+                <div class="actions">
+                    <button
+                        type="button"
+                        id="cancel-remove-node"
+                        class="secondary"
+                        autofocus
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        id="confirm-remove-node"
+                        class="danger"
+                    >
+                        Remove node
+                    </button>
+                </div>
+            </form>
+        </dialog>
+        <dialog id="node-dialog" aria-labelledby="node-dialog-title">
+            <form id="node-form">
+                <span class="section-kicker">EXPAND YOUR ROOM</span>
+                <h2 id="node-dialog-title">Add a patient node</h2>
+                <p>Bring this machine’s cameras and robots into your room.</p>
+                <label
+                    >Connection<select name="mode" aria-label="Connection">
+                        <option value="service">Connect running service</option>
+                        <option value="ssh">Deploy over SSH</option>
+                    </select></label
+                >
+                <fieldset id="node-service-fields">
+                    <p>
+                        On the other machine, run
+                        <code>./run.sh node</code> after setup. Copy the address
+                        and pairing code printed in its terminal.
+                    </p>
+                    <label
+                        >Node address<input
+                            name="address"
+                            placeholder="192.168.1.20:7448"
+                            required
+                            autocomplete="off"
+                    /></label>
+                    <label
+                        >Pairing code<input
+                            name="code"
+                            type="password"
+                            required
+                            autocomplete="off"
+                            spellcheck="false"
+                    /></label>
+                    <p>
+                        The connection is remembered across restarts. No SSH
+                        access between machines is needed.
+                    </p>
+                </fieldset>
+                <fieldset id="node-ssh-fields" disabled hidden>
+                    <p>
+                        Use your existing SSH access to install and start the
+                        node automatically.
+                    </p>
+                    <label
+                        >SSH host<input
+                            name="target"
+                            placeholder="user@node-host"
+                            required /></label
+                    ><label
+                        >Holoscan SDK<select
+                            name="sdk"
+                            aria-label="Holoscan SDK"
+                        >
+                            <option value="5">Default</option>
+                            <option value="4">SDK 4</option>
+                        </select></label
+                    >
+                </fieldset>
+                <label id="deploy-environment" hidden
+                    >Environment<select
+                        name="environment"
+                        aria-label="Environment"
+                    >
+                        <option value="">Physical devices</option>
+                        <option value="mira">MIRA simulation</option>
+                        <option value="franka">Franka simulation</option>
+                    </select></label
+                >
+                <p id="node-error" class="error-text" role="alert" hidden></p>
+                <div class="actions">
+                    <button type="button" id="cancel-node" class="secondary">
+                        Cancel</button
+                    ><button type="submit" id="connect-node">
+                        Connect node
+                    </button>
+                </div>
+            </form>
+        </dialog>
+        <dialog
+            id="environment-dialog"
+            aria-labelledby="environment-title"
+            data-dismiss-outside
+        >
+            <form id="environment-form">
+                <h2 id="environment-title">Node environment</h2>
+                <p id="environment-node"></p>
+                <label
+                    >Environment<select
+                        name="environment"
+                        aria-label="Environment"
+                    >
+                        <option value="">Physical devices</option>
+                        <option value="mira">MIRA simulation</option>
+                        <option value="franka">Franka simulation</option>
+                    </select></label
+                >
+                <p>
+                    Stop this node’s streams and release robot control before
+                    switching.
+                </p>
+                <p
+                    id="environment-error"
+                    class="error-text"
+                    role="alert"
+                    hidden
+                ></p>
+                <div class="actions">
+                    <button
+                        type="button"
+                        id="cancel-environment"
+                        class="secondary"
+                    >
+                        Cancel
+                    </button>
+                    <button type="submit" id="apply-environment">Apply</button>
+                </div>
+            </form>
+        </dialog>
+    </body>
+</html>

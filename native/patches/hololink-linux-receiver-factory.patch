@@ -1,0 +1,60 @@
+diff --git a/src/hololink/operators/linux_receiver/linux_receiver_op.cpp b/src/hololink/operators/linux_receiver/linux_receiver_op.cpp
+index 74fda7d3..4c8458aa 100644
+--- a/src/hololink/operators/linux_receiver/linux_receiver_op.cpp
++++ b/src/hololink/operators/linux_receiver/linux_receiver_op.cpp
+@@ -87,5 +87,5 @@ void LinuxReceiverOp::start_receiver()
+     frame_memory_ = std::make_shared<hololink::ReceiverMemoryDescriptor>(p.frame_context, buffer_size);
+
+-    receiver_.reset(new LinuxReceiver(
++    receiver_ = make_receiver(
+         frame_memory_->get(),
+         buffer_size,
+@@ -95,5 +95,5 @@ void LinuxReceiverOp::start_receiver()
+         data_socket_.get(),
+         received_address_offset(),
+-        p.queue_size));
++        p.queue_size);
+
+     receiver_->set_frame_ready([this](const LinuxReceiver&) {
+@@ -132,4 +132,16 @@ void LinuxReceiverOp::start_receiver()
+ }
+
++std::shared_ptr<LinuxReceiver> LinuxReceiverOp::make_receiver(
++    CUdeviceptr buffer, size_t buffer_size, size_t page_size, unsigned pages,
++    int socket, uint64_t received_offset, unsigned queue_size)
++{
++    if (this->params().receiver_factory) {
++        return this->params().receiver_factory(buffer, buffer_size, page_size, pages,
++            socket, received_offset, queue_size);
++    }
++    return std::make_shared<LinuxReceiver>(buffer, buffer_size, page_size, pages,
++        socket, received_offset, queue_size);
++}
++
+ void LinuxReceiverOp::run()
+ {
+diff --git a/src/hololink/operators/linux_receiver/linux_receiver_op.hpp b/src/hololink/operators/linux_receiver/linux_receiver_op.hpp
+index 51579ece..8b216450 100644
+--- a/src/hololink/operators/linux_receiver/linux_receiver_op.hpp
++++ b/src/hololink/operators/linux_receiver/linux_receiver_op.hpp
+@@ -21,4 +21,5 @@
+ #define SRC_HOLOLINK_OPERATORS_LINUX_RECEIVER_LINUX_RECEIVER_OP
+
++#include <functional>
+ #include <memory>
+ #include <optional>
+@@ -58,2 +59,5 @@ struct LinuxReceiverParams {
++    // Preserve the operator's CRTP identity while specializing board packet layouts.
++    std::function<std::shared_ptr<LinuxReceiver>(
++        CUdeviceptr, size_t, size_t, unsigned, int, uint64_t, unsigned)> receiver_factory {};
+ };
+
+@@ -88,4 +92,8 @@ public:
+
+ private:
++    std::shared_ptr<LinuxReceiver> make_receiver(
++        CUdeviceptr buffer, size_t buffer_size, size_t page_size, unsigned pages,
++        int socket, uint64_t received_offset, unsigned queue_size);
++
+     // Optional CPU affinity override; set via set_receiver_affinity().
+     std::optional<std::vector<int>> affinity_override_;

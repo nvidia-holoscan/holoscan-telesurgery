@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Software checks
+on: [push, pull_request]
+
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.21'
+          python-version: '3.12'
+      - run: uv sync --locked --all-packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: uv run --no-sync pre-commit run --all-files
+      - run: uv run --no-sync playwright install --with-deps chromium
+      - run: uv run --no-sync pytest -q -m 'not sdk and not gpu'

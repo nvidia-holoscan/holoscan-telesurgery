@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+minimum_pre_commit_version: '4.0.0'
+default_language_version:
+  python: python3
+exclude: '^(runs|build|dist)/'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.patch$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: detect-private-key
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: a56c0b927e6465d37cae3e97d35d4d18ab2b96cd  # v0.16.9
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: a6564f5d57444e123433a5c9af733e3975c77229  # v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: 916ad0aaa108c64d294101002066f530ea170b10  # v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+  - repo: local
+    hooks:
+      - id: check-license
+        name: Check SPDX license headers
+        entry: python3 scripts/check_license.py
+        language: system
+        files: '\.(py|sh|cpp|hpp|h|c|cu|cuh|js|css|html|toml|yaml|yml|jsonc)$|(^|/)(CMakeLists\.txt|Dockerfile|\.clang-format|\.editorconfig|\.gitignore|\.dockerignore)$'
+      - id: clang-format
+        name: clang-format
+        entry: clang-format -i
+        language: python
+        additional_dependencies: ['clang-format==20.1.8']
+        types_or: [c++, cuda]
+      - id: cmakelint
+        name: cmakelint
+        entry: cmakelint --linelength=100
+        language: python
+        additional_dependencies: ['cmakelint==1.4.3']
+        files: '(^|/)CMakeLists\.txt$|\.cmake$'

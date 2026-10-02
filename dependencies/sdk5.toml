@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Change these sources when compatible public repositories or packages are available.
+# provider: git (build source), packages (install pip/apt lists), installed (reuse).
+[holoscan]
+provider = "git"
+git = "ssh://git@gitlab-master.nvidia.com:12051/holoscan/holoscan-sdk.git"
+rev = "1ecc161b6726340d9543eed8bc30e49543ed218f"
+version = "5.0.0.dev20260928"
+patches = ["native/patches/holoscan-volk-headers.patch"]
+
+[hololink]
+provider = "git"
+git = "ssh://git@gitlab-master.nvidia.com:12051/holoscan/hololink.git"
+rev = "be6510635e7f877593e9ea45622f12522cb8cf4c"
+patches = ["native/patches/hololink-optional-crc.patch", "native/patches/hololink-linux-receiver-factory.patch"]

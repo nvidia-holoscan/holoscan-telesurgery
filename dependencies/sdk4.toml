@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# provider: git (build source), packages (install pip/apt lists), installed (reuse).
+[holoscan]
+provider = "packages"
+pip = ["holoscan-cu13==4.6.0"]
+apt = ["holoscan-cuda-13=4.6.0.0-1"]
+prefix = "/opt/nvidia/holoscan"
+
+[hololink]
+provider = "git"
+git = "https://github.com/nvidia-holoscan/holoscan-sensor-bridge.git"
+rev = "4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc"
+patches = ["native/patches/hololink-sdk4-optional-crc.patch"]

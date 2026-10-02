@@ -1,0 +1,42 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 90d6563..b7c1e1c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -16,6 +16,7 @@
+ cmake_minimum_required(VERSION 3.24)
+
+ # Options
++option(HOLOLINK_BUILD_CRC "Build nvCOMP CRC operators" ON)
+ option(HOLOLINK_BUILD_PYTHON "Build Hololink Python Bindings" ON)
+ option(HOLOLINK_BUILD_TESTS "Build Hololink Tests" ON)
+ option(HOLOLINK_BUILD_TOOLS "Build Hololink Tools" ON)
+diff --git a/python/hololink/operators/CMakeLists.txt b/python/hololink/operators/CMakeLists.txt
+index 510ce5a..2180e9b 100644
+--- a/python/hololink/operators/CMakeLists.txt
++++ b/python/hololink/operators/CMakeLists.txt
+@@ -29,7 +29,9 @@ if(HOLOLINK_BUILD_ARGUS_ISP)
+   add_subdirectory(argus_isp)
+ endif()
+ add_subdirectory(audio_packetizer)
+-add_subdirectory(compute_crc)
++if(HOLOLINK_BUILD_CRC)
++  add_subdirectory(compute_crc)
++endif()
+ add_subdirectory(csi_to_bayer)
+ if(HOLOLINK_BUILD_FUSA)
+   add_subdirectory(fusa_coe_capture)
+diff --git a/src/hololink/operators/CMakeLists.txt b/src/hololink/operators/CMakeLists.txt
+index a50ddb6..1b72cb4 100644
+--- a/src/hololink/operators/CMakeLists.txt
++++ b/src/hololink/operators/CMakeLists.txt
+@@ -50,7 +50,9 @@ if(HOLOLINK_BUILD_ARGUS_ISP)
+   add_subdirectory(argus_isp)
+ endif()
+ add_subdirectory(audio_packetizer)
+-add_subdirectory(compute_crc)
++if(HOLOLINK_BUILD_CRC)
++  add_subdirectory(compute_crc)
++endif()
+ add_subdirectory(csi_to_bayer)
+ if(HOLOLINK_BUILD_FUSA)
+   add_subdirectory(fusa_coe_capture)

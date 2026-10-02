@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telesurgery-app"
+version = "0.3.0"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = ["telesurgery-core", "telesurgery-runtime", "telesurgery-sim", "aiohttp>=3.12,<4", "aiortc>=1.14,<2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telesurgery"]
+
+[project.scripts]
+telesurgery = "telesurgery.application.cli:main"
