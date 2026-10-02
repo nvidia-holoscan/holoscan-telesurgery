@@ -11,6 +11,8 @@
 
 Each is a uv workspace member. The application imports a single runtime interface; only `runtime/sdk4` and `runtime/sdk5` depend on different Holoscan APIs. Native HSB support is built from `native/` for SDK 5; SDK 4 uses Hololink's module adapters.
 
+Native SDK 5 uses FuSa CoE capture on Thor's onboard MGBE interface and integrated GPU when built with Jetson SIPL development libraries. Other configurations use the Linux UDP receiver. The selected receiver is logged when an IMX274 stream starts. Both feed the same GPU processing and streaming pipeline.
+
 Remote devices use the same `NodeService` in two deployment modes. SSH deployment installs an outbound node connected to the patient endpoint. A standalone `./run.sh node` listens on TCP 7448; the patient connects using a pairing code containing the node certificate fingerprint and a random credential. The fingerprint is verified before sending the credential. Only one patient connection can own a standalone node at a time. Both sides persist credentials with owner-only permissions, and the patient reconnects automatically. Disconnects stop cameras and release controller leases; reconnecting does not restart streams. The patient UI exposes connection logs for standalone nodes and deployment logs for SSH nodes.
 
 SSH deployment can start physical discovery or a MIRA/Franka room. The node's **Environment** action changes that choice after streams stop and robot control is released; the choice persists across restarts. Standalone nodes take `--sim mira|franka` at startup and reject remote environment changes. Restarting without `--sim` returns to physical discovery. Both modes report simulator progress and logs to the patient dashboard.

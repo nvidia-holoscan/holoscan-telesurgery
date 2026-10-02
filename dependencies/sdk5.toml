@@ -14,4 +14,8 @@ patches = ["native/patches/holoscan-volk-headers.patch"]
 provider = "git"
 git = "ssh://git@gitlab-master.nvidia.com:12051/holoscan/hololink.git"
 rev = "be6510635e7f877593e9ea45622f12522cb8cf4c"
-patches = ["native/patches/hololink-optional-crc.patch", "native/patches/hololink-linux-receiver-factory.patch"]
+patches = [
+    "native/patches/hololink-optional-crc.patch",
+    "native/patches/hololink-linux-receiver-factory.patch",
+    "native/patches/hololink-fusa-nvsci-compat.patch",
+]

@@ -24,12 +24,22 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/run_session.hpp>
 #include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/logger/logger.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
 
 #include "legacy_hsb.hpp"
+
+#ifdef TELESURGERY_HAS_FUSA
+#include <netinet/ether.h>
+
+#include <fstream>
+#include <hololink/operators/fusa_coe_capture/fusa_coe_capture.hpp>
+#include <hololink/operators/packed_format_converter/packed_format_converter.hpp>
+#include <iterator>
+#endif
 
 namespace telesurgery {
 namespace {
@@ -40,6 +50,34 @@ void check_cuda(CUresult result) {
     throw std::runtime_error(message ? message : "CUDA driver failure");
   }
 }
+
+bool supports_fusa(const hololink::Metadata& metadata, int gpu) {
+#ifdef TELESURGERY_HAS_FUSA
+  const auto interface = metadata.get<std::string>("interface").value_or("");
+  std::ifstream compatible("/sys/class/net/" + interface + "/device/of_node/compatible");
+  const std::string device{std::istreambuf_iterator<char>(compatible), {}};
+  if (gpu != 0 || device.find("nvidia,tegra264-mgbe") == std::string::npos) return false;
+  CUdevice cuda_device;
+  int integrated = 0;
+  check_cuda(cuDeviceGet(&cuda_device, gpu));
+  check_cuda(cuDeviceGetAttribute(&integrated, CU_DEVICE_ATTRIBUTE_INTEGRATED, cuda_device));
+  return integrated != 0;
+#else
+  return false;
+#endif
+}
+
+#ifdef TELESURGERY_HAS_FUSA
+// The pinned converter exposes configure() but no graph-constructor geometry argument.
+class FusaUnpack : public hololink::operators::PackedFormatConverterOp {
+ public:
+  FusaUnpack(int gpu, hololink::csi::BayerFormat pattern, hololink::csi::CsiGeometry geometry)
+      : PackedFormatConverterOp(nullptr, gpu, pattern) {
+    configure(0, geometry.bytes_per_line, geometry.pixel_width, geometry.pixel_height,
+              geometry.pixel_format, geometry.trailing_bytes);
+  }
+};
+#endif
 
 struct Mailbox {
   std::mutex mutex;
@@ -143,9 +181,11 @@ Capture::Capture(const std::string& address, int mode, int expander, int gpu, bo
   check_cuda(cuDeviceGet(&p.device, gpu));
   check_cuda(cuDevicePrimaryCtxRetain(&p.context, p.device));
   check_cuda(cuCtxSetCurrent(p.context));
-  const auto metadata = hololink::Enumerator::find_channel(address);
+  auto metadata = hololink::Enumerator::find_channel(address);
+  hololink::DataChannel::use_sensor(metadata, expander);
+  const bool fusa = supports_fusa(metadata, gpu);
   const bool legacy = is_legacy_hsb_lite(metadata);
-  if (legacy && metadata.get<int64_t>("hsb_ip_version").value() < 0x2602) {
+  if (!fusa && legacy && metadata.get<int64_t>("hsb_ip_version").value() < 0x2602) {
     p.channel = std::make_shared<hololink::module::module_core::HsbIp2510DataChannel>(metadata);
   } else {
     p.channel = std::make_shared<hololink::DataChannel>(metadata);
@@ -153,15 +193,7 @@ Capture::Capture(const std::string& address, int mode, int expander, int gpu, bo
   p.camera = std::make_shared<hololink::sensors::NativeImx274Sensor>(*p.channel, expander);
   const auto camera_mode = static_cast<hololink::sensors::imx274_mode::Mode>(mode);
   p.camera->set_mode(camera_mode);
-  hololink::operators::CsiToBayerParams csi_params{.cuda_device_ordinal = gpu};
-  p.camera->configure_converter(csi_params.geometry);
-  csi_params.bayer_format = p.camera->get_bayer_format();
-  const auto& geometry = csi_params.geometry;
-  const auto frame_size = geometry.start_byte + geometry.bytes_per_line * geometry.pixel_height +
-                          geometry.trailing_bytes;
   holoscan::Graph graph{"imx274_capture"};
-  auto unpack = graph.op<hololink::operators::CsiToBayerOp>("unpack");
-  unpack.set_params(csi_params);
   auto process = graph.op<hololink::operators::ImageProcessorOp>("process");
   process.set_params({.pixel_format = int(p.camera->get_pixel_format()),
                       .bayer_format = int(p.camera->get_bayer_format()),
@@ -170,21 +202,66 @@ Capture::Capture(const std::string& address, int mode, int expander, int gpu, bo
   auto sink = graph.op<CaptureSink>("sink", p.mailbox);
   const auto start = [camera = p.camera] { camera->start(); };
   const auto stop = [camera = p.camera] { camera->stop(); };
-  auto rx = graph.op<hololink::operators::LinuxReceiverOp>("rx", p.channel, start, stop);
-  rx.set_params({.frame_context = p.context,
-                 .frame_size = frame_size,
-                 .receiver_factory = legacy ? make_legacy_linux_receiver : nullptr});
-  graph.add_flow(rx->tensor, unpack->input_tensor, {.queue_depth = 2U});
-  graph.add_flow(rx->metadata, unpack->input_metadata, {.queue_depth = 2U});
-  graph.add_flow(unpack->output_tensor, process->input_tensor, {.queue_depth = 2U});
-  graph.add_flow(unpack->output_metadata, process->input_metadata, {.queue_depth = 2U});
+  if (fusa) {
+#ifdef TELESURGERY_HAS_FUSA
+    const auto interface = metadata.get<std::string>("interface").value();
+    const auto mac_text = metadata.get<std::string>("mac_id").value_or("");
+    ether_addr mac{};
+    if (!ether_aton_r(mac_text.c_str(), &mac)) {
+      throw std::runtime_error("HSB enumeration did not provide a valid sensor MAC address");
+    }
+    hololink::csi::CsiGeometry geometry;
+    p.camera->configure_converter(
+        hololink::operators::FusaCoeCaptureOp::make_geometry_adapter(geometry, true));
+    auto rx = graph.op<hololink::operators::FusaCoeCaptureOp>("rx");
+    rx.set_params({.hololink_channel = p.channel.get(),
+                   .device_start = start,
+                   .device_stop = stop,
+                   .interface = interface,
+                   .mac_addr = {mac.ether_addr_octet, mac.ether_addr_octet + 6},
+                   .timeout = 100,
+                   .pixel_format = p.camera->get_pixel_format(),
+                   .bayer_format = p.camera->get_bayer_format(),
+                   .packetizer_enabled = true,
+                   .geometry = geometry});
+    auto unpack = graph.op<FusaUnpack>("unpack", gpu, p.camera->get_bayer_format(), geometry);
+    graph.add_flow(rx->tensor, unpack->input_tensor, {.queue_depth = 2U});
+    graph.add_flow(rx->metadata, unpack->input_metadata, {.queue_depth = 2U});
+    graph.add_flow(unpack->output_tensor, process->input_tensor, {.queue_depth = 2U});
+    graph.add_flow(unpack->output_metadata, process->input_metadata, {.queue_depth = 2U});
+    HOLOSCAN_LOG_INFO("IMX274 capture: FuSa CoE on {}", interface);
+#endif
+  } else {
+    hololink::operators::CsiToBayerParams csi_params{.cuda_device_ordinal = gpu};
+    p.camera->configure_converter(csi_params.geometry);
+    csi_params.bayer_format = p.camera->get_bayer_format();
+    const auto& geometry = csi_params.geometry;
+    const auto frame_size = geometry.start_byte + geometry.bytes_per_line * geometry.pixel_height +
+                            geometry.trailing_bytes;
+    auto rx = graph.op<hololink::operators::LinuxReceiverOp>("rx", p.channel, start, stop);
+    rx.set_params({.frame_context = p.context,
+                   .frame_size = frame_size,
+                   .receiver_factory = legacy ? make_legacy_linux_receiver : nullptr});
+    auto unpack = graph.op<hololink::operators::CsiToBayerOp>("unpack");
+    unpack.set_params(csi_params);
+    graph.add_flow(rx->tensor, unpack->input_tensor, {.queue_depth = 2U});
+    graph.add_flow(rx->metadata, unpack->input_metadata, {.queue_depth = 2U});
+    graph.add_flow(unpack->output_tensor, process->input_tensor, {.queue_depth = 2U});
+    graph.add_flow(unpack->output_metadata, process->input_metadata, {.queue_depth = 2U});
+    HOLOSCAN_LOG_INFO("IMX274 capture: Linux UDP receiver");
+  }
   graph.add_flow(process->output_tensor, sink->tensor, {.queue_depth = 2U});
   graph.add_flow(process->output_metadata, sink->metadata, {.queue_depth = 2U});
   graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
   holoscan::CompileOptions options;
-  for (const auto* name : {"rx", "unpack", "process"}) {
+  for (const auto* name : {"rx", "process"}) {
     options.deployment.bind_tensor_output_device(
         {.operator_path = name, .output_port = "tensor", .device = holoscan::DeviceId{gpu}});
+  }
+  // FuSa's packed converter owns its CUDA allocation; CSI unpack uses a runtime pool.
+  if (!fusa) {
+    options.deployment.bind_tensor_output_device(
+        {.operator_path = "unpack", .output_port = "tensor", .device = holoscan::DeviceId{gpu}});
   }
   auto plan = holoscan::compile(graph, std::move(options));
   if (!plan.ok()) {

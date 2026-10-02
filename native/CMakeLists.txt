@@ -15,6 +15,13 @@ execute_process(COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
                 COMMAND_ERROR_IS_FATAL ANY)
 find_package(nanobind 3.0.1 EXACT CONFIG REQUIRED)
 if(HOLOLINK_SOURCE_DIR)
+  find_path(FUSA_INCLUDE_DIR NvFusaCaptureExternal.hpp
+      PATHS /usr/src/jetson_sipl_api/sipl/fusa/include
+            /usr/src/jetson_sipl_api/sipl/capture/include)
+  find_library(FUSA_LIBRARY nvfusacapext PATHS /usr/lib/aarch64-linux-gnu/nvidia)
+  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND FUSA_INCLUDE_DIR AND FUSA_LIBRARY)
+    set(HOLOLINK_BUILD_FUSA ON CACHE BOOL "Build Thor FuSa CoE capture" FORCE)
+  endif()
   set(HOLOLINK_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
   set(HOLOLINK_BUILD_MODULE OFF CACHE BOOL "" FORCE)
   set(HOLOLINK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -42,4 +49,9 @@ endif()
 target_link_libraries(_hsb PRIVATE holoscan::core holoscan::sensor_io
     hololink::operators::linux_receiver_op hololink::operators::csi_to_bayer
     hololink::operators::image_processor hololink::sensors::native_imx274_camera_sensor)
+if(TARGET hololink::operators::fusa_coe_capture)
+  target_compile_definitions(_hsb PRIVATE TELESURGERY_HAS_FUSA)
+  target_link_libraries(_hsb PRIVATE hololink::operators::fusa_coe_capture
+      hololink::operators::packed_format_converter)
+endif()
 install(TARGETS _hsb LIBRARY DESTINATION telesurgery_runtime/sdk5)
