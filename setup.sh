@@ -10,6 +10,7 @@ fail() { echo "$*" >&2; exit 1; }
 
 sdk=5
 docker=false
+franka=false
 workspace="$root/workspace"
 while (($#)); do
     case "$1" in
@@ -17,13 +18,17 @@ while (($#)); do
             [[ $# -ge 2 && ( "$2" == 4 || "$2" == 5 ) ]] || fail "--sdk requires 4 or 5"
             sdk="$2"; shift 2 ;;
         --docker) docker=true; shift ;;
+        --profile)
+            [[ $# -ge 2 && "$2" == franka ]] || fail "--profile requires franka"
+            franka=true; shift 2 ;;
         --workspace)
             [[ $# -ge 2 && -n "$2" ]] || fail "--workspace requires a directory"
             workspace="$(realpath -m -- "$2")"; shift 2 ;;
         --workspace=*) workspace="$(realpath -m -- "${1#*=}")"; shift ;;
         -h|--help)
-            echo "Usage: ./setup.sh [--sdk 4] [--docker] [--workspace PATH]"
+            echo "Usage: ./setup.sh [--sdk 4] [--docker] [--workspace PATH] [--profile franka]"
             echo "Install native dependencies, or prepare only the host clock for Docker."
+            echo "Add --profile franka to build the physical Franka adapter for native execution."
             exit 0 ;;
         *) fail "Unknown option: $1. Use --help for usage." ;;
     esac
@@ -94,6 +99,9 @@ step "Preparing Python environment…" uv run --no-project --python 3.12 \
 export PATH="$environment/bin:$PATH"
 step "Building SDK and camera support…" "$python_bin" "scripts/builders/sdk$sdk.py"
 step "Preparing GPU codecs…" "$python_bin" scripts/builders/codecs.py
+if $franka; then
+    step "Building Franka support…" env UV_PROJECT_ENVIRONMENT="$environment" scripts/build_franka.sh
+fi
 step "Preparing simulation dependencies…" uv pip install --python "$python_bin" \
     --target "$workspace/sim-deps" 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
 step "Checking GPU codecs…" "$python_bin" -m telesurgery doctor

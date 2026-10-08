@@ -135,3 +135,102 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk):
     assert len(copies) == (1 if role == "node-sim" else 0)
     if copies:
         assert copies[0][-4:] == [image, "-r", "/opt/sim-deps/.", "/workspace/sim-deps/"]
+
+
+@pytest.mark.parametrize("assignment", [False, True])
+def test_vendor_file_outside_checkout_is_mounted_readonly(docker_launcher, tmp_path, assignment):
+    root, records = docker_launcher
+    executable = tmp_path / "vendor api"
+    executable.touch()
+    relative = Path("..") / executable.name
+    option = [f"--mira-api={relative}"] if assignment else ["--mira-api", str(relative)]
+    subprocess.run(
+        [
+            "bash",
+            str(root / "run.sh"),
+            "--docker",
+            "node",
+            "--patient",
+            "patient",
+            "--profile",
+            "mira",
+            *option,
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    commands = [json.loads(line) for line in records.read_text().splitlines()]
+    command = commands[-1]
+    assert f"{executable}:{executable}:ro" in command
+    assert command[-1] == (f"--mira-api={executable}" if assignment else str(executable))
+    assert "SYS_NICE" in command
+    assert not any("--entrypoint" in c for c in commands)
+
+
+def test_interactive_vendor_prompt_mounts_host_binary(docker_launcher, tmp_path):
+    root, records = docker_launcher
+    binary = tmp_path / "Mira API"
+    binary.touch()
+    launcher = [
+        "bash",
+        str(root / "run.sh"),
+        "--docker",
+        "node",
+        "--patient",
+        "patient",
+        "--profile=mira",
+    ]
+    result = subprocess.run(
+        ["script", "-qec", shlex.join(launcher), "/dev/null"],
+        input=str(binary) + "\n",
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert "Path to the vendor MIRA API" in result.stdout
+    command = json.loads(records.read_text().splitlines()[-1])
+    assert f"{binary}:{binary}:ro" in command
+    assert command[-2:] == ["--mira-api", str(binary)]
+    # The default executable skips the prompt, even before a profile is saved.
+    (root / "workspace/mira-api").touch()
+    result = subprocess.run(
+        ["script", "-qec", shlex.join(launcher), "/dev/null"],
+        input="",
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert "Path to the vendor MIRA API" not in result.stdout
+
+
+def test_explicit_default_binary_remains_writable(docker_launcher, tmp_path):
+    root, records = docker_launcher
+    workspace = tmp_path / "custom workspace"
+    workspace.mkdir()
+    binary = workspace / "mira-api"
+    binary.touch(mode=0o600)
+    subprocess.run(
+        [
+            "bash",
+            str(root / "run.sh"),
+            "--docker",
+            "node",
+            "--patient",
+            "patient",
+            "--profile",
+            "mira",
+            "--mira-api",
+            str(binary),
+            "--workspace",
+            str(workspace),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    command = json.loads(records.read_text().splitlines()[-1])
+    assert f"{workspace}:{workspace}" in command
+    assert f"{binary}:{binary}:ro" not in command

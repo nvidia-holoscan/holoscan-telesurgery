@@ -25,7 +25,8 @@ jobs:
         with:
           version: "0.12.21"
           python-version: "3.12"
-      - run: uv sync --locked --all-packages
+      - run: uv sync --locked --all-packages --extra franka
+      - run: uv run --no-sync python -c 'import pinocchio'
       - run: uv run --no-sync playwright install --with-deps chromium
       - run: uv run --no-sync pytest -q -m 'not sdk and not gpu'
   security:

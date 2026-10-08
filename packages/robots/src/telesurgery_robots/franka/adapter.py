@@ -23,7 +23,8 @@ class Franka:
             from telesurgery_robots.franka._franka import Controller
         except ImportError as exc:
             raise RuntimeError(
-                f"Franka dependency unavailable ({exc}); run scripts/build_franka.sh on this node"
+                f"Franka dependency unavailable ({exc}); "
+                "run ./setup.sh --profile franka on this node"
             ) from exc
         self.factory, self.address, self.reader = Controller, spec["address"], None
 

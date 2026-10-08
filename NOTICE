@@ -62,15 +62,15 @@ Python package 0.19.4, and C++ sources at commit a8db97a4e9c55e5160a3855f739fa3b
 Licensed under MIT (https://github.com/pantor/ruckig/blob/a8db97a4e9c55e5160a3855f739fa3b270df8e4c/LICENSE)
 
 pin (https://github.com/stack-of-tasks/pinocchio)
-Version 3.9.0.
-Licensed under BSD-3-Clause (https://github.com/stack-of-tasks/pinocchio/blob/v3.9.0/LICENSE)
+Version 4.1.0.
+Licensed under BSD-3-Clause (https://github.com/stack-of-tasks/pinocchio/blob/v4.1.0/LICENSE)
 
 cmeel-urdfdom (https://github.com/cmake-wheel/cmeel-urdfdom)
-Version 4.0.1. Upstream: https://github.com/ros/urdfdom
+Version 6.0.0. Upstream: https://github.com/ros/urdfdom
 Licensed under BSD-3-Clause.
 
 cmeel-tinyxml2 (https://github.com/cmake-wheel/cmeel-tinyxml2)
-Version 10.0.0. Upstream: https://github.com/leethomason/tinyxml2
+Version 11.0.0. Upstream: https://github.com/leethomason/tinyxml2
 Licensed under Zlib.
 
 Qhull, redistributed inside the Pinocchio dependency closure as cmeel-qhull 8.0.2.1 (https://github.com/qhull/qhull)
@@ -82,7 +82,7 @@ Licensed under MPL-2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.M
 
 nanobind (https://github.com/wjakob/nanobind)
 Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
-Version 3.0.1. Build tool; uninstalled from the runtime image after the Franka binding is built.
+Versions 3.0.1 (SDK builds) and 3.1.0 (Franka). Build tool; uninstalled from the runtime image after the Franka binding is built.
 Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICENSE)
 
 CMake (https://gitlab.kitware.com/cmake/cmake)

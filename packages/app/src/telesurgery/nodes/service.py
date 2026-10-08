@@ -114,7 +114,7 @@ class NodeService:
 
     async def set_connection(self, key, enabled):
         spec = self.local.robots[key]
-        if self.local.simulation:
+        if self.local.simulation or spec.get("profile"):
             path = self.local.directory / "connections.yaml"
             data = load(path)
             data[key] = enabled

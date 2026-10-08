@@ -31,6 +31,10 @@ from pathlib import Path
 command = [Path(sys.argv[0]).name, *sys.argv[1:]]
 if command[0] == "sudo":
     command = command[1:]
+if command[0] == "build_franka.sh":
+    assert os.environ["UV_PROJECT_ENVIRONMENT"] == str(
+        Path.cwd() / (".venv-sdk" + os.environ["TELESURGERY_SDK"])
+    )
 with Path(os.environ["SETUP_CALLS"]).open("a") as log:
     log.write(json.dumps({"command": command, "sdk": os.environ["TELESURGERY_SDK"]}) + "\\n")
 if os.environ.get("SETUP_FAIL") in command:
@@ -47,6 +51,9 @@ elif command[0] == "nvcc":
         path = tools / name
         path.write_text(stub)
         path.chmod(0o755)
+    scripts = root / "scripts"
+    scripts.mkdir()
+    (scripts / "build_franka.sh").symlink_to(tools / "python3")
     for sdk in (4, 5):
         environment = root / f".venv-sdk{sdk}/bin"
         environment.mkdir(parents=True)
@@ -110,11 +117,22 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     assert "Setup complete." in result.stdout
 
 
-def test_docker_setup_only_prepares_clock(setup):
+@pytest.mark.parametrize("options", [(), ("--profile", "franka")])
+def test_docker_setup_only_prepares_clock(setup, options):
     _, invoke = setup
-    result, records = invoke("--docker")
+    result, records = invoke("--docker", *options)
     assert result.returncode == 0, result.stderr
     assert records == [{"command": ["python3", "scripts/clock_sync.py"], "sdk": "5"}]
+
+
+@pytest.mark.parametrize("sdk", ["4", "5"])
+def test_franka_profile_builds_in_selected_native_environment(setup, monkeypatch, sdk):
+    _, invoke = setup
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/another/environment")
+    result, records = invoke("--sdk", sdk, "--profile", "franka")
+    assert result.returncode == 0, result.stderr
+    assert sum(item["command"] == ["build_franka.sh"] for item in records) == 1
+    assert "Building Franka support" in result.stdout
 
 
 def test_setup_places_simulation_packages_in_custom_workspace(setup, tmp_path):
@@ -137,18 +155,22 @@ def test_old_compiler_reports_docker_before_downloading_sdk(setup, monkeypatch):
     assert not any("scripts/builders/dependencies.py" in item["command"] for item in records)
 
 
-def test_failed_build_stops_setup_and_reports_log(setup, monkeypatch):
+@pytest.mark.parametrize("component", ["scripts/builders/sdk5.py", "build_franka.sh"])
+def test_failed_build_stops_setup_and_reports_log(setup, monkeypatch, component):
     root, invoke = setup
-    monkeypatch.setenv("SETUP_FAIL", "scripts/builders/sdk5.py")
-    result, records = invoke()
+    monkeypatch.setenv("SETUP_FAIL", component)
+    result, records = invoke("--profile", "franka")
     assert result.returncode != 0
     assert "Setup fixture failure" in result.stderr
     assert str(root / "build/setup.log") in result.stderr
-    assert records[-1]["command"] == ["python", "scripts/builders/sdk5.py"]
+    assert component in records[-1]["command"]
     assert "Setup complete" not in result.stdout
 
 
-@pytest.mark.parametrize("options", [("--sdk",), ("--sdk", "6"), ("--time-server", "host")])
+@pytest.mark.parametrize(
+    "options",
+    [("--sdk",), ("--sdk", "6"), ("--time-server", "host"), ("--profile",), ("--profile", "bad")],
+)
 def test_invalid_options_do_not_change_host(setup, options):
     _, invoke = setup
     result, records = invoke(*options)

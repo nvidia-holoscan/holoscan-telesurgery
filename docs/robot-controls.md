@@ -36,9 +36,15 @@ Input sends the latest command at up to 20 Hz without queuing moves. Franka's lo
 
 ## Franka
 
-Docker includes the Franka adapter. For native execution, run `./scripts/build_franka.sh` after setup, then start the node from a new login session. It installs libfranka 0.15.2 (protocol 9) and realtime scheduling permissions. Use a [firmware-compatible libfranka](https://frankarobotics.github.io/docs/compatibility.html), a realtime kernel and FCI enabled in Desk.
+Docker includes the Franka adapter. For native execution, run `./setup.sh --profile franka`, then start the node from a new login session. It installs libfranka 0.15.2 (protocol 9) and realtime scheduling permissions. Use a [firmware-compatible libfranka](https://frankarobotics.github.io/docs/compatibility.html), a realtime kernel and FCI enabled in Desk.
 
-Add to the node's `devices.yaml`:
+Create and save a physical device profile on first use:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile franka
+```
+
+The default address is `172.16.0.3`. Supply `--franka-address ROBOT_IP` to save a different address; later starts reuse it without the option. Alternatively, add to the node's `devices.yaml`:
 
 ```yaml
 robots:
@@ -62,7 +68,34 @@ Hold **Z / X** to close/open the left gripper, or **N / M** for the right. The m
 
 Use the **Virtual Incision MIRA API** supplied by the vendor. Request the current Linux API and POD firmware documentation from [Virtual Incision](https://virtualincision.com/customer-support/); `mira-project.org` is unrelated middleware.
 
-The patient can start the supplied controller in Docker, then connect to its loopback WebSocket API. Vendor startup can enable motor power, so the dashboard requires operator confirmation. Add to `devices.yaml`:
+Start with the MIRA profile:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira
+```
+
+Copy the vendor API executable to `workspace/mira-api` first (`PATH/mira-api` with `--workspace PATH`). If it is missing on first use in a terminal, the launcher asks for its path. For scripts or unattended startup, supply the path directly:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira \
+  --mira-api /path/to/MiraAPI-linux-arm64-2025-07-18
+```
+
+The profile checks the executable's ELF architecture, saves it as `workspace/mira-api`, marks it executable, and records its SHA-256 checksum. The vendor binary stays local in the workspace; it is not fetched, uploaded or embedded in the Docker image. Docker mounts an explicitly supplied file read-only during installation.
+
+Later starts reuse the saved executable without prompting:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira
+```
+
+The node's POD-facing address defaults to `192.168.0.1`. Set `--mira-pod-interface IP` to save a different address; this does not configure the host's network interface or change the POD address embedded in the vendor API. The supplied July build targets `192.168.0.10:10000` (UDP). Configure the node interface as `192.168.0.1/24` for that package.
+
+The robot initially appears disconnected. The patient can start the supplied controller in Docker, then connect to its loopback WebSocket API. Vendor startup can enable motor power, so the dashboard requires operator confirmation. The July 2025 API generates its lookup table on first controller startup; allow extra time and about 503 MB of disk space. Generated data and logs persist in the node's controller directory.
+
+Native node execution supports the same profile options, but the managed MIRA controller still requires Docker and the matching `holoscan-telesurgery:0.1.0-sdk5` (or `sdk4`) image locally.
+
+For an existing manual setup, the equivalent `devices.yaml` entry is:
 
 ```yaml
 robots:
@@ -75,12 +108,19 @@ robots:
     controller:
       executable: /absolute/path/MiraAPI-linux-arm64-2025-07-18
       pod_interface: 192.168.0.1
-      image: holoscan-telesurgery:sdk5
 ```
 
-Install the executable and image first. Omit `controller` when managing the API externally. The supplied ARM64 build uses POD address `192.168.0.10:10000` (UDP), with node interface `192.168.0.1/24`; confirm these against your vendor package.
+Install the executable and image first when configuring manually. Omit `controller` when managing the API externally. Remove the manual robot entry before selecting a profile with the same robot ID.
 
 Physical jogs use reported joint positions; tool roll uses the vendor's absolute roll command. Release requests the measured position as a hold target. The vendor API does not provide a verified stop acknowledgement or hardware feedback timestamp; Home, tool operation and network-loss behavior still need supervised hardware validation. Keep a physical stop available. Set `motion_enabled: false` for feedback only.
+
+## Saved device profiles
+
+Profiles live in `workspace/profiles/mira.yaml` and `workspace/profiles/franka.yaml`, under `--workspace` when supplied. Edit the profile's `robot` settings to change its ID, display name, endpoint or motion permission, then restart the node. Pass a new `--mira-api` or replace `workspace/mira-api` to install a replacement API on the next node start.
+
+Combine physical devices with `--profile franka --profile mira`. The selection is remembered per node name, so later starts of that node can omit `--profile`. An explicit selection replaces the saved selection; `--profile none` clears it. Physical profiles cannot be combined with `--sim`.
+
+Connections remain node-local. Restarting with unchanged settings preserves the patient's connection choice; adding or changing a profile resets that robot to disconnected. Selecting a profile never starts the vendor controller. Cameras and manually configured robots continue to use `devices.yaml`; duplicate robot IDs are rejected.
 
 ## Adding a robot
 

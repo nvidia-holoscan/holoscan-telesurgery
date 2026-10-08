@@ -6,7 +6,7 @@ project(telesurgery_franka LANGUAGES CXX)
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module Development.SABIModule)
 execute_process(COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     OUTPUT_VARIABLE nanobind_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-find_package(nanobind 3.0.1 EXACT CONFIG REQUIRED)
+find_package(nanobind 3.0.1 CONFIG REQUIRED)
 find_package(Franka REQUIRED CONFIG)
 find_package(Threads REQUIRED)
 include(FetchContent)

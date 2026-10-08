@@ -7,10 +7,10 @@ export function deviceStatus(item, robot = false) {
     if (item.status === "disconnected") return ["Disconnected", "neutral"];
     if (item.error || item.controller?.status === "error")
         return [robot ? "Control error" : "Error", "error"];
-    if (item.stale || item.status === "stale")
-        return ["Feedback stale", "warning"];
     if (item.status === "starting")
         return [robot ? "Connecting" : "Starting", "warning"];
+    if (item.stale || item.status === "stale")
+        return ["Feedback stale", "warning"];
     if (item.status === "online" || item.status === "live")
         return [robot ? "Connected" : "Live", "online"];
     if (item.controller?.status === "running")

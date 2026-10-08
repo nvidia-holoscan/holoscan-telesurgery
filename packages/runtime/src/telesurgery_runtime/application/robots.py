@@ -30,6 +30,7 @@ class Controller:
         self.active = False
         self.closing = self.closed = False
         self.feedback = {"status": "starting", "state": None, "error": ""}
+        self.connection_deadline = time.monotonic() + 60
         self.observed = self.next_poll = 0.0
         self.sample = 0
 
@@ -44,7 +45,18 @@ class Controller:
             if not isinstance(state, dict):
                 raise RuntimeError("Controller returned invalid state")
         except Exception as exc:
-            self.feedback = {**self.feedback, "status": "offline", "error": str(exc)}
+            # A freshly started vendor API may still be loading its lookup table.
+            # Only initial transport failures get this bounded startup window.
+            starting = (
+                not self.sample
+                and isinstance(exc, (ConnectionError, TimeoutError))
+                and time.monotonic() < self.connection_deadline
+            )
+            self.feedback = {
+                **self.feedback,
+                "status": "starting" if starting else "offline",
+                "error": "" if starting else str(exc),
+            }
             self.next_poll = time.monotonic() + 2
             raise
         self.observed = time.monotonic()
