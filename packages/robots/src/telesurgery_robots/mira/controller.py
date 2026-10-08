@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 from datetime import UTC, datetime
+from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -20,7 +21,9 @@ class MiraController:
     def __init__(self, spec, directory):
         self.spec, self.directory = spec, Path(directory).resolve()
         self.image = spec["controller"].get(
-            "image", f"holoscan-telesurgery:sdk{os.environ.get('TELESURGERY_SDK', '5')}"
+            "image",
+            f"holoscan-telesurgery:{version('telesurgery-robots')}"
+            f"-sdk{os.environ.get('TELESURGERY_SDK', '5')}",
         )
         self.identity = hashlib.sha256(f"{self.directory}:{spec['id']}".encode()).hexdigest()[:12]
         self.name = f"telesurgery-mira-{self.identity}"

@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--dependencies", type=Path, default=ROOT / "dependencies/sdk4.toml")
     parser.add_argument("--prefix", type=Path, default=ROOT / "build/hololink-install")
     parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument("--component", choices=("all", "sdk", "camera"), default="all")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
@@ -47,11 +48,14 @@ def main():
     sdk, hsb = specs["holoscan"], specs["hololink"]
     if sdk["provider"] == "git":
         parser.error("SDK 4 uses the released Python and development packages")
-    sdk_prefix = development(sdk)
-    install({**sdk, "apt": []})
+    if args.component != "camera":
+        install({**sdk, "apt": []})
+    if args.component == "sdk":
+        return
     install(hsb)
     prefix = args.prefix.resolve()
     if hsb["provider"] == "git":
+        sdk_prefix = development(sdk)
         source = checkout("hololink", hsb, ROOT / "build")
         build = ROOT / "build" / source.name
         run(

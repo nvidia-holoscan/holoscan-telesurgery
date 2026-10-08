@@ -7,7 +7,6 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 sdk="$1"
 shift
-image="holoscan-telesurgery:sdk$sdk"
 workspace="$root/workspace"
 app_args=("$@")
 mounts=()
@@ -38,6 +37,9 @@ for ((i=0; i<${#app_args[@]}; i++)); do
         --sim) simulation=true ;;
     esac
 done
+version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$root/pyproject.toml")"
+[[ -n "$version" ]] || { echo "Missing project version in pyproject.toml" >&2; exit 1; }
+image="holoscan-telesurgery:$version-sdk$sdk"
 if ! command -v docker >/dev/null; then
     echo "Install Docker and NVIDIA Container Toolkit first." >&2
     exit 1
@@ -88,7 +90,7 @@ if docker info --format '{{range $name, $_ := .Runtimes}}{{println $name}}{{end}
 fi
 # run.sh tees stdout to a log, so preserve its original terminal detection.
 if [[ -t 0 && ( -t 1 || "${TELESURGERY_TTY:-}" == 1 ) ]]; then args+=(-it); fi
-if [[ "${1:-}" == node ]]; then
+if [[ "${1:-}" == node ]] && ! $simulation; then
     args+=(--cap-add SYS_NICE --ulimit rtprio=99)
     for device in /dev/video*; do
         if [[ -e "$device" ]]; then
@@ -109,7 +111,7 @@ if [[ -n "${DISPLAY:-}" && -d /tmp/.X11-unix ]]; then
                --volume "$display_auth:/tmp/telesurgery-xauthority:ro")
     fi
 fi
-# Simulation nodes use the host Docker service.
+# Simulation and managed physical MIRA controllers use the host Docker service.
 if [[ "${1:-}" == node ]]; then
     args+=(--volume /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)")
 fi

@@ -56,7 +56,7 @@ def install(spec):
         run("uv", "pip", "install", "--python", sys.executable, *spec["pip"])
 
 
-def prepare(sdk, environment):
+def prepare(sdk, environment, *, dependencies_only=False):
     """The same uv workspace and build tools for native and container installations."""
     python = environment / "bin/python"
     if not python.exists():
@@ -64,7 +64,9 @@ def prepare(sdk, environment):
     run(
         "uv",
         "sync",
+        "--locked",
         "--all-packages",
+        *(["--no-install-workspace"] if dependencies_only else []),
         "--inexact",
         "--no-dev",
         "--extra",
@@ -132,5 +134,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--sdk", choices=("4", "5"), default="5")
     parser.add_argument("--environment", type=Path, required=True)
+    parser.add_argument("--dependencies-only", action="store_true", help="defer workspace installs")
     args = parser.parse_args()
-    prepare(args.sdk, args.environment.resolve())
+    prepare(args.sdk, args.environment.resolve(), dependencies_only=args.dependencies_only)

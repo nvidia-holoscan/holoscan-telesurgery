@@ -565,7 +565,7 @@ wheels = [
 
 [[package]]
 name = "holoscan-telesurgery"
-version = "0.3.0"
+version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "telesurgery-app" },
@@ -1116,7 +1116,7 @@ wheels = [
 
 [[package]]
 name = "telesurgery-app"
-version = "0.3.0"
+version = "0.1.0"
 source = { editable = "packages/app" }
 dependencies = [
     { name = "aiohttp" },
@@ -1139,7 +1139,7 @@ requires-dist = [
 
 [[package]]
 name = "telesurgery-core"
-version = "0.3.0"
+version = "0.1.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "cryptography" },
@@ -1164,7 +1164,7 @@ requires-dist = [
 
 [[package]]
 name = "telesurgery-robots"
-version = "0.3.0"
+version = "0.1.0"
 source = { editable = "packages/robots" }
 dependencies = [
     { name = "ruckig" },
@@ -1196,7 +1196,7 @@ provides-extras = ["franka"]
 
 [[package]]
 name = "telesurgery-runtime"
-version = "0.3.0"
+version = "0.1.0"
 source = { editable = "packages/runtime" }
 dependencies = [
     { name = "telesurgery-core" },
@@ -1211,7 +1211,7 @@ requires-dist = [
 
 [[package]]
 name = "telesurgery-sim"
-version = "0.3.0"
+version = "0.1.0"
 source = { editable = "packages/sim" }
 dependencies = [
     { name = "telesurgery-core" },

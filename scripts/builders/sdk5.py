@@ -25,6 +25,15 @@ from pathlib import Path
 from dependencies import ROOT, checkout, install, load, run
 
 
+def require_sdk():
+    """Validate the build environment before the application packages are installed."""
+    import holoscan as hs
+
+    if not hs.__version__.startswith("5."):
+        raise RuntimeError(f"SDK 5 is required, but this Python has Holoscan {hs.__version__}")
+    return hs
+
+
 def rust(work):
     cargo = work / "toolchain/cargo"
     os.environ.update(CARGO_HOME=str(cargo), RUSTUP_HOME=str(work / "toolchain/rustup"))
@@ -125,7 +134,7 @@ install(CODE "${code}" COMPONENT holoscan-wheel-core)
 def build_holoscan(sdk_spec, work, args):
     source = checkout("holoscan", sdk_spec, work)
     build = work / source.name
-    prefix = build / "install"
+    prefix = args.prefix.resolve() if args.prefix else build / "install"
     rust(work)
     slang(source, work)
     version = sdk_spec["version"]
@@ -188,8 +197,6 @@ def build_camera(specs, work, prefixes, args):
         else None
     )
     # Importing also verifies that a package/apt provider supplies the required Python API.
-    from telesurgery_runtime.backends.sdk import require_sdk
-
     hs = require_sdk()
     # Package providers must supply the visualization companion alongside Core.
     from holoscan_visualization.operators import HolovizOp  # noqa: F401
@@ -225,6 +232,7 @@ def build_camera(specs, work, prefixes, args):
         extension,
     )
     target = ROOT / "packages/runtime/src/telesurgery_runtime/backends/sdk5/_hsb.abi3.so"
+    target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(".so.tmp")
     shutil.copy2(extension, temporary)
     temporary.replace(target)
@@ -237,6 +245,10 @@ def main():
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--dependencies", type=Path, default=ROOT / "dependencies/sdk5.toml")
     parser.add_argument("--cuda-architectures", default=os.environ.get("CUDAARCHS", "native"))
+    parser.add_argument("--component", choices=("all", "sdk", "camera"), default="all")
+    parser.add_argument(
+        "--prefix", type=Path, help="persist SDK development files outside the cache"
+    )
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
@@ -250,8 +262,10 @@ def main():
     # Upstream validates patches in temporary non-Git copies below this checkout.
     os.environ["GIT_CEILING_DIRECTORIES"] = str(ROOT)
     specs = load(args.dependencies)
-    for spec in specs.values():
-        install(spec)
+    if args.component != "camera":
+        install(specs["holoscan"])
+    if args.component != "sdk":
+        install(specs["hololink"])
     sdk_spec = specs["holoscan"]
     prefixes = [
         str(Path(spec["prefix"]).expanduser().resolve())
@@ -262,8 +276,20 @@ def main():
     if os.environ.get("CMAKE_PREFIX_PATH"):
         prefixes.extend(os.environ["CMAKE_PREFIX_PATH"].split(os.pathsep))
     if sdk_spec["provider"] == "git":
-        prefixes.insert(0, str(build_holoscan(sdk_spec, work, args)))
-    build_camera(specs, work, prefixes, args)
+        if args.component == "camera":
+            if args.prefix:
+                prefixes.insert(0, str(args.prefix.resolve()))
+            else:
+                source = checkout("holoscan", sdk_spec, work)
+                prefixes.insert(0, str(work / source.name / "install"))
+        else:
+            prefixes.insert(0, str(build_holoscan(sdk_spec, work, args)))
+    if args.component != "camera":
+        from holoscan_visualization.operators import HolovizOp  # noqa: F401
+
+        print(f"SDK {require_sdk().__version__} installed for {sys.executable}")
+    if args.component != "sdk":
+        build_camera(specs, work, prefixes, args)
 
 
 if __name__ == "__main__":
