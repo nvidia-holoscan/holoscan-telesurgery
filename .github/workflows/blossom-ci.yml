@@ -45,6 +45,8 @@ jobs:
   Vulnerability-scan:
     name: Vulnerability scan
     needs: Authorization
+    # GitHub can rerun downstream jobs without rerunning Authorization.
+    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -69,6 +71,7 @@ jobs:
   Job-trigger:
     name: Start CI job
     needs: Vulnerability-scan
+    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
     runs-on: blossom
     timeout-minutes: 10
     permissions:
