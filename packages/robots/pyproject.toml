@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 franka = [
     "pin==3.9.0",
-    "cmeel-urdfdom==4.0.1",
+    "cmeel-urdfdom==6.0.0",
     "cmeel-tinyxml2==10.0.0",
     "nanobind==3.1.0",
     "cmake>=4,<5",
