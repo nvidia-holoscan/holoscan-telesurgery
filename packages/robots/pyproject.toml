@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -20,7 +20,7 @@ franka = [
     "pin==3.9.0",
     "cmeel-urdfdom==4.0.1",
     "cmeel-tinyxml2==10.0.0",
-    "nanobind==3.0.1",
+    "nanobind==3.1.0",
     "cmake>=4,<5",
     "ninja",
 ]
