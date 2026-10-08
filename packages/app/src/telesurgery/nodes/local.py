@@ -18,26 +18,45 @@ from pathlib import Path
 import zmq
 import zmq.asyncio
 from telesurgery.nodes.camera_settings import modes, select
+from telesurgery_core.adapters.realsense import enrich
 from telesurgery_core.adapters.v4l2 import camera_devices
 from telesurgery_core.configuration import load, save
 from telesurgery_core.diagnostics.logs import read_log
-from telesurgery_core.transport.protocol import MAX_RAW_VIDEO, decode_video
+from telesurgery_core.transport.protocol import MAX_FRAME, decode_video
 from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_core.video.capabilities import supported_codecs
 from telesurgery_core.video.config import Config
-from telesurgery_runtime.sdk import backend
+from telesurgery_runtime.backends.sdk import backend
+
+
+async def _terminate(process):
+    if process.returncode is None:
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), 8)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
 
 
 def discover(directory, simulation=None):
     if simulation:
         manifest = Path(simulation)
-        if manifest.exists():
+        try:
             data = json.loads(manifest.read_text())
-            return data["cameras"], data["robots"]
-        return [], []
+        except FileNotFoundError:
+            return [], []
+        else:
+            connections = load(directory / "connections.yaml")
+            robots = [
+                {**item, "connection_enabled": connections.get(item["id"], True)}
+                for item in data["robots"]
+            ]
+            return data["cameras"], robots
     cameras = camera_devices()
+    enrich(cameras)
     # Listen to the vendor's board announcements; do not infer a camera from a ping.
-    for address in backend("camera").discover():
+    for address, receivers in backend("camera").discover().items():
         cameras.append(
             {
                 "id": f"hsb-{address}-0",
@@ -46,6 +65,7 @@ def discover(directory, simulation=None):
                 "kind": "HSB",
                 "hololink": address,
                 "expander": 0,
+                "receivers": receivers,
                 "width": 1920,
                 "height": 1080,
                 "fps": 60,
@@ -147,6 +167,12 @@ class LocalNode:
         save(path, names)
         self.cameras[key]["name"] = name.strip()
 
+    async def camera_log(self, key):
+        if key not in self.cameras:
+            raise ValueError("Camera is unavailable")
+        slug = hashlib.sha256(key.encode()).hexdigest()[:12]
+        return await asyncio.to_thread(read_log, self.directory / f"camera-{slug}.log")
+
     async def start_camera(self, key, settings=None):
         async with self.mutation:
             if key not in self.cameras:
@@ -171,6 +197,7 @@ class LocalNode:
                                     "id": key,
                                     "width": selected["width"],
                                     "height": selected["height"],
+                                    "depth": selected["depth"],
                                 },
                             }
                         )
@@ -201,7 +228,7 @@ class LocalNode:
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     "-m",
-                    "telesurgery_runtime.video",
+                    "telesurgery_runtime.application.video",
                     str(settings),
                     stdout=log,
                     stderr=log,
@@ -212,7 +239,7 @@ class LocalNode:
             stream.setsockopt(zmq.SUBSCRIBE, b"")
             stream.setsockopt(zmq.RCVHWM, 2)
             stream.setsockopt(zmq.LINGER, 0)
-            stream.setsockopt(zmq.MAXMSGSIZE, MAX_RAW_VIDEO)
+            stream.setsockopt(zmq.MAXMSGSIZE, MAX_FRAME)
             stream.connect(endpoint)
             worker = {"process": process, "socket": stream, "updated": 0.0, "frames": 0}
             self.workers[key] = worker
@@ -232,27 +259,48 @@ class LocalNode:
             worker["error"] = str(exc)
 
     async def _watch(self, key, worker, slug):
-        status = await worker["process"].wait()
+        process = worker["process"]
+        while process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), 30)
+            except TimeoutError:
+                if time.monotonic() - worker["updated"] >= 30:
+                    worker["error"] = (
+                        "No camera frames received for 30 seconds. Check the camera logs."
+                    )
+                    await _terminate(process)
         if self.workers.get(key) is worker:
             log = self.directory / f"camera-{slug}.log"
-            worker["error"] = f"Camera exited ({status}): " + read_log(log)["text"][-1200:]
+            worker.setdefault(
+                "error", f"Camera exited ({process.returncode}): " + read_log(log)["text"][-1200:]
+            )
 
     async def _stop(self, key):
         worker = self.workers.pop(key, None)
         if worker is None:
             return
-        process = worker["process"]
-        if process.returncode is None:
-            process.terminate()
+
+        async def cleanup():
             try:
-                await asyncio.wait_for(process.wait(), 8)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        for task in (worker["reader"], worker["watcher"]):
-            task.cancel()
-        await asyncio.gather(worker["reader"], worker["watcher"], return_exceptions=True)
-        worker["socket"].close()
+                await _terminate(worker["process"])
+            finally:
+                for task in (worker["reader"], worker["watcher"]):
+                    task.cancel()
+                try:
+                    await asyncio.gather(
+                        worker["reader"], worker["watcher"], return_exceptions=True
+                    )
+                finally:
+                    worker["socket"].close()
+
+        # Cancellation during node disconnect must not orphan a camera/socket;
+        # an open socket would also block context termination indefinitely.
+        task = asyncio.create_task(cleanup())
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     async def stop_camera(self, key):
         async with self.mutation:

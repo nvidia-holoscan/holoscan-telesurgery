@@ -2,21 +2,44 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: Software checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "24 8 * * 1"
+
+permissions:
+  contents: read
 
 jobs:
   portable:
+    name: Unit tests (CPU)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          version: '0.12.21'
-          python-version: '3.12'
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.12.21"
+          python-version: "3.12"
       - run: uv sync --locked --all-packages
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: uv run --no-sync pre-commit run --all-files
       - run: uv run --no-sync playwright install --with-deps chromium
       - run: uv run --no-sync pytest -q -m 'not sdk and not gpu'
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.12.21"
+          python-version: "3.12"
+      - run: uv export --locked --all-extras --no-emit-workspace --output-file /tmp/requirements.txt
+      - run: uvx pip-audit==2.10.1 --disable-pip --require-hashes -r /tmp/requirements.txt
+      - run: uvx bandit==1.9.4 -r packages scripts --severity-level medium -q
+      - run: uvx zizmor==1.30.1 --offline --strict-collection .github/workflows

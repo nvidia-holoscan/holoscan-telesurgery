@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1024" viewBox="0 0 1440 1024" role="img" aria-labelledby="title description">
+  <title id="title">Multiple device nodes, one Patient dashboard, multiple Surgeon workspaces</title>
+  <desc id="description">Independent physical and simulation nodes request admission to a single Patient service. Patient approves nodes and grants surgeons view-only or robot access. Two example Surgeon workspaces run on their own machines. Control and state use TLS through Patient. Each node sends video directly to authorized viewers: through the viewer's local service for WebRTC browser video, or directly to native Holoviz. Patient has both preview options too. Only one surgeon controls a given robot at a time. A shared NVIDIA Holoscan SDK foundation supports the node pipelines, Patient and Surgeon services, and native viewers, using SDK 5 by default or SDK 4.</desc>
+  <defs>
+    <marker id="control-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#59738d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="video-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#5b8300" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #202b35; }
+      .heading { font-size: 27px; font-weight: 700; }
+      .title { font-size: 23px; font-weight: 700; }
+      .body { font-size: 20px; }
+      .caption { font-size: 18px; fill: #566571; }
+      .tag { font-size: 15px; font-weight: 700; letter-spacing: .6px; }
+      .card { fill: #fff; stroke: #d7dfe5; stroke-width: 1.5; }
+      .control { fill: none; stroke: #59738d; stroke-width: 2.5; stroke-dasharray: 7 5; stroke-linejoin: round; }
+      .video { fill: none; stroke: #5b8300; stroke-width: 3; stroke-linejoin: round; }
+      .rule { stroke: #e3e8ec; stroke-width: 1.5; }
+    </style>
+  </defs>
+  <rect width="1440" height="1024" rx="16" fill="#fff"/>
+
+  <!-- Independent instances, grouped by role. -->
+  <text x="64" y="49" class="heading">Device nodes</text>
+  <text x="64" y="83" class="caption">Independent Holoscan services</text>
+  <rect x="330" y="23" width="70" height="35" rx="17" fill="#edf1f5"/>
+  <text x="365" y="47" text-anchor="middle" class="tag">1…N</text>
+  <text x="552" y="49" class="heading">Patient</text>
+  <text x="552" y="83" class="caption">One room, one dashboard</text>
+  <rect x="818" y="23" width="70" height="35" rx="17" fill="#edf5da"/>
+  <text x="853" y="47" text-anchor="middle" class="tag">1</text>
+  <text x="1040" y="49" class="heading">Surgeons</text>
+  <text x="1040" y="83" class="caption">Each on their own machine</text>
+  <rect x="1306" y="23" width="70" height="35" rx="17" fill="#edf1f5"/>
+  <text x="1341" y="47" text-anchor="middle" class="tag">1…N</text>
+
+  <!-- Blue paths are admission, control and feedback, not media relays. -->
+  <path class="control" d="M 460 190 V 604"/>
+  <path class="control" d="M 460 422 H 548" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 460 190 H 404" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 460 328 H 404" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 460 466 H 404" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 460 604 H 404" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 964 234 V 510"/>
+  <path class="control" d="M 964 422 H 892" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 964 234 H 1036" marker-end="url(#control-arrow)"/>
+  <path class="control" d="M 964 510 H 1036" marker-end="url(#control-arrow)"/>
+  <text x="500" y="399" text-anchor="middle" class="caption">TLS</text>
+  <text x="928" y="399" text-anchor="middle" class="caption">TLS</text>
+
+  <!-- Green lines group independent node-to-viewer connections; there is no shared relay. -->
+  <path class="video" d="M 64 216 H 28 V 766 H 1412 V 324 M 64 354 H 28 M 64 492 H 28 M 64 630 H 28"/>
+  <path class="video" d="M 1412 324 H 1380" marker-end="url(#video-arrow)"/>
+  <path class="video" d="M 1412 616 H 1380" marker-end="url(#video-arrow)"/>
+  <path class="video" d="M 744 766 V 666" marker-end="url(#video-arrow)"/>
+
+  <rect x="64" y="132" width="336" height="116" rx="12" class="card"/>
+  <text x="88" y="167" class="tag">PHYSICAL NODE</text>
+  <text x="88" y="201" class="title">thor</text>
+  <text x="88" y="229" class="caption">HSB cameras</text>
+  <rect x="64" y="270" width="336" height="116" rx="12" class="card"/>
+  <text x="88" y="305" class="tag">PHYSICAL NODE</text>
+  <text x="88" y="339" class="title">workstation</text>
+  <text x="88" y="367" class="caption">USB cameras · Robot controllers</text>
+  <rect x="64" y="408" width="336" height="116" rx="12" class="card"/>
+  <text x="88" y="443" class="tag">SIMULATION NODE</text>
+  <text x="88" y="477" class="title">sim-host-mira</text>
+  <text x="88" y="505" class="caption">MIRA · Cameras · Isaac Sim</text>
+  <rect x="64" y="546" width="336" height="116" rx="12" class="card"/>
+  <text x="88" y="581" class="tag">SIMULATION NODE</text>
+  <text x="88" y="615" class="title">sim-host-franka</text>
+  <text x="88" y="643" class="caption">Franka · Cameras · Isaac Sim</text>
+  <text x="64" y="698" class="caption">Multiple nodes can share a host.</text>
+  <text x="64" y="724" class="caption">Names shown are examples.</text>
+
+  <rect x="552" y="132" width="336" height="530" rx="12" class="card"/>
+  <path d="M 564 132 H 876 Q 888 132 888 144 V 222 H 552 V 144 Q 552 132 564 132 Z" fill="#f0f6e5"/>
+  <text x="576" y="170" class="title">Patient dashboard</text>
+  <text x="576" y="204" class="caption">Local browser :8000</text>
+  <text x="576" y="268" class="tag">ADMISSION &amp; ACCESS</text>
+  <text x="576" y="306" class="body">Approve or reject nodes</text>
+  <text x="576" y="343" class="body">Approve surgeons:</text>
+  <text x="576" y="375" class="caption">View only or robot access</text>
+  <line x1="576" y1="398" x2="864" y2="398" class="rule"/>
+  <text x="576" y="435" class="body">Manage streams &amp; controllers</text>
+  <text x="576" y="471" class="caption">Patient service · TLS :7447</text>
+  <line x1="576" y1="496" x2="864" y2="496" class="rule"/>
+  <text x="576" y="534" class="tag">PATIENT PREVIEWS</text>
+  <circle cx="584" cy="570" r="5" fill="#5b8300"/>
+  <text x="600" y="577" class="body">Browser · WebRTC</text>
+  <circle cx="584" cy="611" r="5" fill="#5b8300"/>
+  <text x="600" y="618" class="body">Holoviz · Native viewer</text>
+
+  <rect x="1040" y="132" width="336" height="238" rx="12" class="card"/>
+  <text x="1064" y="169" class="title">Surgeon A</text>
+  <rect x="1243" y="145" width="109" height="30" rx="15" fill="#edf1f5"/>
+  <text x="1297" y="166" text-anchor="middle" class="tag">VIEW ONLY</text>
+  <text x="1064" y="204" class="caption">Local service + dashboard :8002</text>
+  <text x="1064" y="247" class="body">Watch approved streams</text>
+  <line x1="1064" y1="271" x2="1352" y2="271" class="rule"/>
+  <circle cx="1072" cy="295" r="5" fill="#5b8300"/>
+  <text x="1088" y="302" class="body">Browser · WebRTC</text>
+  <circle cx="1072" cy="331" r="5" fill="#5b8300"/>
+  <text x="1088" y="338" class="body">Holoviz · Native viewer</text>
+
+  <rect x="1040" y="414" width="336" height="248" rx="12" class="card"/>
+  <text x="1064" y="451" class="title">Surgeon B</text>
+  <rect x="1215" y="427" width="137" height="30" rx="15" fill="#edf5da"/>
+  <text x="1283" y="448" text-anchor="middle" class="tag">ROBOT ACCESS</text>
+  <text x="1064" y="486" class="caption">Local service + dashboard :8002</text>
+  <text x="1064" y="529" class="body">Watch streams + control robots</text>
+  <text x="1064" y="557" class="caption">One active surgeon per robot</text>
+  <line x1="1064" y1="579" x2="1352" y2="579" class="rule"/>
+  <circle cx="1072" cy="603" r="5" fill="#5b8300"/>
+  <text x="1088" y="610" class="body">Browser · WebRTC</text>
+  <circle cx="1072" cy="637" r="5" fill="#5b8300"/>
+  <text x="1088" y="644" class="body">Holoviz · Native viewer</text>
+  <text x="1040" y="698" class="caption">Each surgeon requests access.</text>
+
+  <rect x="496" y="745" width="448" height="43" rx="10" fill="#f0f6e5"/>
+  <text x="720" y="773" text-anchor="middle" class="body" style="font-weight:700;fill:#456400">Direct video · Each node → its viewers</text>
+
+  <!-- Shared runtime foundation, not another service or network hop. -->
+  <rect x="64" y="816" width="1312" height="92" rx="12" fill="#202b35"/>
+  <rect x="64" y="834" width="5" height="56" rx="2" fill="#76b900"/>
+  <text x="92" y="853" class="title" style="fill:#fff">NVIDIA Holoscan SDK</text>
+  <text x="92" y="885" class="caption" style="fill:#dce4eb">Shared runtime · Node pipelines, Patient / Surgeon services and native viewers</text>
+  <rect x="1050" y="844" width="188" height="36" rx="18" fill="#76b900"/>
+  <text x="1144" y="868" text-anchor="middle" class="body" style="fill:#142100;font-weight:700">SDK 5 · Default</text>
+  <rect x="1254" y="844" width="98" height="36" rx="18" fill="#3b4751"/>
+  <text x="1303" y="868" text-anchor="middle" class="body" style="fill:#fff">SDK 4</text>
+
+  <path d="M 64 950 H 109" class="control"/>
+  <text x="123" y="956" class="caption">TLS · Approval, control &amp; state</text>
+  <path d="M 552 950 H 597" class="video" marker-end="url(#video-arrow)"/>
+  <text x="611" y="956" class="caption">TLS · Direct video, including patient previews</text>
+  <text x="64" y="998" class="caption">Browser: local HTTP controls + WebRTC H.264 video. Holoviz: direct video from the node.</text>
+</svg>

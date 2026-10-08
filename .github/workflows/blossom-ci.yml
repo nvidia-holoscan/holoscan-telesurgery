@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Blossom-CI
+on:
+  issue_comment:
+    types: [created]
+  # Blossom uses dispatch to return results from its external CI server.
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Runner platform
+        required: false
+      args:
+        description: Blossom result arguments
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  Authorization:
+    name: Authorize build
+    runs-on: blossom
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    outputs:
+      args: ${{ env.args }}
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/build' &&
+      contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.actor) &&
+      contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
+    steps:
+      - run: blossom-ci
+        env:
+          OPERATION: AUTH
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_KEY_DATA: ${{ secrets.BLOSSOM_KEY }}
+
+  Vulnerability-scan:
+    name: Vulnerability scan
+    needs: Authorization
+    # GitHub can rerun downstream jobs without rerunning Authorization.
+    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ fromJSON(needs.Authorization.outputs.args).repo }}
+          ref: ${{ fromJSON(needs.Authorization.outputs.args).ref }}
+          persist-credentials: false
+      - uses: NVIDIA/blossom-action@2b0c950b993808dc31f80a1ccc32615902e39032 # main
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_KEY_DATA: ${{ secrets.BLOSSOM_KEY }}
+        with:
+          args1: ${{ fromJSON(needs.Authorization.outputs.args).args1 }}
+          args2: ${{ fromJSON(needs.Authorization.outputs.args).args2 }}
+          args3: ${{ fromJSON(needs.Authorization.outputs.args).args3 }}
+
+  Job-trigger:
+    name: Start CI job
+    needs: Vulnerability-scan
+    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
+    runs-on: blossom
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - run: blossom-ci
+        env:
+          OPERATION: START-CI-JOB
+          CI_SERVER: ${{ secrets.CI_SERVER }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  Upload-Log:
+    name: Publish CI results
+    runs-on: blossom
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - run: blossom-ci
+        env:
+          OPERATION: POST-PROCESSING
+          CI_SERVER: ${{ secrets.CI_SERVER }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}

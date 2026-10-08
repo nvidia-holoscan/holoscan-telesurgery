@@ -18,7 +18,7 @@ from telesurgery_core.diagnostics.trace import mark, wire
 
 
 class StreamTiming:
-    def __init__(self, peer, track, sender):
+    def __init__(self, peer, track, sender, on_frame=None):
         self.track, self.channel = track, None
         self.until = 0
         self.origin = None
@@ -27,6 +27,7 @@ class StreamTiming:
 
         async def send_rtp(data):
             report = None
+            frame_timestamp = None
             # RTCP uses the same transport; only observe this video sender's RTP.
             if len(data) >= 12 and 96 <= (data[1] & 127) <= 127:
                 timestamp, ssrc = struct.unpack_from("!II", data, 4)
@@ -36,6 +37,7 @@ class StreamTiming:
                     expected = (self.origin + track.pts) & 0xFFFFFFFF
                     if timestamp == expected and timestamp != self.last_timestamp:
                         self.last_timestamp = timestamp
+                        frame_timestamp = timestamp
                         if time.monotonic() < self.until and self.channel.readyState == "open":
                             trace = mark(track.trace, "browser_queue_ms")
                             if trace:
@@ -46,6 +48,8 @@ class StreamTiming:
                                     **wire(trace),
                                 }
             await send(data)
+            if frame_timestamp is not None and on_frame:
+                on_frame(frame_timestamp)
             # The unreliable side channel never delays video for an acknowledgement.
             if report and self.channel.readyState == "open" and self.channel.bufferedAmount < 16384:
                 with contextlib.suppress(InvalidStateError):

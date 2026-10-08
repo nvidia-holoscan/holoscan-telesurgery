@@ -14,13 +14,18 @@ import {
     dismissOnBackdrop,
 } from "./ui.js";
 import { patientPages } from "./patient.js";
-import { robotControls } from "./robots.js";
+import { robotControls, robotLabel } from "./robots.js";
 import { viewingLayout } from "./workspace.js";
 import { metricsPanel } from "./metrics-panel.js";
 import { frameTiming } from "./frame-timing.js";
 import { streamSettings } from "./stream-settings.js";
 import { nodeSettings } from "./node-settings.js";
 import { setIcon } from "./icons.js";
+import { openLog } from "./logs.js";
+import { depthView, nativeDepthControls } from "./depth.js";
+import { equipmentTable } from "./equipment.js";
+import { feedStrip } from "./feeds.js";
+import { controllerWindow } from "./controller-window.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -30,8 +35,51 @@ for (const dialog of document.querySelectorAll("dialog[data-dismiss-outside]"))
 let state,
     refreshing = false,
     changingCameras = false,
+    changingWorkspace = false,
     robotId = null,
+    preferredRobot = null,
+    robotPreferenceKey,
     roleInitialized;
+const roomActions = new Set();
+for (const [selector, method, done] of [
+    ["#stop-all-streams", "camera.stop_all", "Streams stopped"],
+    [
+        "#disconnect-all-robots",
+        "robot.disconnect_all",
+        "Robot connections released",
+    ],
+]) {
+    $(selector).onclick = async () => {
+        if (roomActions.size) return;
+        roomActions.add(method);
+        const output = $("#room-action-status");
+        output.hidden = false;
+        output.textContent = "Working across all nodes…";
+        renderCurrent();
+        try {
+            const result = await action(method);
+            output.textContent = result.failed.length
+                ? `${result.completed.length} completed. Not confirmed: ${result.failed.map((item) => `${item.name}: ${item.error}`).join("; ")}`
+                : `${done} across all nodes.`;
+            output.dataset.error = String(result.failed.length > 0);
+        } catch (error) {
+            output.textContent = error.message;
+            output.dataset.error = "true";
+        } finally {
+            roomActions.delete(method);
+            output.append(
+                button(
+                    "Dismiss",
+                    () => {
+                        output.hidden = true;
+                    },
+                    "text-link",
+                ),
+            );
+            await refresh();
+        }
+    };
+}
 const tiles = new Map(),
     previews = new Set(),
     rendered = new Map();
@@ -40,13 +88,33 @@ const metrics = metricsPanel($("#metrics-page"), tiles);
 const configureNode = nodeSettings(refresh);
 const patient = patientPages(
     () => renderCurrent(),
-    configureNode.open,
     configureNode.remove,
-    configureNode.environment,
+    refresh,
 );
 const robots = robotControls(refresh, openMetrics);
+const controller = controllerWindow({
+    release: (id) =>
+        id ? action("robot.release", { id }) : robots.releaseAll(),
+    changed: renderCurrent,
+    selection: () => robotId,
+    select: (id) => {
+        robotId = preferredRobot = id;
+    },
+});
+$("#popout-controller").onclick = () => controller.toggle().catch(notice);
+$("#focus-controller").onclick = () => controller.focus();
+const equipment = equipmentTable(
+    renderCurrent,
+    cameraCard,
+    robots.patientActions,
+);
 const configureStream = streamSettings(refresh);
-function openMetrics(device) {
+const quickFeeds = feedStrip(selectCamera, displayCamera, closeNative);
+async function openMetrics(device) {
+    if (document.fullscreenElement?.classList.contains("video-tile"))
+        await document.exitFullscreen();
+    equipment.close();
+    $("#feed-dialog").close();
     const data = inventory();
     const item = [...(data.cameras || []), ...(data.robots || [])].find(
         (item) => item.id === device,
@@ -94,7 +162,10 @@ function nativeViewing(id) {
 }
 async function displayCamera(id, native) {
     await action(native ? "view.holoviz" : "view.browser", { camera: id });
-    if (state.role === "patient" && !native) previews.add(id);
+    if (state.role === "patient") {
+        equipment.close();
+        if (!native) previews.add(id);
+    }
     await refresh();
 }
 async function closeNative(id) {
@@ -114,9 +185,16 @@ async function openVideo(camera) {
     const title = element("strong", camera.name);
     title.title = camera.name;
     const controls = element("div", undefined, "actions");
+    const patientPreview = state.role === "patient";
     const enlarge = button(
-        "Enlarge",
-        () => {
+        patientPreview ? "Fullscreen" : "Enlarge",
+        async () => {
+            if (patientPreview) {
+                if (document.fullscreenElement === tile)
+                    await document.exitFullscreen();
+                else await tile.requestFullscreen();
+                return;
+            }
             const focused = tile.classList.toggle("focused");
             setIcon(
                 enlarge,
@@ -129,19 +207,33 @@ async function openVideo(camera) {
         "expand",
     );
     enlarge.setAttribute("aria-pressed", "false");
+    if (patientPreview)
+        tile.addEventListener("fullscreenchange", () => {
+            const expanded = document.fullscreenElement === tile;
+            setIcon(
+                enlarge,
+                expanded ? "collapse" : "expand",
+                expanded ? "Exit fullscreen" : "Fullscreen",
+            );
+            enlarge.setAttribute("aria-pressed", String(expanded));
+        });
     controls.append(enlarge);
     controls.append(
         button("Open in Holoviz", () => displayCamera(camera.id, true)),
     );
-    if (state.role === "surgeon")
-        controls.append(
-            button(
-                "Hide",
-                () => selectCamera(camera.id, false),
-                "secondary small icon-button",
-                "hide",
-            ),
-        );
+    controls.append(
+        button(
+            "Hide",
+            () => {
+                if (state.role === "surgeon")
+                    return selectCamera(camera.id, false);
+                previews.delete(camera.id);
+                renderCurrent();
+            },
+            "secondary small icon-button",
+            "hide",
+        ),
+    );
     caption.append(
         title,
         element(
@@ -158,7 +250,9 @@ async function openVideo(camera) {
             "chart",
         ),
     );
-    tile.append(video, caption);
+    const stage = element("div", undefined, "depth-stage");
+    stage.append(video);
+    tile.append(stage, caption);
     if (state.role === "surgeon") layout.attach(tile, camera);
     $("#videos").append(tile);
     const peer = new RTCPeerConnection({ iceServers: [] });
@@ -167,6 +261,7 @@ async function openVideo(camera) {
         peer,
         title,
         timing: frameTiming(peer, video),
+        depth: depthView(peer, video, stage, caption, camera),
     });
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
@@ -220,6 +315,7 @@ function closeVideo(id) {
     if (!item) return;
     tiles.delete(id);
     item.timing.stop();
+    item.depth.stop();
     item.peer.close();
     item.tile.remove();
 }
@@ -236,155 +332,195 @@ function renderCameras(data) {
     const cameras = $("#cameras");
     cameras.replaceChildren();
     const list = data.cameras || [];
-    if (!list.length && state.simulation?.status === "loading") {
-        for (const name of state.simulation.cameras || [])
-            cameras.append(
-                device(name, "Available when the room is ready", "loading"),
-            );
-        return;
-    }
     if (!list.length)
         cameras.append(
             element(
                 "p",
-                state.simulation?.status === "error"
-                    ? "Simulation stopped before cameras became available."
-                    : state.simulation
-                      ? "Loading simulation camera inventory."
-                      : state.role === "patient"
-                        ? "Discovering connected cameras. Add a node to include its devices."
-                        : "No cameras are available yet.",
+                state.role === "patient"
+                    ? "No cameras are available yet."
+                    : "No live streams.",
             ),
         );
-    for (const camera of list) {
-        const card = device(
-            camera.name,
-            `${camera.kind} · ${camera.width} × ${camera.height} · ${Number(Number(camera.fps || 0).toFixed(2))} FPS · ${codecName(camera.codec)}`,
-            camera.status,
-        );
-        const identity = element("div", undefined, "camera-identity");
-        identity.append(...card.childNodes);
-        card.append(identity);
-        const controls = element("div", undefined, "actions");
-        if (state.role === "patient") {
-            const active = ["live", "starting", "stale"].includes(
-                camera.status,
-            );
-            const stream = button(
-                active ? "Stop" : "Stream",
-                async () => {
-                    if (active) {
-                        await action("camera.stop", { id: camera.id });
-                        await refresh();
-                    } else configureStream(camera);
-                },
-                active ? "secondary small" : "small",
-            );
-            stream.classList.add("camera-stream");
-            stream.disabled =
-                !active &&
-                (camera.status === "offline" || camera.codecs?.length === 0);
-            controls.append(stream);
-            const heading = element("div", undefined, "camera-name");
-            heading.append(
-                identity.querySelector("strong"),
-                button(
-                    "Rename",
-                    async () => {
-                        const name = prompt("Camera name", camera.name);
-                        if (name?.trim()) {
-                            await action("camera.rename", {
-                                id: camera.id,
-                                name,
-                            });
-                            await refresh();
-                        }
-                    },
-                    "secondary small icon-button",
-                    "rename",
-                ),
-            );
-            identity.prepend(heading);
-        } else {
-            const shown =
-                browserCamera(camera) &&
-                (state.selected || []).includes(camera.id);
-            const control = button(
-                shown ? "Hide" : "Show",
-                () => selectCamera(camera.id, !shown),
-                "secondary small icon-button",
-                shown ? "hide" : "preview",
-            );
-            control.classList.add("camera-preview");
-            control.disabled =
-                !browserCamera(camera) ||
-                !["live", "stale"].includes(camera.status);
-            if (!browserCamera(camera))
-                control.title = "Browser viewing requires H.264. Use Holoviz.";
-            controls.append(control);
-        }
-        if (state.role === "patient") {
-            const unavailable = !browserCamera(camera)
-                ? "Browser preview requires H.264. Use Holoviz."
-                : nativeViewing(camera.id)
-                  ? "Use Show in browser to switch from Holoviz."
-                  : !["live", "stale"].includes(camera.status)
-                    ? "Start streaming to preview."
-                    : "";
-            const preview = button(
-                !unavailable && previews.has(camera.id)
-                    ? "Hide preview"
-                    : "Preview",
-                () => {
-                    if (previews.has(camera.id)) previews.delete(camera.id);
-                    else previews.add(camera.id);
-                    renderCurrent();
-                },
-                "secondary small icon-button",
-                !unavailable && previews.has(camera.id) ? "hide" : "preview",
-            );
-            preview.classList.add("camera-preview");
-            preview.disabled = !!unavailable;
-            if (unavailable) preview.title = unavailable;
-            controls.append(preview);
-        }
-        if (state.role === "patient") {
-            controls.append(
-                button(
-                    "Metrics",
-                    () => openMetrics(camera.id),
-                    "secondary small icon-button camera-metrics",
-                    "chart",
-                ),
-            );
-        }
-        card.dataset.search = camera.name.toLowerCase();
-        const native = nativeViewing(camera.id);
-        const display = button(
-            native
-                ? browserCamera(camera)
-                    ? "Show in browser"
-                    : "Close Holoviz"
-                : "Open in Holoviz",
-            () =>
-                native && !browserCamera(camera)
-                    ? closeNative(camera.id)
-                    : displayCamera(camera.id, !native),
-        );
-        display.classList.add("camera-display");
-        display.disabled = !["live", "stale"].includes(camera.status);
-        controls.append(display);
-        if (state.native_views?.[camera.id]?.error)
-            card.append(element("p", state.native_views[camera.id].error));
-        card.append(controls);
-        if (camera.error) card.append(element("p", camera.error));
-        cameras.append(card);
-        if (state.role === "surgeon")
-            card.hidden = !camera.name
-                .toLowerCase()
-                .includes($("#camera-search").value.toLowerCase());
-    }
+    for (const camera of list) cameras.append(cameraCard(camera));
 }
+
+function cameraCard(camera) {
+    const card = device(
+        camera.name,
+        `${camera.kind} · ${camera.width} × ${camera.height} · ${Number(Number(camera.fps || 0).toFixed(2))} FPS · ${codecName(camera.codec)}`,
+        camera.status,
+    );
+    const identity = element("div", undefined, "camera-identity");
+    identity.append(...card.childNodes);
+    if (state.role === "patient") {
+        const logs = button(
+            "Logs",
+            () =>
+                openLog(
+                    `${camera.name} · Camera log`,
+                    `/api/cameras/${encodeURIComponent(camera.id)}/log`,
+                ),
+            "text-link camera-log",
+            "logs",
+        );
+        logs.setAttribute("aria-label", `${camera.name} camera logs`);
+        logs.setAttribute("aria-haspopup", "dialog");
+        identity.querySelector(".status").append(logs);
+    }
+    card.append(identity);
+    const controls = element("div", undefined, "actions");
+    if (state.role === "patient") {
+        const active = ["live", "starting", "stale"].includes(camera.status);
+        const stream = button(
+            active ? "Stop" : "Stream",
+            async () => {
+                stream.disabled = true;
+                try {
+                    await action(active ? "camera.stop" : "camera.start", {
+                        id: camera.id,
+                    });
+                    await refresh();
+                } finally {
+                    stream.disabled = false;
+                }
+            },
+            active ? "secondary small" : "small",
+        );
+        stream.classList.add("camera-stream");
+        stream.disabled =
+            !active &&
+            (camera.status === "offline" || camera.codecs?.length === 0);
+        controls.append(stream);
+        const settings = button(
+            "Stream settings",
+            () => configureStream(camera),
+            "secondary small icon-button camera-settings",
+            "settings",
+        );
+        settings.disabled = active || stream.disabled;
+        settings.title = active
+            ? "Stop streaming to change settings"
+            : "Stream settings";
+        controls.append(settings);
+        const heading = element("div", undefined, "camera-name");
+        heading.append(
+            identity.querySelector("strong"),
+            button(
+                "Rename",
+                async () => {
+                    const name = prompt("Camera name", camera.name);
+                    if (name?.trim()) {
+                        await action("camera.rename", {
+                            id: camera.id,
+                            name,
+                        });
+                        await refresh();
+                    }
+                },
+                "secondary small icon-button",
+                "rename",
+            ),
+        );
+        identity.prepend(heading);
+    } else {
+        const shown =
+            browserCamera(camera) && (state.selected || []).includes(camera.id);
+        const control = button(
+            shown ? "Hide" : "Show",
+            () => selectCamera(camera.id, !shown),
+            "secondary small icon-button",
+            shown ? "hide" : "preview",
+        );
+        control.classList.add("camera-preview");
+        control.disabled =
+            !browserCamera(camera) ||
+            !["live", "stale"].includes(camera.status);
+        if (!browserCamera(camera))
+            control.title = "Browser viewing requires H.264. Use Holoviz.";
+        controls.append(control);
+    }
+    if (state.role === "patient") {
+        const unavailable = !browserCamera(camera)
+            ? "Browser preview requires H.264. Use Holoviz."
+            : nativeViewing(camera.id)
+              ? "Use Show in browser to switch from Holoviz."
+              : !["live", "stale"].includes(camera.status)
+                ? "Start streaming to preview."
+                : "";
+        const preview = button(
+            !unavailable && previews.has(camera.id)
+                ? "Hide preview"
+                : "Preview",
+            () => {
+                if (previews.has(camera.id)) previews.delete(camera.id);
+                else {
+                    previews.add(camera.id);
+                    equipment.close();
+                }
+                renderCurrent();
+                if (previews.has(camera.id))
+                    $("#views-panel").scrollIntoView({ block: "nearest" });
+            },
+            "secondary small icon-button",
+            !unavailable && previews.has(camera.id) ? "hide" : "preview",
+        );
+        preview.classList.add("camera-preview");
+        preview.disabled = !!unavailable;
+        if (unavailable) preview.title = unavailable;
+        controls.append(preview);
+    }
+    if (state.role === "patient") {
+        controls.append(
+            button(
+                "Metrics",
+                () => openMetrics(camera.id),
+                "secondary small icon-button camera-metrics",
+                "chart",
+            ),
+        );
+    }
+    card.dataset.search = camera.name.toLowerCase();
+    const native = nativeViewing(camera.id);
+    const display = button(
+        native
+            ? browserCamera(camera)
+                ? "Show in browser"
+                : "Close Holoviz"
+            : "Open in Holoviz",
+        () =>
+            native && !browserCamera(camera)
+                ? closeNative(camera.id)
+                : displayCamera(camera.id, !native),
+    );
+    display.classList.add("camera-display");
+    if (state.role === "patient") {
+        display.classList.add("secondary", "small", "icon-button");
+        setIcon(display, "monitor");
+        const logs = button(
+            "Camera logs",
+            () =>
+                openLog(
+                    `${camera.name} · Camera log`,
+                    `/api/cameras/${encodeURIComponent(camera.id)}/log`,
+                ),
+            "secondary small icon-button camera-logs",
+            "logs",
+        );
+        controls.append(logs);
+    }
+    display.disabled = !["live", "stale"].includes(camera.status);
+    controls.append(display);
+    if (state.native_views?.[camera.id]?.error)
+        card.append(element("p", state.native_views[camera.id].error));
+    card.append(controls);
+    if (camera.error) card.append(element("p", camera.error));
+    if (state.role === "surgeon")
+        card.hidden = !camera.name
+            .toLowerCase()
+            .includes($("#camera-search").value.toLowerCase());
+    return card;
+}
+
 function renderSurgeons(data) {
     const list = $("#surgeons");
     list.replaceChildren();
@@ -393,9 +529,7 @@ function renderSurgeons(data) {
     ).length;
     $("#request-count").hidden = !requests;
     $("#request-count").textContent = `${requests} pending`;
-    if (!data.surgeons?.length)
-        list.append(element("p", "Surgeon requests will appear here."));
-    for (const surgeon of data.surgeons || []) {
+    function surgeonCard(surgeon) {
         const card = device(
             surgeon.name,
             ["approved", "offline"].includes(surgeon.status)
@@ -452,16 +586,150 @@ function renderSurgeons(data) {
                 ),
             );
         }
+        const avatar = element(
+            "span",
+            surgeon.name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((part) => part[0])
+                .join("")
+                .toUpperCase(),
+            "surgeon-avatar",
+        );
+        avatar.setAttribute("aria-hidden", "true");
+        card.prepend(avatar);
         card.append(controls);
-        list.append(card);
+        return card;
     }
+    list.replaceChildren(...(data.surgeons || []).map(surgeonCard));
+    const access = $("#overview-access");
+    const people = (data.surgeons || [])
+        .filter((s) => ["pending", "approved"].includes(s.status))
+        .sort(
+            (a, b) =>
+                Number(b.status === "pending") - Number(a.status === "pending"),
+        );
+    access.replaceChildren(...people.slice(0, 3).map(surgeonCard));
+    if (!people.length)
+        access.append(
+            element(
+                "p",
+                "Surgeon requests appear here for your approval.",
+                "quiet-state",
+            ),
+        );
+    if (!data.surgeons?.length)
+        list.append(
+            element("p", "Surgeon requests will appear here.", "quiet-state"),
+        );
 }
 
+function renderRobots(data, isPatient, approved) {
+    let robotList = [...(data.robots || [])].sort(
+        (a, b) =>
+            a.name.localeCompare(b.name, undefined, {
+                numeric: true,
+                sensitivity: "base",
+            }) || robotLabel(a).localeCompare(robotLabel(b)),
+    );
+    if (isPatient)
+        robotList = robotList.filter((r) => r.id === equipment.selected);
+    else {
+        robotList = robotList.filter(
+            (r) =>
+                r.status === "online" &&
+                r.connection_enabled !== false &&
+                r.node_online !== false,
+        );
+        const key = `telesurgery-robot:${state.patient || "local"}`;
+        if (robotPreferenceKey !== key) {
+            if (robotPreferenceKey) preferredRobot = null;
+            robotPreferenceKey = key;
+            robotId = null;
+            try {
+                preferredRobot ||= localStorage.getItem(key);
+            } catch {
+                /* Selection remains usable without browser storage. */
+            }
+        }
+        if (robotList.some((r) => r.id === preferredRobot))
+            robotId = preferredRobot;
+    }
+    if (!robotList.some((r) => r.id === robotId))
+        robotId = isPatient || !preferredRobot ? robotList[0]?.id : null;
+    if (!isPatient && robotId) preferredRobot = robotId;
+    const available = robotList.length;
+    const picker = $("#robot-selector"),
+        options = JSON.stringify([
+            !robotId,
+            robotList.map((r) => [r.id, robotLabel(r)]),
+        ]);
+    if (picker.dataset.options !== options) {
+        picker.replaceChildren(
+            ...robotList.map((r) => new Option(robotLabel(r), r.id)),
+        );
+        if (!robotId) {
+            const placeholder = new Option("Select a robot", "");
+            placeholder.disabled = true;
+            picker.prepend(placeholder);
+        }
+        picker.dataset.options = options;
+    }
+    picker.value = robotId || "";
+    $("#robot-choice").hidden = isPatient || !available;
+    if (!isPatient) robotList = robotList.filter((r) => r.id === robotId);
+    $("#robots-panel").hidden = isPatient
+        ? !robotList.length
+        : !data.robots?.length || !approved;
+    const viewOnly = !isPatient && !state.session?.robot;
+    $("#robots-panel h2").textContent =
+        isPatient || viewOnly ? "Robots" : "Robot control";
+    $("#robots-panel .section-kicker").textContent = isPatient
+        ? "NODE DEVICES"
+        : viewOnly
+          ? "VIEW ONLY"
+          : "EXCLUSIVE ACCESS";
+    const detached = !isPatient && controller.detached;
+    $("#popout-controller").hidden = isPatient || viewOnly;
+    setIcon(
+        $("#popout-controller"),
+        controller.compact || detached ? "dock" : "popout",
+        controller.compact || detached
+            ? "Dock robot controls"
+            : "Pop out robot controls",
+    );
+    $("#controller-away").hidden = !detached;
+    $("#controller-focus").hidden = !controller.compact;
+    $("#robots").hidden = detached;
+    if (detached) $("#robot-choice").hidden = true;
+    robots.update(state, {
+        robots: controller.enabled || isPatient ? robotList : [],
+    });
+    if (!isPatient && controller.enabled && !robotList.length)
+        $("#robots").replaceChildren(
+            element(
+                "p",
+                available
+                    ? "Select a robot above."
+                    : "No connected robots. Connect a robot in the patient dashboard.",
+                "quiet-state",
+            ),
+        );
+}
 function renderCurrent() {
     if (!state) return;
     const isPatient = state.role === "patient",
         approved = state.session?.status === "approved";
     document.body.dataset.role = state.role;
+    if (controller.compact) {
+        document.title = "Holoscan Telesurgery - Robot control";
+        $("#device-workspace").hidden = false;
+        $("#operating-workspace").hidden = false;
+        $("#controller-unavailable").hidden =
+            approved && !isPatient && !!state.session?.robots?.length;
+        renderRobots(isPatient ? {} : inventory(), false, approved);
+        return;
+    }
     $("#role").textContent = isPatient ? "Patient" : "Surgeon";
     $("#sdk").textContent = `SDK ${String(state.sdk).split(".")[0]}`;
     $("#connection").textContent = isPatient
@@ -471,9 +739,12 @@ function renderCurrent() {
         ? "online"
         : state.session?.status;
     $("#subtitle").textContent = isPatient
-        ? `Patient endpoint · port ${state.endpoint_port}`
+        ? `Port ${state.endpoint_port}`
         : state.patient || "Local surgeon service";
     $("#patient-nav").hidden = !isPatient;
+    $("#patient-stop-actions").hidden = !isPatient;
+    $("#stop-all-streams").disabled = roomActions.size > 0;
+    $("#disconnect-all-robots").disabled = roomActions.size > 0;
     $("#disconnect").hidden =
         isPatient ||
         ["disconnected", undefined].includes(state.session?.status);
@@ -485,7 +756,16 @@ function renderCurrent() {
         "Your request has been sent. Cameras and controls become available after approval.";
     if (roleInitialized !== state.role) {
         roleInitialized = state.role;
-        if (!isPatient) $("#feed-list").append($("#cameras"));
+        document.title = `Holoscan Telesurgery - ${isPatient ? "Patient" : "Surgeon"}`;
+        if (!isPatient) {
+            $("#feed-list").append($("#cameras"));
+        } else {
+            $("#device-detail-body").append(
+                $("#camera-panel"),
+                $("#robots-panel"),
+            );
+            $("#equipment-actions").append($("#all-cameras"));
+        }
     }
     if (isPatient) {
         patient.update(state);
@@ -502,50 +782,46 @@ function renderCurrent() {
         }
     }
     const data = scopedInventory();
+    const liveCameras = (data.cameras || []).filter((c) =>
+        ["live", "stale"].includes(c.status),
+    );
+    if (!isPatient)
+        quickFeeds.update(
+            liveCameras,
+            state.selected || [],
+            state.native_views || {},
+        );
+    $("#quick-feeds").hidden = isPatient;
     const bulk = bulkCameras();
     $("#all-cameras").textContent = bulk.stop ? "Stop all" : "Stream all";
     $("#all-cameras").disabled = changingCameras || !bulk.cameras.length;
     const cameras = data.cameras || [];
+    if (isPatient)
+        equipment.update(data, patient.current().node, [
+            [...previews],
+            state.native_views,
+        ]);
+    const detailCameras = isPatient
+        ? cameras.filter((c) => c.id === equipment.selected)
+        : liveCameras;
     renderChanged(
         "cameras",
         [
-            cameras.map(({ frames, ...c }) => c),
+            detailCameras.map(({ frames, ...c }) => c),
             state.selected,
             [...previews],
-            state.simulation?.status,
             Object.entries(state.native_views || {}).map(([id, view]) => [
                 id,
                 view.status,
                 view.error,
             ]),
         ],
-        () => renderCameras(data),
+        () => renderCameras({ ...data, cameras: detailCameras }),
     );
-    let robotList = data.robots || [];
-    const picker = $("#robot-selector"),
-        options = JSON.stringify(robotList.map(({ id, name }) => [id, name]));
-    if (picker.dataset.options !== options) {
-        picker.replaceChildren(
-            ...robotList.map((r) => new Option(r.name, r.id)),
-        );
-        picker.dataset.options = options;
-    }
-    if (!robotList.some((r) => r.id === robotId)) robotId = robotList[0]?.id;
-    picker.value = robotId || "";
-    $("#robot-choice").hidden = isPatient || robotList.length < 2;
-    if (!isPatient) robotList = robotList.filter((r) => r.id === robotId);
-    $("#robots-panel").hidden =
-        !robotList.length ||
-        (!isPatient && (!approved || !state.session.robot));
-    $("#robots-panel h2").textContent = isPatient ? "Robots" : "Robot control";
-    robots.update(state, { robots: robotList });
-    const selectedRobot = robotList[0];
-    $("#control-summary").textContent =
-        !isPatient && approved && state.session.robot && selectedRobot
-            ? `${selectedRobot.name} · ${selectedRobot.owner ? `Control: ${selectedRobot.owner}` : "Control available"}`
-            : "";
+    renderRobots(data, isPatient, approved);
     const shown = cameras.filter(
         (c) =>
+            changingWorkspace !== "popout" &&
             ["live", "stale"].includes(c.status) &&
             browserCamera(c) &&
             !nativeViewing(c.id) &&
@@ -579,6 +855,11 @@ function renderCurrent() {
                     `${codecName(camera.codec)} · Holoviz is open`,
                 );
                 tile.classList.add("native-tile");
+                nativeDepthControls(
+                    camera,
+                    tile,
+                    state.native_views[camera.id].display,
+                );
                 const controls = element("div", undefined, "actions");
                 const metrics = button(
                     "Metrics",
@@ -625,13 +906,38 @@ function renderCurrent() {
         isPatient && tiles.size + nativeCameras.length === 0;
     $("#operating-workspace").classList.toggle(
         "has-robot",
-        !$("#robots-panel").hidden,
+        !isPatient && !$("#robots-panel").hidden,
     );
+    if (isPatient) {
+        $("#camera-panel").hidden = !detailCameras.length;
+    }
+    $("#equipment-panel").hidden = !isPatient;
+    $("#operating-workspace").hidden =
+        isPatient && tiles.size + nativeCameras.length === 0;
+    $("#empty-title").textContent = isPatient
+        ? "No previews open"
+        : liveCameras.length
+          ? "Choose your views"
+          : "No live streams";
+    $("#empty-description").textContent = isPatient
+        ? "Start a camera, then open its preview."
+        : liveCameras.length
+          ? "Select a camera above to start viewing."
+          : "Live streams appear when the patient starts a camera.";
+    $("#preview-devices").hidden = !isPatient;
     $("#empty-video").hidden = tiles.size + nativeCameras.length > 0;
     $("#empty-add-feeds").hidden = isPatient;
     $("#stream-count").textContent =
         `${tiles.size} browser${nativeCameras.length ? ` · ${nativeCameras.length} Holoviz` : ""}`;
     $("#hide-all").disabled = !state.selected?.length;
+    $("#popout-all").disabled =
+        changingWorkspace ||
+        (!cameras.some((c) => ["live", "stale"].includes(c.status)) &&
+            !currentRobotControl());
+    $("#dock-all").disabled =
+        changingWorkspace ||
+        (!controller.detached &&
+            !Object.keys(state.native_views || {}).some(nativeViewing));
     $("#show-all").disabled = !cameras.some((c) =>
         ["live", "stale"].includes(c.status),
     );
@@ -669,8 +975,14 @@ $("#disconnect").addEventListener("click", async () => {
     await refresh();
 });
 $("#robot-selector").onchange = async (event) => {
+    const selected = event.target.value;
     await robots.releaseAll();
-    robotId = event.target.value;
+    robotId = preferredRobot = selected;
+    try {
+        localStorage.setItem(robotPreferenceKey, selected);
+    } catch {
+        /* Selection remains usable without browser storage. */
+    }
     renderCurrent();
 };
 function feeds() {
@@ -723,6 +1035,85 @@ async function chooseAll(show) {
 }
 $("#show-all").onclick = () => chooseAll(true);
 $("#hide-all").onclick = () => chooseAll(false);
+
+function currentRobotControl() {
+    return (
+        state?.role === "surgeon" &&
+        state.session?.robot &&
+        state.session.robots?.some(
+            (r) =>
+                r.id === robotId &&
+                r.status === "online" &&
+                r.connection_enabled !== false,
+        )
+    );
+}
+async function changeWorkspace(native) {
+    if (changingWorkspace) return;
+    changingWorkspace = native ? "popout" : "dock";
+    const control = $(native ? "#popout-all" : "#dock-all");
+    const icon = native ? "popout" : "dock";
+    const label = native ? "Pop out all" : "Dock all";
+    $("#popout-all").disabled = $("#dock-all").disabled = true;
+    control.setAttribute("aria-busy", "true");
+    // Retire browser offers before native viewers claim those streams.
+    renderCurrent();
+    try {
+        // Open from the click itself, before awaiting native viewer startup,
+        // so browser popup blocking cannot strand the controller panel.
+        if (native && currentRobotControl() && !(await controller.open()))
+            return;
+        if (!native) await controller.dock();
+        if (document.fullscreenElement) await document.exitFullscreen();
+        const inventoryCameras = inventory().cameras || [];
+        const cameras = native
+            ? inventoryCameras.filter(
+                  (c) =>
+                      ["live", "stale"].includes(c.status) &&
+                      !nativeViewing(c.id),
+              )
+            : Object.keys(state.native_views || {})
+                  .filter(nativeViewing)
+                  .map(
+                      (id) =>
+                          inventoryCameras.find((c) => c.id === id) || {
+                              id,
+                              name: id,
+                          },
+                  );
+        const failures = [];
+        for (const [index, camera] of cameras.entries()) {
+            setIcon(
+                control,
+                icon,
+                `${native ? "Opening" : "Docking"} ${index + 1}/${cameras.length}`,
+            );
+            try {
+                const method = native
+                    ? "view.holoviz"
+                    : browserCamera(camera) &&
+                        ["live", "stale"].includes(camera.status)
+                      ? "view.browser"
+                      : "view.close";
+                await action(method, { camera: camera.id });
+            } catch (error) {
+                failures.push(`${camera.name}: ${error.message}`);
+            }
+            await refresh();
+        }
+        if (failures.length) notice(failures.join("; "));
+        if (native) controller.focus();
+    } catch (error) {
+        notice(error);
+    } finally {
+        changingWorkspace = false;
+        control.removeAttribute("aria-busy");
+        setIcon(control, icon, label);
+        await refresh();
+    }
+}
+$("#popout-all").onclick = () => changeWorkspace(true);
+$("#dock-all").onclick = () => changeWorkspace(false);
 
 setInterval(refresh, 1000);
 refresh();

@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Use one versioned image and preserve device, certificate and terminal access."""
+
+import json
+import os
+import shlex
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def docker_launcher(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "dependencies").mkdir()
+    shutil.copy(Path(__file__).parents[2] / "run.sh", root / "run.sh")
+    shutil.copy(Path(__file__).parents[2] / "scripts/docker.sh", root / "scripts/docker.sh")
+    shutil.copy(Path(__file__).parents[2] / "pyproject.toml", root)
+    for sdk in (4, 5):
+        (root / f"dependencies/sdk{sdk}.toml").write_text(
+            '[holoscan]\ngit = "https://example.invalid/sdk"\n'
+            '[hololink]\ngit = "ssh://git@example.invalid/camera"\n'
+        )
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    records = tmp_path / "calls.jsonl"
+    (tools / "docker").write_text(
+        f"#!{sys.executable}\nimport json,os,sys\n"
+        f"with open({str(records)!r}, 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "if sys.argv[1] == 'info': print(os.environ.get('TEST_RUNTIMES', 'runc\\nnvidia'))\n"
+        "if sys.argv[1] == 'build': print('Build output', file=sys.stderr)\n"
+        "if sys.argv[1] == 'run': print('Run output')\n"
+    )
+    (tools / "docker").chmod(0o755)
+    (tools / "chronyc").write_text("#!/bin/sh\nexit 0\n")
+    (tools / "chronyc").chmod(0o755)
+    (tools / "ssh-add").write_text("#!/bin/sh\nexit 0\n")
+    (tools / "ssh-add").chmod(0o755)
+    (tools / "stat").write_text(
+        '#!/bin/sh\nif [ "$3" = /var/run/docker.sock ]; then echo 1000; '
+        'else exec /usr/bin/stat "$@"; fi\n'
+    )
+    (tools / "stat").chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    agent = socket.socket(socket.AF_UNIX)
+    agent.bind(str(tmp_path / "agent"))
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent"))
+    try:
+        yield root, records
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize("assignment", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_dashboard_certificate_mounts(docker_launcher, tmp_path, monkeypatch, assignment, terminal):
+    root, records = docker_launcher
+    monkeypatch.setenv("TEST_RUNTIMES", "runc" if assignment else "runc\nnvidia")
+    cert, key = tmp_path / "server cert.pem", tmp_path / "server key.pem"
+    cert.touch()
+    key.touch()
+    workspace = tmp_path / "saved workspace"
+    options = []
+    for flag, path in [("--ssl-cert", cert), ("--ssl-key", key), ("--workspace", workspace)]:
+        options.extend([f"{flag}={path}"] if assignment else [flag, str(path)])
+    launcher = ["bash", str(root / "run.sh"), "--docker", "patient", "--ssl", *options]
+    if terminal:
+        launcher = ["script", "-qec", shlex.join(launcher), "/dev/null"]
+    subprocess.run(
+        launcher,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    command = json.loads(records.read_text().splitlines()[-1])
+    assert command[0] == "run"
+    assert ("--runtime=nvidia" in command) is not assignment
+    assert "PYTHONUNBUFFERED=1" in command
+    assert ("-it" in command) is terminal
+    for path in [cert, key]:
+        assert f"{path}:{path}:ro" in command
+    assert f"{workspace}:{workspace}" in command
+    assert workspace.is_dir()
+    assert not (root / "workspace").exists()
+    assert command[-len(options) :] == options
+    (log,) = (workspace / "logs").glob("patient-8000-*.log")
+    assert "Build output" in log.read_text()
+    assert "Run output" in log.read_text()
+
+
+@pytest.mark.parametrize("sdk", [4, 5])
+@pytest.mark.parametrize(
+    "options,role",
+    [
+        (["patient"], "dashboard"),
+        (["surgeon"], "dashboard"),
+        (["doctor"], "dashboard"),
+        (["node", "--patient", "localhost"], "node-real"),
+        (["node", "--patient", "localhost", "--sim", "mira"], "node-sim"),
+        (["node", "--patient", "localhost", "--sim=franka"], "node-sim"),
+    ],
+)
+def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk):
+    root, records = docker_launcher
+    # The tag follows project metadata, rather than a second hard-coded version.
+    (root / "pyproject.toml").write_text('[project]\nversion = "0.1.7"\n')
+    subprocess.run(
+        ["bash", str(root / "run.sh"), "--docker", "--sdk", str(sdk), *options],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    commands = [json.loads(line) for line in records.read_text().splitlines()]
+    build = next(c for c in commands if c[0] == "build")
+    image = f"holoscan-telesurgery:0.1.7-sdk{sdk}"
+    assert "--target" not in build
+    assert build[build.index("--tag") + 1] == image
+    assert "--ssh" in build
+    run = commands[-1]
+    assert run[-len(options) - 1 :] == [image, *options]
+    assert ("SYS_NICE" in run) is (role == "node-real")
+    assert ("/var/run/docker.sock:/var/run/docker.sock" in run) is (role != "dashboard")
+    if role != "node-real":
+        assert "--device" not in run
+        assert "--device-cgroup-rule" not in run
+    copies = [c for c in commands if "--entrypoint" in c]
+    assert len(copies) == (1 if role == "node-sim" else 0)
+    if copies:
+        assert copies[0][-4:] == [image, "-r", "/opt/sim-deps/.", "/workspace/sim-deps/"]

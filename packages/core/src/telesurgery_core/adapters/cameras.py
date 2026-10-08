@@ -28,6 +28,7 @@ class SoftwareCamera:
             self.capture.last_capture_ns or time.time_ns(),
             sim_command_sequence=upstream.sim_command_sequence if upstream else -1,
             started_ns=(upstream.source_started_ns or -1) if upstream else started,
+            depth=self.capture.depth,
         )
 
     def close(self):
@@ -87,6 +88,10 @@ class UsbCamera:
 
 
 def open_camera(config):
+    if config.depth and config.realsense_serial:
+        from telesurgery_core.adapters.realsense import RealSenseCamera
+
+        return RealSenseCamera(config)
     if config.source.startswith("v4l2:"):
         return UsbCamera(config)
     return SoftwareCamera(config)

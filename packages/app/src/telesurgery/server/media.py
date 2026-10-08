@@ -17,10 +17,12 @@ from aiortc import (
     RTCSessionDescription,
 )
 from aiortc.mediastreams import MediaStreamError
+from telesurgery.server.depth import DepthChannel
 from telesurgery.server.stream_timing import StreamTiming
 from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.diagnostics.trace import mark
-from telesurgery_core.transport.protocol import decode_video
+from telesurgery_core.transport.protocol import VideoHeader, decode_video
+from telesurgery_core.video.depth import split
 
 
 class Feed:
@@ -57,6 +59,7 @@ class EncodedTrack(MediaStreamTrack):
         super().__init__()
         self.feed, self.revision, self.origin = feed, -1, None
         self.trace, self.pts = None, None
+        self.depth, self.depth_size = b"", (0, 0)
 
     async def recv(self):
         if self.readyState != "live":
@@ -66,6 +69,11 @@ class EncodedTrack(MediaStreamTrack):
                 lambda: self.feed.packet is not None and self.feed.revision != self.revision
             )
             header, data = self.feed.packet
+            self.depth = b""
+            if header.get("depth_bytes"):
+                parsed = VideoHeader(**header)
+                data, self.depth = split(parsed, data)
+                self.depth_size = parsed.width, parsed.height
             if header["codec"] != "h264":
                 raise MediaStreamError("Use Holoviz for this codec")
             self.trace = self.feed.trace
@@ -121,7 +129,8 @@ class Media:
             await peer.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=kind))
             track = EncodedTrack(self.feeds.setdefault(camera, Feed()))
             sender = peer.addTrack(track)
-            StreamTiming(peer, track, sender)
+            depth = DepthChannel(peer, track)
+            StreamTiming(peer, track, sender, on_frame=depth.send)
             await peer.setLocalDescription(await peer.createAnswer())
             return {"sdp": peer.localDescription.sdp, "type": peer.localDescription.type}
         except BaseException:

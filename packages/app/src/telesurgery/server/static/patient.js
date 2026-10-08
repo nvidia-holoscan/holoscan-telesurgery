@@ -1,21 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { $, element, button, device } from "./ui.js";
+import { $, action, element, button, device } from "./ui.js";
 import { openLog } from "./logs.js";
-const nodeName = (node) =>
-    node.environment && node.id === "host"
-        ? `${node.environment.toUpperCase()} simulation`
-        : node.id === "host"
-          ? `Host · ${node.name}`
-          : node.name;
-export function patientPages(
-    changed,
-    connectNode,
-    removeNode,
-    configureEnvironment,
-) {
+import { icon } from "./icons.js";
+import { deviceStatus } from "./device-status.js";
+const nodeName = (node) => node.name;
+export function patientPages(changed, removeNode, refresh) {
     let state, signature, identitySignature;
+    $("#preview-devices").onclick = () =>
+        $("#equipment-panel").scrollIntoView({ block: "start" });
     const current = () => {
         const [page, id] = location.hash.slice(1).split("/");
         let node = null;
@@ -24,7 +18,11 @@ export function patientPages(
         } catch {
             /* Unknown node returns to directory. */
         }
-        if ((!page || page === "nodes") && state?.nodes?.length === 1)
+        if (
+            (!page || page === "nodes") &&
+            state?.nodes?.length === 1 &&
+            !state.node_requests?.length
+        )
             return { page: "node", node: state.nodes[0].id };
         return {
             page: ["nodes", "node", "surgeons"].includes(page)
@@ -36,8 +34,7 @@ export function patientPages(
     window.addEventListener("hashchange", changed);
     function status(node) {
         const line = element("div", undefined, "node-status-line");
-        const simulation =
-            node.id === "host" ? state.simulation : node.simulation;
+        const simulation = node.simulation;
         const loading =
             node.status === "online" && simulation?.status === "loading";
         line.append(
@@ -47,61 +44,31 @@ export function patientPages(
                     ? "Preparing simulation"
                     : simulation?.status === "error" && node.status === "online"
                       ? "Simulation error"
-                      : node.status === "unpaired"
-                        ? "Needs pairing"
-                        : node.status,
+                      : node.status,
                 `status ${loading ? "starting" : node.status}`,
             ),
         );
-        if (node.id === "host" && state.simulation) {
-            const log = button(
-                "Logs",
-                () =>
-                    openLog(
-                        `${nodeName(node)} · Simulator log`,
-                        "/api/simulation/log",
-                    ),
-                "text-link",
-                "logs",
-            );
-            log.setAttribute("aria-label", `${node.name} simulator logs`);
-            line.append(log);
-        }
-        if (node.id !== "host") {
-            if (node.connection === "service" && !node.paired)
-                line.append(
-                    button(
-                        "Pair node",
-                        () => connectNode(node.address),
-                        "text-link",
-                    ),
-                );
-            const label = simulation
-                ? "Simulation logs"
-                : node.connection === "service"
-                  ? "Connection logs"
-                  : "Deployment logs";
-            const log = button(
-                label,
-                () =>
-                    openLog(
-                        `${nodeName(node)} · ${label}`,
-                        `/api/nodes/${encodeURIComponent(node.id)}/log${simulation ? "?source=simulation" : ""}`,
-                    ),
-                "text-link",
-                "logs",
-            );
-            log.setAttribute("aria-haspopup", "dialog");
-            line.append(log);
-            const remove = button(
-                `Remove ${nodeName(node)}`,
-                () => removeNode(node),
-                "text-link icon-button node-remove",
-                "remove",
-            );
-            remove.setAttribute("aria-haspopup", "dialog");
-            line.append(remove);
-        }
+        const label = simulation ? "Simulation logs" : "Node logs";
+        const log = button(
+            label,
+            () =>
+                openLog(
+                    `${nodeName(node)} · ${label}`,
+                    `/api/nodes/${encodeURIComponent(node.id)}/log${simulation ? "?source=simulation" : ""}`,
+                ),
+            "text-link",
+            "logs",
+        );
+        log.setAttribute("aria-haspopup", "dialog");
+        line.append(log);
+        const remove = button(
+            `Remove ${nodeName(node)}`,
+            () => removeNode(node),
+            "text-link icon-button node-remove",
+            "remove",
+        );
+        remove.setAttribute("aria-haspopup", "dialog");
+        line.append(remove);
         return line;
     }
     function link(text, target) {
@@ -130,26 +97,10 @@ export function patientPages(
                 return;
             }
             $("#patient-node-header").hidden = !selected;
-            $("#node-environment").hidden =
-                !selected ||
-                selected.id === "host" ||
-                selected.connection === "service";
-            $("#node-environment").disabled = selected?.status !== "online";
-            $("#node-environment").onclick = () =>
-                configureEnvironment(selected);
             $("#camera-panel").hidden = !selected;
-            $("#add-node").hidden = Boolean(state.environment);
-            const heading = $(
-                selected ? "#node-actions" : "#nodes-page .page-heading",
-            );
-            if ($("#add-node").parentElement !== heading)
-                heading.append($("#add-node"));
             $("#patient-node-header .back-link").hidden =
                 state.nodes?.length === 1;
-            const identityKey = JSON.stringify([
-                selected,
-                state.simulation?.status,
-            ]);
+            const identityKey = JSON.stringify(selected);
             if (selected && identitySignature !== identityKey) {
                 identitySignature = identityKey;
                 $("#node-name").textContent = nodeName(selected);
@@ -169,10 +120,7 @@ export function patientPages(
                     ),
                 );
             }
-            const simulation =
-                selected?.id === "host"
-                    ? state.simulation
-                    : selected?.simulation;
+            const simulation = selected?.simulation;
             const loading = simulation?.status === "loading";
             $("#simulation-progress").hidden = !(
                 simulation && simulation.status !== "ready"
@@ -184,7 +132,18 @@ export function patientPages(
                   : "";
             const pending =
                 state.surgeons?.filter((s) => s.status === "pending") || [];
-            $("#nav-node-count").textContent = state.nodes?.length || 0;
+            const requests = state.node_requests || [];
+            const empty = !state.nodes?.length;
+            $("#room-start").hidden = !empty;
+            $("#summary").hidden = empty;
+            $("#overview-page .overview-grid").hidden =
+                empty && !requests.length && !pending.length;
+            $("#node-start").hidden = !empty || requests.length > 0;
+            $("#node-command").hidden = empty && !requests.length;
+            $("#node-requests-panel").hidden = !requests.length;
+            $("#nav-node-count").textContent = requests.length
+                ? `${requests.length} pending`
+                : state.nodes?.length || "";
             $("#nav-request-count").textContent = pending.length || "";
             $("#node-count").textContent =
                 state.nodes?.filter((n) => n.status === "online").length || 0;
@@ -194,19 +153,64 @@ export function patientPages(
                 state.surgeons?.filter((s) => s.status === "approved").length ||
                 0;
             $("#robot-count").textContent =
-                state.robots?.filter(
-                    (r) => r.status === "online" && !r.owner && !r.error,
-                ).length || 0;
+                state.robots?.filter((r) => r.status === "online").length || 0;
+            $("#node-total").textContent =
+                `${state.nodes?.length || 0} nodes in this room`;
+            $("#camera-total").textContent =
+                `${state.cameras?.length || 0} cameras discovered`;
+            $("#people-total").textContent = pending.length
+                ? `${pending.length} awaiting approval`
+                : "Patient-managed access";
+            $("#robot-total").textContent =
+                `${state.robots?.length || 0} controllers discovered`;
             const key = JSON.stringify([
                 state.nodes,
                 (state.cameras || []).map(({ frames, ...camera }) => camera),
-                state.robots?.map(({ state, ...robot }) => robot),
+                state.robots?.map(
+                    ({ state, feedback_age_ms, ...robot }) => robot,
+                ),
                 state.surgeons,
-                state.simulation?.status,
-                state.simulation?.stage,
+                state.node_requests,
             ]);
             if (signature !== key) {
                 signature = key;
+                const requestsList = $("#node-requests");
+                requestsList.replaceChildren();
+                for (const request of requests) {
+                    const row = element("div", undefined, "node-request");
+                    const identity = element("div");
+                    identity.append(
+                        element("strong", request.name),
+                        element(
+                            "small",
+                            `${request.ip} · ${request.environment ? `${request.environment.toUpperCase()} simulation` : "Physical devices"} · ${request.id}`,
+                        ),
+                    );
+                    const actions = element("div", undefined, "actions");
+                    for (const [label, method] of [
+                        ["Approve", "node.approve"],
+                        ["Reject", "node.reject"],
+                    ]) {
+                        const control = button(
+                            label,
+                            async () => {
+                                for (const button of actions.children)
+                                    button.disabled = true;
+                                try {
+                                    await action(method, { id: request.id });
+                                    await refresh();
+                                } finally {
+                                    for (const button of actions.children)
+                                        button.disabled = false;
+                                }
+                            },
+                            label === "Approve" ? "small" : "secondary small",
+                        );
+                        actions.append(control);
+                    }
+                    row.append(icon("server"), identity, actions);
+                    requestsList.append(row);
+                }
                 const attention = $("#attention");
                 attention.replaceChildren(
                     ...pending.map((s) =>
@@ -216,9 +220,15 @@ export function patientPages(
                         ),
                     ),
                 );
+                for (const request of requests)
+                    attention.append(
+                        link(
+                            `${request.name} requests node access →`,
+                            "#nodes",
+                        ),
+                    );
                 for (const node of state.nodes || []) {
-                    const sim =
-                        node.id === "host" ? state.simulation : node.simulation;
+                    const sim = node.simulation;
                     if (sim && sim.status !== "ready")
                         attention.append(
                             link(
@@ -228,11 +238,7 @@ export function patientPages(
                         );
                 }
                 for (const node of state.nodes || [])
-                    if (
-                        ["error", "offline", "deploying", "unpaired"].includes(
-                            node.status,
-                        )
-                    )
+                    if (["error", "offline", "starting"].includes(node.status))
                         attention.append(
                             link(
                                 `${nodeName(node)} · ${node.status} →`,
@@ -243,18 +249,20 @@ export function patientPages(
                     ...(state.cameras || []),
                     ...(state.robots || []),
                 ])
-                    if (item.error)
+                    if (item.error && item.controller?.status !== "stopped")
                         attention.append(
                             link(
                                 `${item.name} · ${item.error}`,
                                 `#node/${item.node || item.id.split(":")[0]}`,
                             ),
                         );
+                $("#attention-count").hidden = !attention.children.length;
+                $("#attention-count").textContent = attention.children.length;
                 if (!attention.children.length)
                     attention.append(
                         element(
                             "p",
-                            "No issues need attention.",
+                            "All nodes connected. No pending requests.",
                             "quiet-state",
                         ),
                     );
@@ -269,15 +277,25 @@ export function patientPages(
                     const robots = (state.robots || []).filter(
                         (r) => (r.node || r.id.split(":")[0]) === node.id,
                     );
-                    const detail =
-                        node.connection === "service" && !node.paired
-                            ? node.status === "offline"
-                                ? "Waiting for service"
-                                : "Pair to discover cameras and robots"
-                            : `${cameras.filter((c) => c.status === "live").length}/${cameras.length} cameras streaming · ${robots.length} robots`;
+                    const detail = `${cameras.filter((c) => c.status === "live").length}/${cameras.length} cameras streaming · ${robots.length} robot${robots.length === 1 ? "" : "s"}`;
                     const card = device(nodeName(node), detail);
+                    const identity = element(
+                        "a",
+                        undefined,
+                        "node-card-identity",
+                    );
+                    identity.href = `#node/${node.id}`;
+                    const text = element("div");
+                    text.append(...card.childNodes);
+                    identity.append(icon("server"), text, icon("right"));
+                    card.append(identity);
                     card.querySelector("strong").title = nodeName(node);
-                    const counts = element("div", undefined, "node-resources");
+                    const counts = element("a", undefined, "node-resources");
+                    counts.href = `#node/${node.id}`;
+                    counts.setAttribute(
+                        "aria-label",
+                        `${nodeName(node)} equipment`,
+                    );
                     for (const [label, value] of [
                         ["Cameras", cameras.length],
                         [
@@ -293,10 +311,46 @@ export function patientPages(
                         );
                         counts.append(item);
                     }
-                    card.querySelector("small").textContent =
-                        `${node.connection === "service" ? "Node service" : node.id === "host" ? "Local host" : "SSH node"} · SDK ${String(node.sdk || state.sdk).split(".")[0]}`;
-                    card.append(counts);
-                    card.append(status(node));
+                    card.querySelector("small").textContent = [
+                        node.ip,
+                        `${node.environment ? `${node.environment.toUpperCase()} · ` : ""}SDK ${String(node.sdk || state.sdk).split(".")[0]}`,
+                    ]
+                        .filter(Boolean)
+                        .join(" · ");
+                    card.append(status(node), counts);
+                    const equipment = element(
+                        "div",
+                        undefined,
+                        "node-equipment",
+                    );
+                    for (const item of [...cameras, ...robots]) {
+                        const row = link("", `#node/${node.id}`);
+                        const [label, tone] = deviceStatus(
+                            item,
+                            robots.includes(item),
+                        );
+                        row.title = label;
+                        row.setAttribute(
+                            "aria-label",
+                            `${item.name}: ${label}`,
+                        );
+                        row.dataset.status = tone;
+                        row.append(
+                            icon(cameras.includes(item) ? "camera" : "robot"),
+                            element("span", item.name, "node-equipment-name"),
+                        );
+                        equipment.append(row);
+                    }
+                    if (!equipment.children.length)
+                        equipment.append(
+                            element(
+                                "p",
+                                node.status === "online"
+                                    ? "Discovering connected devices…"
+                                    : "Waiting for node connection",
+                            ),
+                        );
+                    card.append(equipment);
                     if (node.error)
                         card.append(
                             element(
@@ -305,16 +359,21 @@ export function patientPages(
                                 "error-text",
                             ),
                         );
-                    const open = link("Open node →", `#node/${node.id}`);
-                    open.className = "node-open";
-                    card.append(open);
                     directory.append(card);
-                    activity.append(
-                        link(
-                            `${nodeName(node)} · ${detail}`,
-                            `#node/${node.id}`,
-                        ),
+                    const roomNode = link("", `#node/${node.id}`);
+                    roomNode.classList.add("room-node");
+                    const roomIdentity = element("div");
+                    roomIdentity.append(
+                        element("strong", nodeName(node)),
+                        element("small", detail),
                     );
+                    roomNode.append(
+                        icon("server"),
+                        roomIdentity,
+                        element("span", node.status, `status ${node.status}`),
+                        icon("right"),
+                    );
+                    activity.append(roomNode);
                 }
                 for (const robot of state.robots || [])
                     if (robot.owner)

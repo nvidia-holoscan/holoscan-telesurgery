@@ -1,38 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Local-only browser interface. Remote peers use the separate application endpoint."""
+"""Browser interface. Nodes and surgeons use the separate application endpoint."""
 
 import asyncio
+import logging
 import signal
 from pathlib import Path
 
 from aiohttp import web
 from telesurgery.server.application import Application
-from telesurgery_core.diagnostics.logs import read_log
+from telesurgery.server.security import dashboard_requests, dashboard_tls, security_headers
 
 
-@web.middleware
-async def local_requests(request, handler):
-    if request.host.split(":")[0] not in {"localhost", "127.0.0.1"}:
-        raise web.HTTPForbidden(text="Use the local dashboard address")
-    origin = request.headers.get("Origin")
-    if origin and origin != f"http://{request.host}":
-        raise web.HTTPForbidden(text="Cross-origin dashboard access is disabled")
-    if request.method == "POST" and request.content_type != "application/json":
-        raise web.HTTPUnsupportedMediaType(text="Expected application/json")
-    try:
-        return await handler(request)
-    except (ValueError, KeyError, TypeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    except PermissionError as exc:
-        return web.json_response({"error": str(exc)}, status=403)
-    except (RuntimeError, ConnectionError, OSError, TimeoutError) as exc:
-        return web.json_response({"error": str(exc)}, status=409)
-
-
-def create_app(service):
-    app = web.Application(middlewares=[local_requests], client_max_size=128 * 1024)
+def create_app(service, host="127.0.0.1"):
+    app = web.Application(middlewares=[dashboard_requests(host)], client_max_size=128 * 1024)
+    app.on_response_prepare.append(security_headers)
     static = Path(__file__).with_name("static")
 
     async def index(request):
@@ -46,13 +29,6 @@ def create_app(service):
             headers={"Cache-Control": "no-store"},
         )
 
-    async def simulation_log(request):
-        if service.simulation is None:
-            return web.json_response({"error": "No simulation is running"}, status=404)
-        return web.json_response(
-            await asyncio.to_thread(service.simulation.log), headers={"Cache-Control": "no-store"}
-        )
-
     async def node_log(request):
         node = request.match_info["node"]
         if service.role != "patient" or node not in service.node_registry.configs:
@@ -62,23 +38,60 @@ def create_app(service):
                 await service.node_call(node, "simulation.log"),
                 headers={"Cache-Control": "no-store"},
             )
-        prefix = (
-            "connect" if service.node_registry.configs[node].get("kind") == "service" else "deploy"
-        )
-        path = service.directory / f"{prefix}-{node}.log"
-
         return web.json_response(
-            await asyncio.to_thread(read_log, path), headers={"Cache-Control": "no-store"}
+            await service.node_call(node, "node.log"), headers={"Cache-Control": "no-store"}
         )
 
     async def action(request):
         body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or not isinstance(body.get("action"), str)
+            or not isinstance(body.get("params", {}), dict)
+        ):
+            raise ValueError("Expected an action name and parameters object")
+        try:
+            result = await service.action(body["action"], body.get("params", {}))
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Action %s (%s) failed: %s",
+                body.get("action"),
+                body.get("params", {}).get("id", ""),
+                exc,
+            )
+            raise
+        return web.json_response({"result": result})
+
+    async def camera_log(request):
+        camera = request.match_info["camera"]
+        if service.role != "patient" or camera not in {
+            item["id"] for item in service.inventory()["cameras"]
+        }:
+            raise web.HTTPNotFound()
+        node, key = camera.split(":", 1)
         return web.json_response(
-            {"result": await service.action(body["action"], body.get("params", {}))}
+            await service.node_call(node, "camera.log", {"id": key}),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def robot_log(request):
+        robot = request.match_info["robot"]
+        if service.role != "patient" or robot not in {
+            item["id"] for item in service.inventory()["robots"]
+        }:
+            raise web.HTTPNotFound()
+        node, key = robot.split(":", 1)
+        return web.json_response(
+            await service.node_call(node, "robot.log", {"id": key}),
+            headers={"Cache-Control": "no-store"},
         )
 
     async def offer(request):
         body = await request.json()
+        if not isinstance(body, dict) or any(
+            not isinstance(body.get(key), str) for key in ("camera", "sdp", "type")
+        ):
+            raise ValueError("Expected a camera and WebRTC offer")
         if service.native.status().get(body["camera"], {}).get("status") in {"starting", "running"}:
             raise ValueError("Choose Show in browser to switch back from Holoviz")
         if service.role == "surgeon":
@@ -111,8 +124,9 @@ def create_app(service):
     app.cleanup_ctx.append(lifecycle)
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
-    app.router.add_get("/api/simulation/log", simulation_log)
     app.router.add_get("/api/nodes/{node}/log", node_log)
+    app.router.add_get("/api/cameras/{camera}/log", camera_log)
+    app.router.add_get("/api/robots/{robot}/log", robot_log)
     app.router.add_post("/api/action", action)
     app.router.add_post("/api/offer", offer)
     app.router.add_static("/static", static)
@@ -124,26 +138,27 @@ def serve(
     port,
     endpoint_port,
     directory,
-    environment=None,
     *,
-    sim_gui=False,
-    nodes=(),
+    host="127.0.0.1",
+    ssl=False,
+    ssl_cert=None,
+    ssl_key=None,
 ):
     import fcntl
 
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / "service.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("Another service is using this state directory") from exc
-        service = Application(
-            role, directory, endpoint_port, environment, sim_gui=sim_gui, nodes=nodes
-        )
+        context = dashboard_tls(directory, host, ssl_cert, ssl_key) if ssl else None
+        service = Application(role, directory, endpoint_port)
         web.run_app(
-            create_app(service),
-            host="127.0.0.1",
+            create_app(service, host),
+            host=host,
             port=port,
+            ssl_context=context,
             access_log=None,
             shutdown_timeout=5,
         )

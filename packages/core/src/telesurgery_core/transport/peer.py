@@ -16,7 +16,7 @@ from telesurgery_core.diagnostics.clock import Clock, PeerClock
 from telesurgery_core.diagnostics.trace import mark, wire
 
 MAX_HEADER = 64 * 1024
-MAX_PAYLOAD = 32 * 1024 * 1024
+MAX_PAYLOAD = 64 * 1024 * 1024
 PREFIX = struct.Struct("!II")
 
 
@@ -31,6 +31,7 @@ class Peer:
         clock=None,
         video_sent=None,
         video_stage="send_queue_ms",
+        max_payload=MAX_PAYLOAD,
     ):
         self.id = secrets.token_urlsafe(24)
         self.reader, self.writer = reader, writer
@@ -46,6 +47,7 @@ class Peer:
         self.probes = {}
         self.clock = clock or Clock()
         self.video_sent, self.video_stage = video_sent, video_stage
+        self.max_payload = max_payload
 
     def start(self):
         self.sender = asyncio.create_task(self._send())
@@ -143,7 +145,7 @@ class Peer:
         try:
             while True:
                 hsize, psize = PREFIX.unpack(await self.reader.readexactly(PREFIX.size))
-                if not 0 < hsize <= MAX_HEADER or psize > MAX_PAYLOAD:
+                if not 0 < hsize <= MAX_HEADER or psize > self.max_payload:
                     raise ValueError("Invalid application message size")
                 header = json.loads(await self.reader.readexactly(hsize))
                 payload = await self.reader.readexactly(psize)
@@ -194,6 +196,7 @@ class Peer:
             ValueError,
             TypeError,
             KeyError,
+            RecursionError,
         ):
             pass
         finally:

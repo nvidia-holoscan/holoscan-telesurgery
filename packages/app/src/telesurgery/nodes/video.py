@@ -7,7 +7,7 @@ import asyncio
 import secrets
 import time
 
-from telesurgery.nodes.pairing import fingerprint
+from telesurgery.nodes.address import fingerprint
 from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.transport.peer import Peer
 from telesurgery_core.transport.protocol import VideoHeader
@@ -24,7 +24,11 @@ class VideoEndpoint:
 
     async def start(self, port=7449):
         self.server = await asyncio.start_server(
-            self._accept, "0.0.0.0", port, ssl=server_context(self.directory)
+            self._accept,
+            "0.0.0.0",  # TLS and one-use viewer tickets. # nosec B104
+            port,
+            ssl=server_context(self.directory),
+            ssl_handshake_timeout=10,
         )
         self.address = {
             "port": self.server.sockets[0].getsockname()[1],
@@ -74,7 +78,9 @@ class VideoEndpoint:
             return
         task = asyncio.current_task()
         self.connections.add(task)
-        peer = Peer(reader, writer, self._request, clock=self.clock, video_sent=self.sent).start()
+        peer = Peer(
+            reader, writer, self._request, clock=self.clock, video_sent=self.sent, max_payload=0
+        ).start()
         self.peers.add(peer)
         try:
             try:

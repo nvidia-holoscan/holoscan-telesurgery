@@ -5,10 +5,8 @@ project(telesurgery_hsb LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(holoscan 5.0 REQUIRED CONFIG)
-# The pinned SDK can omit this dependency from exports after a cached rebuild.
-if(NOT TARGET CCCL::CCCL)
-  find_package(CCCL 3.3.3 REQUIRED CONFIG)
-endif()
+# CUDA tensor headers require CCCL; EA3 omits its target from cached-build exports.
+find_package(CCCL 3.3.3 REQUIRED CONFIG)
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module Development.SABIModule)
 execute_process(COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
                 OUTPUT_VARIABLE nanobind_DIR OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -54,4 +52,4 @@ if(TARGET hololink::operators::fusa_coe_capture)
   target_link_libraries(_hsb PRIVATE hololink::operators::fusa_coe_capture
       hololink::operators::packed_format_converter)
 endif()
-install(TARGETS _hsb LIBRARY DESTINATION telesurgery_runtime/sdk5)
+install(TARGETS _hsb LIBRARY DESTINATION telesurgery_runtime/backends/sdk5)

@@ -7,10 +7,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "telesurgery-sim"
-version = "0.3.0"
+version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = ["telesurgery-core", "websockets>=14,<17"]
+dependencies = ["telesurgery-core", "telesurgery-robots", "websockets>=14,<17"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telesurgery_sim"]

@@ -16,6 +16,7 @@
 #include <hololink/sensors/camera/imx274/native_imx274_sensor.hpp>
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/connection_options.hpp>
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator.hpp>
@@ -51,14 +52,16 @@ void check_cuda(CUresult result) {
   }
 }
 
-bool supports_fusa(const hololink::Metadata& metadata, int gpu) {
+}  // namespace
+
+bool Capture::supports_fusa(const std::string& interface, int gpu) {
 #ifdef TELESURGERY_HAS_FUSA
-  const auto interface = metadata.get<std::string>("interface").value_or("");
   std::ifstream compatible("/sys/class/net/" + interface + "/device/of_node/compatible");
   const std::string device{std::istreambuf_iterator<char>(compatible), {}};
   if (gpu != 0 || device.find("nvidia,tegra264-mgbe") == std::string::npos) return false;
   CUdevice cuda_device;
   int integrated = 0;
+  check_cuda(cuInit(0));
   check_cuda(cuDeviceGet(&cuda_device, gpu));
   check_cuda(cuDeviceGetAttribute(&integrated, CU_DEVICE_ATTRIBUTE_INTEGRATED, cuda_device));
   return integrated != 0;
@@ -67,6 +70,7 @@ bool supports_fusa(const hololink::Metadata& metadata, int gpu) {
 #endif
 }
 
+namespace {
 #ifdef TELESURGERY_HAS_FUSA
 // The pinned converter exposes configure() but no graph-constructor geometry argument.
 class FusaUnpack : public hololink::operators::PackedFormatConverterOp {
@@ -174,7 +178,8 @@ struct Capture::Impl {
   }
 };
 
-Capture::Capture(const std::string& address, int mode, int expander, int gpu, bool reset)
+Capture::Capture(const std::string& address, int mode, int expander, int gpu, bool reset,
+                 const std::string& receiver)
     : impl_(std::make_unique<Impl>()) {
   auto& p = *impl_;
   check_cuda(cuInit(0));
@@ -183,7 +188,14 @@ Capture::Capture(const std::string& address, int mode, int expander, int gpu, bo
   check_cuda(cuCtxSetCurrent(p.context));
   auto metadata = hololink::Enumerator::find_channel(address);
   hololink::DataChannel::use_sensor(metadata, expander);
-  const bool fusa = supports_fusa(metadata, gpu);
+  if (receiver != "auto" && receiver != "fusa" && receiver != "linux") {
+    throw std::invalid_argument("Unknown HSB receiver");
+  }
+  const bool available = supports_fusa(metadata.get<std::string>("interface").value_or(""), gpu);
+  if (receiver == "fusa" && !available) {
+    throw std::invalid_argument("FuSa CoE requires a supported Thor interface on GPU 0");
+  }
+  const bool fusa = receiver != "linux" && available;
   const bool legacy = is_legacy_hsb_lite(metadata);
   if (!fusa && legacy && metadata.get<int64_t>("hsb_ip_version").value() < 0x2602) {
     p.channel = std::make_shared<hololink::module::module_core::HsbIp2510DataChannel>(metadata);
@@ -219,7 +231,7 @@ Capture::Capture(const std::string& address, int mode, int expander, int gpu, bo
                    .device_stop = stop,
                    .interface = interface,
                    .mac_addr = {mac.ether_addr_octet, mac.ether_addr_octet + 6},
-                   .timeout = 100,
+                   .timeout = 1500,
                    .pixel_format = p.camera->get_pixel_format(),
                    .bayer_format = p.camera->get_bayer_format(),
                    .packetizer_enabled = true,
@@ -284,7 +296,14 @@ int Capture::bayer_format() const { return int(impl_->camera->get_bayer_format()
 std::optional<CaptureFrame> Capture::read() {
   if (!impl_->session) throw std::runtime_error("camera is closed");
   if (impl_->session->termination() == holoscan::RunTermination::kFailed) {
-    throw std::runtime_error("HSB receiver graph failed; inspect Holoscan diagnostics");
+    std::string message = "HSB receiver graph failed";
+    for (const auto& diagnostic : impl_->session->diagnostics()) {
+      if (diagnostic.severity != holoscan::DiagnosticSeverity::kError) continue;
+      message += ": " + (diagnostic.detail && !diagnostic.detail->error.message.empty()
+                             ? diagnostic.detail->error.message
+                             : diagnostic.token);
+    }
+    throw std::runtime_error(message);
   }
   std::lock_guard lock(impl_->mailbox->mutex);
   return std::exchange(impl_->mailbox->frame, std::nullopt);

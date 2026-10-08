@@ -84,9 +84,7 @@ export function streamSettings(changed) {
         const available = modes.filter((m) => size(m) === resolution.value);
         options(
             fps,
-            [...new Set(available.flatMap((m) => m.fps))].sort(
-                (a, b) => b - a,
-            ),
+            [...new Set(available.flatMap((m) => m.fps))].sort((a, b) => b - a),
             fpsLabel,
             preferred,
         );
@@ -116,6 +114,12 @@ export function streamSettings(changed) {
                     fps: Number(fps.value),
                     pixel_format: format.value,
                     codec,
+                    ...(camera.depth_supported
+                        ? { depth: $("#stream-depth").checked }
+                        : {}),
+                    ...(camera.receivers?.length
+                        ? { receiver: $("#stream-receiver").value }
+                        : {}),
                     ...(codec === "raw-bgr8"
                         ? {}
                         : codec === "nvjpeg"
@@ -154,6 +158,15 @@ export function streamSettings(changed) {
                   },
               ];
         $("#stream-camera").textContent = item.name;
+        $("#stream-depth-field").hidden = !item.depth_supported;
+        $("#stream-depth").checked = item.depth === true;
+        $("#stream-receiver-field").hidden = !item.receivers?.length;
+        options(
+            $("#stream-receiver"),
+            item.receivers || [],
+            (value) => (value === "fusa" ? "FuSa CoE" : "LinuxReceiver · UDP"),
+            item.receiver,
+        );
         $("#stream-quality").value = item.qp ?? 24;
         $("#stream-jpeg-quality").value = item.jpeg_quality ?? 85;
         options(
