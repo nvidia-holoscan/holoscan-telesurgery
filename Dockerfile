@@ -104,6 +104,6 @@ COPY --from=native-build /opt/sim-deps /opt/sim-deps
 # Application-only rebuilds replace just these small layers.
 COPY --from=application /opt/application/ /opt/telesurgery/
 COPY --from=application /app/packages ./packages
-COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE NOTICE SECURITY.md ./
 ENTRYPOINT ["python", "-m", "telesurgery"]
 CMD ["--help"]
