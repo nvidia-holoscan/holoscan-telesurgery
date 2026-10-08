@@ -89,6 +89,10 @@ async def test_camera_logs_route_to_device_and_reject_unknown_or_surgeon_request
 async def test_environment_switch_clears_readiness_and_preserves_previous_log(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(
+        "telesurgery_sim.runtime.launch.simulation_support",
+        lambda: {"supported": True, "reason": ""},
+    )
     for name, content in {
         "devices.json": '{"cameras": [{"name": "Previous room"}]}',
         "progress": "Previous startup",

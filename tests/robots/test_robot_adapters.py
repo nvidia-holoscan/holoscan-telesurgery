@@ -493,6 +493,7 @@ def test_home_uses_shared_pose_and_preserves_admission_and_stop():
         unsupported.move("owner", 1, {}, time.time(), mode="home")
 
 
+@pytest.mark.sdk
 @pytest.mark.asyncio
 async def test_simulation_connection_remains_disconnected_after_discovery(tmp_path, monkeypatch):
     import json
