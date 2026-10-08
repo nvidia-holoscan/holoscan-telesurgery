@@ -30,4 +30,8 @@ Git uses ordinary SSH/HTTPS authentication. Sources stay under `build/third_part
 
 Tests cover admission, exclusive control, stale commands, disconnection, real SDK graphs, GPU codecs and browser video. `scripts/benchmark.py` collects real camera-to-viewer measurements from dedicated patient and surgeon services; its usage is in [BENCHMARK.md](BENCHMARK.md).
 
-CI audits the locked Python dependencies and scans Python code for security issues on changes and weekly. Dependency updates come through Dependabot. Private keys are checked before commit; keep certificates, credentials and runtime state out of Git. Dependency scans do not cover the CUDA/Isaac Sim images or vendor binaries.
+Pull requests run CPU-only unit and browser tests, pre-commit, SPDX copyright/license checks, documentation link checks and security checks. GPU and Holoscan integration tests run locally with the corresponding SDK installed.
+
+For Blossom CI, `SachidanandAlle`, `jjomier` and `wendell-hom` can comment `/build` on a pull request. The repository needs the `blossom` runner and `BLOSSOM_KEY` / `CI_SERVER` secrets; `workflow_dispatch` is reserved for CI result callbacks. Comment triggers become available once the workflow is on `main`.
+
+CI audits locked Python dependencies, scans Python code and checks workflow security on changes and weekly. Dependency updates come through Dependabot. Private keys are checked before commit; keep certificates, credentials and runtime state out of Git. Dependency scans do not cover the CUDA/Isaac Sim images or vendor binaries.
