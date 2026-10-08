@@ -1,0 +1,271 @@
+Holoscan Telesurgery
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This product includes software developed at NVIDIA CORPORATION (https://www.nvidia.com/).
+
+Holoscan Telesurgery is licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+Third-party software is not copied into this source tree. Native setup and the container image download the components below at build or install time. Versions are the pin in uv.lock, dependencies/*.toml, the Dockerfile, or the build script. Transitive Python packages resolved by uv.lock are not repeated here unless their license obligation is stronger than the direct dependency.
+
+Corresponding source for GPL and LGPL components installed from Ubuntu 24.04 is available from the Ubuntu archive for that release. Corresponding source for other copyleft components is at the URLs below.
+
+Holoscan SDK (https://github.com/nvidia-holoscan/holoscan-sdk)
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SDK 5: commit 163dac10195d6b603f9e6158a1d5dfb390732203 (v5.0.0-ea3), built from source.
+SDK 4: holoscan-cu13 4.6.0 and holoscan-cuda-13 4.6.0.0-1.
+Licensed under Apache-2.0 (https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea3/LICENSE.txt)
+The SDK 5 build downloads Slang and other Holoscan build dependencies. Slang 2026.14 is build-time only.
+
+Slang (https://github.com/shader-slang/slang)
+Copyright (c) 2024 Shader Slang Contributors
+Version 2026.14.
+Licensed under Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause (https://github.com/shader-slang/slang/blob/v2026.14/LICENSE)
+The source code for Slang is available at <https://github.com/shader-slang/slang/archive/refs/tags/v2026.14.tar.gz>.
+
+Hololink, SDK 5 (ssh://git@gitlab-master.nvidia.com:12051/holoscan/hololink.git)
+Commit be6510635e7f877593e9ea45622f12522cb8cf4c, plus the patches in native/patches/.
+This checkout is internal to NVIDIA GitLab. Its license text is not published in this repository.
+
+holoscan-sensor-bridge, SDK 4 (https://github.com/nvidia-holoscan/holoscan-sensor-bridge)
+Commit 4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc, plus native/patches/hololink-sdk4-optional-crc.patch.
+Licensed under Apache-2.0 (https://github.com/nvidia-holoscan/holoscan-sensor-bridge/blob/4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc/LICENSE)
+
+PyNvVideoCodec (https://pypi.org/project/pynvvideocodec/)
+Version 2.2.3, built from the NGC archive with the NVENC output-delay patch in scripts/builders/codecs.py and installed as 2.2.3+telesurgery.1.
+The unmodified PyPI package is published as MIT (https://pypi.org/project/pynvvideocodec/2.2.3/).
+The build replaces its bundled pybind11 2.10.0 with pybind11 2.13.6.
+
+pybind11 (https://github.com/pybind/pybind11)
+Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
+Version 2.13.6.
+Licensed under BSD-3-Clause (https://github.com/pybind/pybind11/blob/v2.13.6/LICENSE)
+
+nvidia-nvimgcodec-cu13 (https://github.com/NVIDIA/nvImageCodec)
+Version 0.9.0.20.
+Licensed under Apache-2.0 (https://github.com/NVIDIA/nvImageCodec)
+
+cupy-cuda13x (https://github.com/cupy/cupy)
+Version 14.2.0.
+Licensed under MIT (https://github.com/cupy/cupy/blob/v14.2.0/LICENSE)
+
+libfranka (https://github.com/frankarobotics/libfranka)
+Commit d053f51c209c2fc5626fc298b3a556e94c3bbc02.
+Licensed under Apache-2.0 (https://github.com/frankarobotics/libfranka/blob/d053f51c209c2fc5626fc298b3a556e94c3bbc02/LICENSE)
+
+libfranka-common (https://github.com/frankaemika/libfranka-common)
+Commit cd38d0ec300b7e6864407d85d1e88e2fba31ccd5, the submodule of the libfranka commit above.
+Licensed under Apache-2.0 (https://github.com/frankaemika/libfranka-common/blob/cd38d0ec300b7e6864407d85d1e88e2fba31ccd5/LICENSE)
+
+ruckig (https://github.com/pantor/ruckig)
+Copyright (c) 2021 Lars Berscheid
+Python package 0.19.4, and C++ sources at commit a8db97a4e9c55e5160a3855f739fa3b270df8e4c statically linked into the Franka binding.
+Licensed under MIT (https://github.com/pantor/ruckig/blob/a8db97a4e9c55e5160a3855f739fa3b270df8e4c/LICENSE)
+
+pin (https://github.com/stack-of-tasks/pinocchio)
+Version 3.9.0.
+Licensed under BSD-3-Clause (https://github.com/stack-of-tasks/pinocchio/blob/v3.9.0/LICENSE)
+
+cmeel-urdfdom (https://github.com/cmake-wheel/cmeel-urdfdom)
+Version 4.0.1. Upstream: https://github.com/ros/urdfdom
+Licensed under BSD-3-Clause.
+
+cmeel-tinyxml2 (https://github.com/cmake-wheel/cmeel-tinyxml2)
+Version 10.0.0. Upstream: https://github.com/leethomason/tinyxml2
+Licensed under Zlib.
+
+Qhull, redistributed inside the Pinocchio dependency closure as cmeel-qhull 8.0.2.1 (https://github.com/qhull/qhull)
+Copyright (c) 1993-2020 C.B. Barber, Arlington, MA, and The National Science and Technology Research Center for Computation and Visualization of Geometric Structures (The Geometry Center), University of Minnesota.
+Licensed under the Qhull license (https://github.com/qhull/qhull/blob/master/COPYING.txt). A copy of that license must be distributed with any binary that includes Qhull.
+
+Eigen, used through libeigen3-dev when building libfranka and through the Pinocchio wheels (https://gitlab.com/libeigen/eigen)
+Licensed under MPL-2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.MPL2).
+
+nanobind (https://github.com/wjakob/nanobind)
+Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
+Version 3.0.1. Build tool; uninstalled from the runtime image after the Franka binding is built.
+Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICENSE)
+
+CMake (https://gitlab.kitware.com/cmake/cmake)
+Version 4.4.4. Build tool; uninstalled from the runtime image.
+Licensed under BSD-3-Clause (https://gitlab.kitware.com/cmake/cmake/-/raw/v4.4.4/Copyright.txt)
+
+Ninja (https://github.com/ninja-build/ninja)
+Version 1.13.2. Build tool; uninstalled from the runtime image.
+Licensed under Apache-2.0 (https://github.com/ninja-build/ninja/blob/v1.13.2/COPYING)
+
+patchelf (https://github.com/NixOS/patchelf)
+Version unpinned. Build tool; uninstalled from the runtime image.
+Licensed under GPL-3.0-or-later (https://github.com/NixOS/patchelf/blob/master/COPYING)
+
+scikit-build-core (https://github.com/scikit-build/scikit-build-core)
+Version 1.0.3. Used to package the SDK 5 wheels.
+Licensed under Apache-2.0 (https://github.com/scikit-build/scikit-build-core/blob/v1.0.3/LICENSE)
+
+hatchling (https://github.com/pypa/hatch)
+Version unpinned, requires >=1.27. Build backend.
+Licensed under MIT (https://github.com/pypa/hatch/blob/master/LICENSE.txt)
+
+cloudpickle (https://github.com/cloudpipe/cloudpickle)
+Copyright (c) 2015, Cloudpickle contributors.
+Copyright (c) 2012, Regents of the University of California.
+Copyright (c) 2009 PiCloud, Inc.
+Version unpinned. SDK 5 build tool.
+Licensed under BSD-3-Clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
+
+pillow (https://github.com/python-pillow/Pillow)
+Copyright (C) 2010 by Jeffrey A. Clark and contributors
+Version unpinned. SDK 5 build tool.
+Licensed under MIT-CMU (https://github.com/python-pillow/Pillow/blob/main/LICENSE)
+
+cuda-python (https://github.com/NVIDIA/cuda-python)
+Version unpinned, requires >=13,<14. SDK 4 build tool.
+Licensed under Apache-2.0 (https://github.com/NVIDIA/cuda-python/blob/main/LICENSE)
+
+aiohttp (https://github.com/aio-libs/aiohttp)
+Version 3.14.3.
+Licensed under Apache-2.0 AND MIT (https://github.com/aio-libs/aiohttp/blob/v3.14.3/LICENSE.txt)
+
+aiortc (https://github.com/aiortc/aiortc)
+Version 1.15.0.
+Licensed under BSD-3-Clause (https://github.com/aiortc/aiortc/blob/1.15.0/LICENSE)
+
+PyAV (av), installed because aiortc depends on it (https://github.com/PyAV-Org/PyAV)
+Version 17.1.0.
+Licensed under BSD-3-Clause (https://github.com/PyAV-Org/PyAV/blob/v17.1.0/LICENSE.txt)
+Linux wheels are linked against FFmpeg (https://ffmpeg.org/), which is LGPL-2.1-or-later unless a GPL-enabled build is used. Corresponding FFmpeg source must be offered with any redistribution of those wheels.
+
+ifaddr (https://github.com/pydron/ifaddr)
+Version 0.2.0.
+Licensed under MIT (https://github.com/pydron/ifaddr/blob/0.2.0/LICENSE.txt)
+
+numpy (https://github.com/numpy/numpy)
+Version 2.3.5.
+Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.3.5/LICENSE.txt)
+
+opencv-python-headless (https://github.com/opencv/opencv-python)
+Version 5.0.0.93.
+Licensed under Apache-2.0 (https://github.com/opencv/opencv-python/blob/4.x/LICENSE-3RD-PARTY.txt)
+The wheel also contains third-party libraries built by the OpenCV Python packagers. See that third-party license file.
+
+pyzmq (https://github.com/zeromq/pyzmq)
+Version 27.2.0.
+Licensed under BSD-3-Clause (https://github.com/zeromq/pyzmq/blob/v27.2.0/LICENSE.md)
+
+websocket-client (https://github.com/websocket-client/websocket-client)
+Version 1.9.2.
+Licensed under Apache-2.0 (https://github.com/websocket-client/websocket-client/blob/v1.9.2/LICENSE)
+
+websockets (https://github.com/python-websockets/websockets)
+Version 16.1.1.
+Licensed under BSD-3-Clause (https://github.com/python-websockets/websockets/blob/16.1.1/LICENSE)
+
+cryptography (https://github.com/pyca/cryptography)
+Version 50.0.2.
+Licensed under Apache-2.0 OR BSD-3-Clause (https://github.com/pyca/cryptography/blob/50.0.2/LICENSE)
+
+pyyaml (https://github.com/yaml/pyyaml)
+Version 6.0.3.
+Licensed under MIT (https://github.com/yaml/pyyaml/blob/6.0.3/LICENSE)
+
+pyrealsense2 (https://github.com/IntelRealSense/librealsense)
+Version 2.58.4.10922.
+Licensed under Apache-2.0 (https://github.com/IntelRealSense/librealsense/blob/master/LICENSE)
+
+uv (https://github.com/astral-sh/uv)
+Copyright (c) 2025 Astral Software Inc.
+Version 0.12.21. Build tool; the runtime image does not copy the uv binary.
+Licensed under MIT OR Apache-2.0 (https://github.com/astral-sh/uv/blob/0.12.21/LICENSE-MIT and https://github.com/astral-sh/uv/blob/0.12.21/LICENSE-APACHE)
+
+rust (https://github.com/rust-lang/rust)
+Version 1.91.1. SDK 5 build toolchain.
+Licensed under MIT OR Apache-2.0 (https://github.com/rust-lang/rust/blob/master/COPYRIGHT)
+
+pytest (https://github.com/pytest-dev/pytest)
+Version 9.1.1. Development dependency.
+Licensed under MIT (https://github.com/pytest-dev/pytest/blob/9.1.1/LICENSE)
+
+pytest-asyncio (https://github.com/pytest-dev/pytest-asyncio)
+Version 1.4.0. Development dependency.
+Licensed under Apache-2.0 (https://github.com/pytest-dev/pytest-asyncio/blob/v1.4.0/LICENSE)
+
+ruff (https://github.com/astral-sh/ruff)
+Version 0.16.9. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.16.9/LICENSE)
+
+pre-commit (https://github.com/pre-commit/pre-commit)
+Version 4.6.2. Development dependency.
+Licensed under MIT (https://github.com/pre-commit/pre-commit/blob/v4.6.2/LICENSE)
+
+pre-commit-hooks (https://github.com/pre-commit/pre-commit-hooks)
+Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
+Revision v6.0.0. Development dependency.
+Licensed under MIT (https://github.com/pre-commit/pre-commit-hooks/blob/v6.0.0/LICENSE)
+
+ruff-pre-commit (https://github.com/astral-sh/ruff-pre-commit)
+Revision v0.16.9. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.16.9/LICENSE)
+
+shellcheck-py (https://github.com/shellcheck-py/shellcheck-py)
+Copyright (c) 2019 Ryan Rhee
+Version 0.11.0.1. Development dependency.
+The Python wrapper is MIT (https://github.com/shellcheck-py/shellcheck-py/blob/v0.11.0.1/LICENSE).
+It bundles ShellCheck, which is GPL-3.0-only (https://github.com/koalaman/shellcheck/blob/master/LICENSE).
+
+markdownlint-cli2 (https://github.com/DavidAnson/markdownlint-cli2)
+Copyright (c) David Anson
+Version 0.23.3. Development dependency.
+Licensed under MIT (https://github.com/DavidAnson/markdownlint-cli2/blob/v0.23.3/LICENSE)
+
+clang-format (https://github.com/llvm/llvm-project)
+Version 20.1.8. Development dependency.
+Licensed under Apache-2.0 WITH LLVM-exception (https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/clang/LICENSE.TXT)
+
+cmakelint (https://github.com/cmake-lint/cmake-lint)
+Version 1.4.3. Development dependency.
+Licensed under Apache-2.0 (https://github.com/cmake-lint/cmake-lint/blob/master/LICENSE)
+
+playwright (https://github.com/microsoft/playwright-python)
+Version 1.63.0. Development dependency.
+Licensed under Apache-2.0 (https://github.com/microsoft/playwright-python/blob/v1.63.0/LICENSE)
+
+Ubuntu 24.04 packages installed by setup.sh, the Dockerfile, or scripts/build_franka.sh. Versions are those of the Ubuntu 24.04 archive and are not pinned.
+
+build-essential: GPL-2.0-or-later
+ca-certificates: MPL-2.0 AND GPL-2.0-or-later
+chrony: GPL-2.0-only. Installed in the runtime image.
+curl: curl
+docker.io: Apache-2.0. Installed in the runtime image.
+git: GPL-2.0-only
+libclang-dev: Apache-2.0 WITH LLVM-exception
+libegl1: MIT
+libeigen3-dev: MPL-2.0
+libfmt-dev and libfmt9: MIT
+libgl1: MIT
+libglib2.0-0t64: LGPL-2.1-or-later. Installed in the runtime image.
+libpoco-dev, libpocofoundation80t64, and libpoconet80t64: BSL-1.0. The runtime libraries are installed in the runtime image.
+liburdfdom-headers-dev: BSD-3-Clause
+libusb-1.0-0: LGPL-2.1-or-later. Installed in the runtime image.
+libvulkan1: Apache-2.0
+libx11-dev and libx11-6: MIT
+libxcursor-dev and libxcursor1: MIT
+libxi-dev and libxi6: MIT
+libxinerama-dev and libxinerama1: MIT
+libxkbcommon0: MIT
+libxrandr-dev and libxrandr2: MIT
+openssh-client: BSD-3-Clause
+pkg-config: GPL-2.0-or-later
+python3.12-dev and python3.12-venv: PSF-2.0
+
+Container images and proprietary NVIDIA components. These are not open-source packages.
+
+nvcr.io/nvidia/cuda:13.0.2-devel-ubuntu24.04 and nvcr.io/nvidia/cuda:13.0.2-runtime-ubuntu24.04
+NVIDIA Software License Agreement for the CUDA container.
+
+CUDA toolkit 13, required for native setup.
+NVIDIA Software License Agreement.
+
+nvcr.io/nvidia/isaac-sim:6.0.1
+NVIDIA Isaac Sim EULA. Started with ACCEPT_EULA=Y. Not baked into the application image.
+
+Isaac Healthcare assets 0.5.0, downloaded from https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/Healthcare/0.5.0/
+NVIDIA Omniverse license.
