@@ -6,5 +6,5 @@
     "default": true,
     "MD013": false
   },
-  "ignores": ["runs/**", "build/**", "dist/**", ".venv*/**"]
+  "ignores": ["workspace/**", "build/**", "dist/**", ".venv*/**"]
 }

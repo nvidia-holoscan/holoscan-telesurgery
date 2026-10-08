@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Isaac Sim's local controller protocol behind the same physical adapter contract."""
+
+from telesurgery_core.transport.rpc import RpcClient
+from telesurgery_robots.adapters.base import speed_value
+from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
+from telesurgery_robots.mira.gripper import GRIP_SPEED
+from telesurgery_robots.mira.poses import MIRA_HOME
+
+
+class SimulationAdapter:
+    simulation = True
+    step_deg = 1.0
+    max_step_deg = 5.0
+
+    def __init__(self, spec):
+        self.uri, self.client = spec["uri"], None
+
+    def request(self, method, params=None):
+        if self.client is None:
+            self.client = RpcClient(self.uri)
+        try:
+            return self.client.send({"method": method, "params": params or {}})
+        except Exception:
+            self.close()
+            raise
+
+    def read(self):
+        return self.request("get_state")
+
+    def jog(self, command):
+        return self.request(self.method, command)
+
+    def hold(self):
+        return self.request("hold")
+
+    def close(self):
+        if self.client:
+            self.client.close()
+            self.client = None
+
+
+class MiraSimulation(SimulationAdapter):
+    groups = {"left": 5, "right": 5}
+    method = "set_mira_cartesian_delta"
+    home_deg = {"left": MIRA_HOME, "right": MIRA_HOME}
+    grippers = ("left", "right")
+    grip_speed = GRIP_SPEED
+
+    def home(self):
+        return self.request("set_home")
+
+    def grip(self, command):
+        return self.request("jog_gripper", command)
+
+
+class FrankaSimulation(SimulationAdapter):
+    groups = {"joints": 7}
+    method = "set_joint_delta"
+    home_deg = {"joints": FRANKA_HOME}
+    speed_limits = FRANKA_SPEED
+
+    def jog(self, command, *, speed_deg_s=None):
+        return self.request(
+            self.method, {**command, "speed_deg_s": speed_value(speed_deg_s, self.speed_limits)}
+        )
+
+    def step(self, command, *, speed_deg_s=None):
+        return self.request(
+            self.method,
+            {**command, "step": True, "speed_deg_s": speed_value(speed_deg_s, self.speed_limits)},
+        )
+
+    def home(self, *, speed_deg_s=None):
+        return self.request(
+            "set_home", {"speed_deg_s": speed_value(speed_deg_s, self.speed_limits)}
+        )

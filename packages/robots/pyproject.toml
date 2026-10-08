@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telesurgery-robots"
+version = "0.3.0"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+    "ruckig==0.19.4",
+    "telesurgery-core",
+]
+
+[project.optional-dependencies]
+franka = [
+    "pin==3.9.0",
+    "cmeel-urdfdom==4.0.1",
+    "cmeel-tinyxml2==10.0.0",
+    "nanobind==3.0.1",
+    "cmake>=4,<5",
+    "ninja",
+]
+
+[project.entry-points."telesurgery.robots"]
+mira = "telesurgery_robots.mira.adapter:MiraAdapter"
+franka = "telesurgery_robots.franka.adapter:Franka"
+mira-sim = "telesurgery_robots.adapters.simulation:MiraSimulation"
+franka-sim = "telesurgery_robots.adapters.simulation:FrankaSimulation"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telesurgery_robots"]
+
+[tool.hatch.build]
+artifacts = ["src/telesurgery_robots/franka/*.so"]
+
+[tool.hatch.build.hooks.custom]

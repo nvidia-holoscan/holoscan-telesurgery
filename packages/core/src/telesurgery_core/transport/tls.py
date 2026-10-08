@@ -5,11 +5,12 @@
 
 import datetime
 import hashlib
+import ipaddress
 import os
 import ssl
 
 
-def server_context(directory):
+def server_context(directory, *, hosts=()):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -21,16 +22,24 @@ def server_context(directory):
         key = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Holoscan Telesurgery")])
         now = datetime.datetime.now(datetime.UTC)
-        cert = (
+        builder = (
             x509.CertificateBuilder()
             .subject_name(name)
             .issuer_name(name)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=5))
-            .not_valid_after(now + datetime.timedelta(days=3650))
-            .sign(key, hashes.SHA256())
+            .not_valid_after(now + datetime.timedelta(days=365 if hosts else 3650))
         )
+        if hosts:
+            names = []
+            for host in hosts:
+                try:
+                    names.append(x509.IPAddress(ipaddress.ip_address(host)))
+                except ValueError:
+                    names.append(x509.DNSName(host))
+            builder = builder.add_extension(x509.SubjectAlternativeName(names), critical=False)
+        cert = builder.sign(key, hashes.SHA256())
         fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as stream:
             stream.write(

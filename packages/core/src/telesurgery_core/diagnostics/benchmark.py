@@ -108,12 +108,14 @@ class Benchmark:
                 self.first_sim_command_sequence = header.sim_command_sequence
             previous, self.last_at = self.last_at, now
             self.frames += 1
-            if previous is not None:
-                self._add("receive_interval_ms", (now - previous) * 1000)
             if self.last_sequence is not None:
                 gap = header.sequence - self.last_sequence - 1
                 self.sequence_gaps += max(0, gap)
                 self.sequence_resets += int(gap < 0)
+                if gap < 0:
+                    previous = None  # A restarted producer begins a new delivery cadence.
+            if previous is not None:
+                self._add("receive_interval_ms", (now - previous) * 1000)
             self.last_sequence = header.sequence
             self.max_sim_command_sequence = max(
                 self.max_sim_command_sequence, header.sim_command_sequence
@@ -125,7 +127,10 @@ class Benchmark:
             duration = getattr(header, name + "_ns")
             if duration:
                 self.add(name + "_ms", duration / 1e6)
-        self.add("compression_ratio", header.width * header.height * 3 / len(data))
+        self.add(
+            "compression_ratio",
+            header.width * header.height * (7 if header.depth_bytes else 3) / len(data),
+        )
 
     def delivery(self, timing):
         with self._lock:

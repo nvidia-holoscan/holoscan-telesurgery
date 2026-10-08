@@ -16,6 +16,8 @@ DEFAULTS = {
         "qp",
         "jpeg_quality",
         "encoder_preset",
+        "receiver",
+        "depth",
     )
 }
 
@@ -44,6 +46,20 @@ def select(camera, settings=None):
     defaults = {key: camera.get(key, value) for key, value in DEFAULTS.items()}
     selected = {**defaults}
     selected.update(settings or {})
+    if type(selected["depth"]) is not bool:
+        raise ValueError("Depth must be enabled or disabled")
+    if selected["depth"] and not camera.get("depth_supported"):
+        raise ValueError("This camera does not provide depth")
+    if selected["depth"] and selected["fps"] not in camera.get("depth_fps", [selected["fps"]]):
+        raise ValueError("Depth is unavailable at this frame rate")
+    if camera.get("source") == "imx274":
+        receivers = camera.get("receivers", ["linux"])
+        if selected["receiver"] == "auto":
+            selected["receiver"] = receivers[0]
+        if selected["receiver"] not in receivers:
+            raise ValueError("This camera does not support the selected HSB receiver")
+    elif selected["receiver"] != "auto":
+        raise ValueError("Receiver selection is only available for HSB cameras")
     if selected["codec"] not in camera.get("codecs", ["h264", "h265", "nvjpeg", "raw-bgr8"]):
         raise ValueError("This node does not support the selected codec")
     if type(selected["qp"]) is not int or not 0 <= selected["qp"] <= 51:

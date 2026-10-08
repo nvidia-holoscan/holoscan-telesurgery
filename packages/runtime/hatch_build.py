@@ -10,6 +10,6 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
-        if list(Path(self.root, "src/telesurgery_runtime/sdk5").glob("*.so")):
+        if list(Path(self.root, "src/telesurgery_runtime/backends/sdk5").glob("*.so")):
             build_data["pure_python"] = False
             build_data["infer_tag"] = True

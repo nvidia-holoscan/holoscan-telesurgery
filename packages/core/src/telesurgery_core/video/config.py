@@ -21,3 +21,6 @@ class Config:
     hololink: str = "192.168.0.2"
     expander: int = 0
     skip_reset: bool = False
+    receiver: str = "auto"
+    depth: bool = False
+    realsense_serial: str = ""

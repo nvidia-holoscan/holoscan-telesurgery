@@ -1,56 +1,47 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Patient and surgeon services; localhost UI, separate encrypted application endpoint."""
+"""Patient and surgeon services with a separate encrypted application endpoint."""
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 import math
 import secrets
-import ssl
 import time
 from pathlib import Path
 
-from telesurgery.nodes.pairing import endpoint
+from telesurgery.nodes.address import endpoint
 from telesurgery.nodes.registry import NodeRegistry
-from telesurgery.nodes.service import NodeService
 from telesurgery.server.media import Media
 from telesurgery.server.streams import DirectStreams
 from telesurgery.server.viewers import NativeViews
 from telesurgery_core.control.access import Access, Ownership
 from telesurgery_core.diagnostics.benchmark import Samples
 from telesurgery_core.diagnostics.clock import Clock
-from telesurgery_core.diagnostics.trace import arrive, mark, source
 from telesurgery_core.transport.peer import Peer
-from telesurgery_core.transport.protocol import VideoHeader
 from telesurgery_core.transport.tls import client_context, pin_peer, server_context
-from telesurgery_runtime.pipeline import Executor, VideoBridge
-from telesurgery_runtime.sdk import require_sdk
+from telesurgery_runtime.application.pipeline import Executor, VideoBridge
+from telesurgery_runtime.backends.sdk import require_sdk
 
 LOG = logging.getLogger(__name__)
 
 
 class Application:
-    def __init__(
-        self, role, directory, endpoint_port=7447, environment=None, *, sim_gui=False, nodes=()
-    ):
+    def __init__(self, role, directory, endpoint_port=7447):
         self.role, self.directory = role, Path(directory)
-        self.endpoint_port, self.environment = endpoint_port, environment
-        self.sim_gui = sim_gui
+        self.endpoint_port = endpoint_port
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.engine = Executor(role)
         self.media = Media(self._media_changed)
         self.access = Access(self.directory / "surgeons.yaml" if role == "patient" else None)
         self.native = NativeViews(self.directory / "viewers")
-        self.viewer_tickets, self.viewer_peers = {}, {}
         self.peers, self.peer_nodes, self.nodes, self.owners = {}, {}, {}, {}
         self.tokens, self.sequences, self.selected = {}, {}, set()
         self.control_lock = asyncio.Lock()
         self.tasks = set()
         self.connections = set()
-        self.local = self.server = self.remote = self.video = self.simulation = None
+        self.server = self.remote = self.video = None
         self.remote_status = {"status": "disconnected"}
         self.robot_state, self.faults = {}, {}
         self.address = ""
@@ -58,7 +49,7 @@ class Application:
         self.robot_timings = {}
         self.clock = Clock()
         self.streams = DirectStreams(self)
-        self.node_registry = NodeRegistry(self, nodes)
+        self.node_registry = NodeRegistry(self)
 
     def task(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -73,20 +64,12 @@ class Application:
         self.task(self.clock.watch())
         await asyncio.to_thread(self.engine.start)
         if self.role == "patient":
-            manifest = None
-            if self.environment:
-                from telesurgery_sim.launch import Simulation
-
-                self.simulation = Simulation(
-                    self.environment, self.directory / "simulation", gui=self.sim_gui
-                )
-                manifest = await self.simulation.start()
-            self.local = NodeService(self.directory / "host", self._local_video, manifest)
-            await self.local.start()
-            self.nodes["host"] = await self.local.call("inventory")
-            self.nodes["host"].update(status="online", environment=self.environment)
             self.server = await asyncio.start_server(
-                self._accept, "0.0.0.0", self.endpoint_port, ssl=server_context(self.directory)
+                self._accept,
+                "0.0.0.0",  # TLS and patient-approved peers. # nosec B104
+                self.endpoint_port,
+                ssl=server_context(self.directory),
+                ssl_handshake_timeout=10,
             )
             self.endpoint_port = self.server.sockets[0].getsockname()[1]
         else:
@@ -99,9 +82,7 @@ class Application:
             await asyncio.to_thread(self.video.start)
         self.task(self._watch())
         if self.role == "patient":
-            self.task(self._discover())
-            if not self.environment:
-                self.node_registry.start()
+            self.node_registry.start()
 
     def _deliver(self, value):
         if self.remote_status.get("status") == "approved":
@@ -117,22 +98,32 @@ class Application:
             reader,
             writer,
             self._request,
+            self._robot_feedback,
             clock=self.clock,
-            video_sent=self._video_sent,
+            max_payload=0,
         ).start()
         self.peers[peer.id] = {"peer": peer, "selected": set()}
         try:
-            await peer.closed.wait()
+            try:
+                await asyncio.wait_for(peer.closed.wait(), 10)
+            except TimeoutError:
+                if (
+                    peer.id in self.access.surgeons
+                    or peer.id in self.peer_nodes
+                    or any(item["peer"] == peer.id for item in self.node_registry.pending.values())
+                ):
+                    await peer.closed.wait()
         finally:
             async with self.control_lock:
-                self.viewer_peers.pop(peer.id, None)
                 await self._close_viewers(peer.id)
                 await self._release_owner(peer.id)
                 if peer.id in self.access.surgeons:
                     await self.run(self.access.disconnect, peer.id)
+                self.node_registry.disconnected(peer.id)
                 node = self.peer_nodes.pop(peer.id, None)
                 if node:
-                    self.nodes[node]["status"] = "offline"
+                    if node in self.nodes:
+                        self.nodes[node]["status"] = "offline"
                     for key, owner in self.owners.items():
                         if key.startswith(f"{node}:"):
                             owner.release()
@@ -141,28 +132,21 @@ class Application:
             await peer.close()
             self.connections.discard(task)
 
+    async def _robot_feedback(self, peer, name, params, payload):
+        node = self.peer_nodes.get(peer.id)
+        if name != "robot.feedback" or node is None:
+            return
+        for robot in self.nodes.get(node, {}).get("robots", []):
+            feedback = params.get(robot["id"])
+            if isinstance(feedback, dict):
+                robot.update(feedback)
+
     async def _request(self, peer, method, params):
-        if peer.id in self.viewer_peers:
-            raise PermissionError("Native viewer connections are video-only")
-        if method == "viewer.attach":
+        if method == "node.request":
             if peer.id in self.access.surgeons or peer.id in self.peer_nodes:
-                raise PermissionError("Use a separate native viewer connection")
-            if len(self.viewer_peers) >= 32:
-                raise RuntimeError("Too many native viewers")
-            ticket = self.viewer_tickets.pop(params.get("ticket"), None)
-            if ticket is None or ticket["expires"] < time.monotonic():
-                raise PermissionError("Native viewer ticket expired or is invalid")
-            owner, camera = ticket["owner"], ticket["camera"]
-            if owner is not None:
-                await self.run(self.access.require, owner)
-                self.access.require(owner)
-                if owner not in self.peers or camera not in self.peers[owner]["selected"]:
-                    raise PermissionError("Camera is no longer selected")
-            self.viewer_peers[peer.id] = {"owner": owner, "camera": camera}
-            return True
+                raise PermissionError("Use a separate node connection")
+            return self.node_registry.request(peer, params)
         if method == "node.register":
-            if self.environment:
-                raise PermissionError("Simulation uses its own single node")
             node = self.node_registry.configs.get(params.get("id"))
             token = params.get("token")
             if (
@@ -174,6 +158,7 @@ class Application:
                 raise PermissionError("Node has not been enrolled")
             if params["id"] in self.peer_nodes.values():
                 raise PermissionError("Node is already connected")
+            self.node_registry.disconnected(peer.id)
             self.peer_nodes[peer.id] = params["id"]
             self.nodes[params["id"]] = {**params["inventory"], "status": "online"}
             for key, owner in self.owners.items():
@@ -184,8 +169,10 @@ class Application:
         if peer.id in self.peer_nodes:
             if method == "node.inventory":
                 self.nodes[self.peer_nodes[peer.id]] = {**params["inventory"], "status": "online"}
-                return True
+                return {"server_time": time.time()}
             raise PermissionError("Unsupported node request")
+        if any(item["peer"] == peer.id for item in self.node_registry.pending.values()):
+            raise PermissionError("Node approval is required")
         if method == "access.request":
             # Disconnect cleanup releases robot ownership and the old identity
             # under this lock. A returning service must wait for that cleanup.
@@ -230,90 +217,20 @@ class Application:
 
     async def _media_changed(self):
         if self.role == "patient":
-            await self.streams.select(
-                {
-                    camera
-                    for camera in self.media.connections.values()
-                    if not camera.startswith("host:")
-                }
-            )
-
-    async def _local_video(self, camera, header, payload):
-        trace = mark(source(VideoHeader(**header)), "source_relay_ms")
-        await self._publish(f"host:{camera}", header, payload, trace)
-
-    def _video_sent(self, camera, trace, frame_bytes):
-        feed = self.media.feeds.get(camera)
-        if feed:
-            feed.benchmark.add("transport_frame_bytes", frame_bytes)
-            feed.benchmark.finish(trace, "send")
-
-    async def _publish(self, camera, header, payload, trace=None):
-        await self.media.put(camera, header, payload, {"trace": trace})
-        native_owners = {
-            item["owner"] for item in self.viewer_peers.values() if item["camera"] == camera
-        }
-        for key, item in list(self.peers.items()):
-            viewer = self.viewer_peers.get(key)
-            if viewer:
-                owner = viewer["owner"]
-                if viewer["camera"] != camera or (
-                    owner is not None and self.access.status(owner)["status"] != "approved"
-                ):
-                    continue
-            elif (
-                not camera.startswith("host:")
-                or key in native_owners
-                or camera not in item["selected"]
-                or self.access.status(key)["status"] != "approved"
-            ):
-                continue
-            with contextlib.suppress(ConnectionError):
-                item["peer"].event(
-                    "video",
-                    {"camera": camera, "header": header, "trace": mark(trace, "source_queue_ms")},
-                    payload,
-                    stream=camera,
-                )
-
-    def _viewer_ticket(self, camera, owner=None):
-        cameras = {item["id"] for item in self.inventory()["cameras"]}
-        if camera not in cameras:
-            raise ValueError("Unknown camera")
-        self.viewer_tickets = {
-            key: value
-            for key, value in self.viewer_tickets.items()
-            if value["expires"] > time.monotonic()
-        }
-        if len(self.viewer_tickets) >= 32:
-            raise RuntimeError("Too many pending native viewers")
-        token = secrets.token_urlsafe(32)
-        self.viewer_tickets[token] = {
-            "camera": camera,
-            "owner": owner,
-            "expires": time.monotonic() + 30,
-        }
-        return token
+            await self.streams.select(set(self.media.connections.values()))
 
     async def _viewer_route(self, camera, owner=None):
         node, device = camera.split(":", 1)
-        if node == "host":
-            cert = ssl.PEM_cert_to_DER_cert((self.directory / "endpoint.pem").read_text())
-            return {
-                "ticket": self._viewer_ticket(camera, owner),
-                "host": "127.0.0.1",
-                "port": self.endpoint_port,
-                "fingerprint": hashlib.sha256(cert).hexdigest(),
-            }
-        config = self.node_registry.configs[node]
         connection = next(
-            item["peer"] for key, item in self.peers.items() if self.peer_nodes.get(key) == node
+            (item["peer"] for key, item in self.peers.items() if self.peer_nodes.get(key) == node),
+            None,
         )
-        host = (
-            endpoint(config["address"])[0]
-            if config.get("kind") == "service"
-            else connection.writer.get_extra_info("peername")[0]
-        )
+        if connection is None:
+            raise ConnectionError("Node is offline")
+        host = connection.writer.get_extra_info("peername")[0]
+        if host in {"127.0.0.1", "localhost", "::1"} and owner is not None:
+            # A local node's video listener is on the patient's machine, not the surgeon's.
+            host = self.peers[owner]["peer"].writer.get_extra_info("sockname")[0]
         route = await self.node_call(
             node, "video.ticket", {"owner": owner or "patient", "camera": device, "id": camera}
         )
@@ -343,18 +260,6 @@ class Application:
             except (ConnectionError, RuntimeError, TimeoutError):
                 pass  # Node disconnect also invalidates every direct ticket and stream.
 
-        def matches(item):
-            return item["owner"] == owner and (cameras is None or item["camera"] in cameras)
-
-        self.viewer_tickets = {
-            key: value for key, value in self.viewer_tickets.items() if not matches(value)
-        }
-        for key, viewer in list(self.viewer_peers.items()):
-            if matches(viewer):
-                self.viewer_peers.pop(key, None)
-                if key in self.peers:
-                    await self.peers[key]["peer"].close()
-
     async def _open_viewer(self, camera):
         if self.role == "surgeon":
             if self.remote_status.get("status") != "approved":
@@ -368,8 +273,6 @@ class Application:
         if self.role == "surgeon":
             await self.action("view", {"cameras": sorted(self.selected | {camera})})
             route = await self.remote.call("viewer.ticket", {"camera": camera})
-            if camera.startswith("host:"):
-                route["host"] = endpoint(self.address, 7447)[0]
         else:
             route = await self._viewer_route(camera)
         await self.native.open(
@@ -379,6 +282,7 @@ class Application:
                 "name": device["name"],
                 "width": device["width"],
                 "height": device["height"],
+                "depth": device.get("depth", False),
             }
         )
         if self.role == "surgeon" and self.remote_status.get("status") != "approved":
@@ -390,33 +294,46 @@ class Application:
     async def _sync_streams(self):
         if self.role != "surgeon":
             return
+        available = {camera["id"] for camera in self.remote_status.get("cameras", [])}
+        removed = self.selected - available
+        if removed:
+            self.selected.difference_update(removed)
+            await self.remote.call("subscribe", {"cameras": sorted(self.selected)})
+            for camera in removed:
+                await self.native.close(camera)
         native = self.native.status()
         await self.streams.select(
             {
                 camera
                 for camera in self.selected
-                if not camera.startswith("host:")
-                and native.get(camera, {}).get("status") not in {"starting", "running"}
+                if native.get(camera, {}).get("status") not in {"starting", "running"}
             }
         )
 
     def inventory(self):
         cameras, robots, nodes = [], [], []
+        connections = {
+            node: self.peers[peer]["peer"].writer
+            for peer, node in self.peer_nodes.items()
+            if peer in self.peers
+        }
         for key, node in self.nodes.items():
+            config = self.node_registry.configs.get(key, {})
+            writer = connections.get(key)
+            ip = config.get("ip", "")
+            if writer and (address := writer.get_extra_info("peername")):
+                ip = address[0]
             nodes.append(
                 {
                     "id": key,
                     "name": node.get("name", key),
+                    "ip": ip,
                     "status": node.get("status"),
                     "sdk": node.get("sdk"),
                     "environment": node.get("environment"),
                     "simulation": node.get("simulation"),
+                    "simulation_support": node.get("simulation_support"),
                     "error": node.get("error", ""),
-                    "connection": self.node_registry.configs.get(key, {}).get("kind", "ssh")
-                    if key != "host"
-                    else "local",
-                    "address": self.node_registry.configs.get(key, {}).get("address", ""),
-                    "paired": bool(self.node_registry.configs.get(key, {}).get("token")),
                 }
             )
             for device in node.get("cameras", []):
@@ -450,6 +367,12 @@ class Application:
                             "jpeg_quality",
                             "codecs",
                             "encoder_preset",
+                            "receiver",
+                            "receivers",
+                            "depth",
+                            "depth_supported",
+                            "depth_source",
+                            "depth_fps",
                         }
                     }
                 )
@@ -462,34 +385,66 @@ class Application:
                         "id": robot_id,
                         "name": device["name"],
                         "kind": device["kind"],
+                        "controls": device.get("controls", {"inputs": [], "groups": {}}),
+                        "simulation": device.get("simulation", False),
+                        "feedback_age_ms": device.get("feedback_age_ms"),
+                        "stale": device.get("stale", True) or node.get("status") != "online",
                         "node": key,
                         "owner": surgeon.name if surgeon else None,
+                        "node_online": node.get("status") == "online",
+                        **({"controller": device["controller"]} if "controller" in device else {}),
+                        **(
+                            {"connection_enabled": device["connection_enabled"]}
+                            if "connection_enabled" in device
+                            else {}
+                        ),
                         "owner_id": surgeon.id if surgeon else None,
-                        "state": self.robot_state.get(robot_id),
-                        "error": self.faults.get(robot_id, ""),
-                        "status": node.get("status"),
+                        "state": device.get("state"),
+                        "error": self.faults.get(robot_id, device.get("error", "")),
+                        "status": device.get("status", "online")
+                        if node.get("status") == "online"
+                        else "offline",
                     }
                 )
         return {"nodes": nodes, "cameras": cameras, "robots": robots}
 
     async def node_call(self, key, method, params=None):
-        if key == "host":
-            return await self.local.call(method, params)
         for peer_id, node_id in self.peer_nodes.items():
             if node_id == key:
-                return await self.peers[peer_id]["peer"].call(method, params, timeout=3)
+                return await self.peers[peer_id]["peer"].call(
+                    method,
+                    params,
+                    timeout=15
+                    if method == "robot.start"
+                    else 12
+                    if method == "camera.stop"
+                    else 5
+                    if method in {"robot.release", "robot.disconnect"}
+                    else 3,
+                )
         raise ConnectionError("Node is offline")
 
     async def _robot(self, peer, method, params):
         await self.run(lambda: self.access.require(peer, robot=True))
         key = params["id"]
-        if key not in {r["id"] for r in self.inventory()["robots"]}:
+        robot = next((r for r in self.inventory()["robots"] if r["id"] == key), None)
+        if robot is None:
             raise ValueError("Robot is unavailable")
         node, device = key.split(":", 1)
         owner = self.owners.setdefault(key, Ownership())
         if owner.expired():
             await self._release(key)
+        if method == "robot.release" and owner.owner is None:
+            result = await self._release(key)
+            if not owner.ready:
+                raise RuntimeError(self.faults[key])
+            return result
         if method == "robot.acquire":
+            if not owner.ready:
+                raise RuntimeError(
+                    "Previous stop was not confirmed; choose Retry hold on the patient dashboard. "
+                    + self.faults.get(key, "")
+                )
             token = await self.run(owner.acquire, peer)
             try:
                 self.robot_state[key] = await self.node_call(
@@ -504,12 +459,21 @@ class Application:
             owner.validate, peer, token, params.get("sequence") if method == "robot.move" else None
         )
         if method == "robot.release":
-            await self._release(key)
-            return True
+            result = await self._release(key)
+            if not owner.ready:
+                raise RuntimeError(self.faults[key])
+            return result
         if method == "robot.renew":
             return await self.node_call(node, method, {"key": device, "token": token})
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
+        mode = params.get("mode", "jog")
+        if mode not in {"step", "jog", "home", "grip"}:
+            raise ValueError("Unknown robot motion mode")
+        if mode == "home" and not robot["controls"].get("home_deg"):
+            raise ValueError("Home is not supported by this robot")
+        if mode == "grip" and not robot["controls"].get("grippers"):
+            raise ValueError("Gripper control is not supported by this robot")
         if (
             type(sent) not in (float, int)
             or not math.isfinite(sent)
@@ -525,6 +489,12 @@ class Application:
                 "sequence": params["sequence"],
                 "command": params["command"],
                 "sent_at": sent,
+                **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
+                **(
+                    {"mode": mode}
+                    if mode in {"home", "grip"} or robot["controls"].get("step_mode")
+                    else {}
+                ),
             },
         )
         return self.robot_state[key]
@@ -536,12 +506,30 @@ class Application:
         owner.ready = False
         node, device = key.split(":", 1)
         try:
-            await self.node_call(node, "robot.release", {"key": device, "token": token})
+            result = await self.node_call(node, "robot.release", {"key": device, "token": token})
             owner.ready = True
             self.faults.pop(key, None)
+            return result
         except Exception as exc:
-            self.faults[key] = str(exc)
-            LOG.warning("Robot hold failed: %s", exc)
+            reason = str(exc) or f"{type(exc).__name__}: robot stop was not confirmed"
+            if self.faults.get(key) != reason:
+                LOG.warning("Robot hold failed: %s", reason)
+            self.faults[key] = reason
+
+    async def _recover_holds(self):
+        # Feedback recovery alone cannot confirm a failed Stop. Retry only hold,
+        # with no owner; new motion always requires a fresh surgeon input.
+        for robot in self.inventory()["robots"]:
+            key = robot["id"]
+            owner = self.owners.get(key)
+            if (
+                key in self.faults
+                and owner
+                and not owner.owner
+                and robot["status"] == "online"
+                and not robot["stale"]
+            ):
+                await self._release(key)
 
     async def _release_owner(self, peer):
         for key, owner in self.owners.items():
@@ -574,13 +562,7 @@ class Application:
             raise PermissionError("Surgeon does not accept remote actions")
 
         async def event(peer, event_name, params, payload):
-            if event_name == "video" and self.remote_status.get("status") == "approved":
-                timing = peer.delivery(
-                    params.get("timing"), frame_bytes=params.get("transport_bytes")
-                )
-                timing["trace"] = arrive(params.get("trace"), timing)
-                self.video.put(params["camera"], params["header"], payload, timing)
-            elif event_name == "revoked":
+            if event_name == "revoked":
                 self.remote_status = {"status": "revoked"}
                 self.tokens.clear()
                 await self.streams.close()
@@ -651,9 +633,8 @@ class Application:
                 "role": self.role,
                 "sdk": require_sdk().__version__,
                 "endpoint_port": self.endpoint_port,
-                "environment": self.environment,
-                "simulation": self.simulation.status() if self.simulation else None,
                 **inventory,
+                "node_requests": self.node_registry.requests(),
                 "surgeons": await self.run(self.access.list),
                 **statistics,
                 "native_views": self.native.status(),
@@ -691,6 +672,8 @@ class Application:
         }
 
     async def action(self, method, params):
+        if method == "view.depth":
+            return await self.native.display(**params)
         if method == "view.holoviz":
             return await self._open_viewer(params["camera"])
         if method == "view.browser":
@@ -765,6 +748,10 @@ class Application:
                         raise TimeoutError("Robot input expired while waiting")
                     key = params["id"]
                     if key not in self.tokens:
+                        if method == "robot.release":
+                            outgoing = await self.run(lambda: {"id": key})
+                            reply = await self.remote.call(method, outgoing, timeout=7)
+                            return await self.run(lambda: reply)
                         if method != "robot.move":
                             return True
                         result = await self.run(lambda: {"id": key})
@@ -780,11 +767,21 @@ class Application:
                     }
                     outgoing = await self.run(lambda: outgoing)
                     try:
-                        reply = await self.remote.call(method, outgoing, timeout=2)
-                        result = await self.run(lambda value: value, reply)
+                        reply = await self.remote.call(
+                            method, outgoing, timeout=7 if method == "robot.release" else 2
+                        )
                     except Exception:
-                        self.tokens.pop(key, None)
+                        # Keep credentials for Stop unless the patient confirms
+                        # our lease ended. Never replay failed motion.
+                        with contextlib.suppress(Exception):
+                            state = await self.remote.call("status")
+                            if not any(
+                                robot["id"] == key and robot.get("owner_id") == state.get("id")
+                                for robot in state.get("robots", [])
+                            ):
+                                self.tokens.pop(key, None)
                         raise
+                    result = await self.run(lambda value: value, reply)
                     if method == "robot.release":
                         self.tokens.pop(key, None)
                     elif method == "robot.move":
@@ -793,6 +790,35 @@ class Application:
                         self.robot_timings.setdefault(key, Samples()).add(elapsed)
                     return result
             raise PermissionError("Unsupported surgeon action")
+        if method in {"camera.stop_all", "robot.disconnect_all"}:
+            robots = method.startswith("robot.")
+            inventory = self.inventory()
+            offline = {node["id"] for node in inventory["nodes"] if node["status"] != "online"}
+            failed = [
+                {"name": node["name"], "error": "Node unreachable; action not confirmed"}
+                for node in inventory["nodes"]
+                if node["id"] in offline
+            ]
+            completed = []
+
+            async def stop_device(item):
+                try:
+                    await self.action(
+                        "robot.disconnect" if robots else "camera.stop", {"id": item["id"]}
+                    )
+                    completed.append(item["id"])
+                except Exception as exc:
+                    failed.append({"name": item["name"], "error": str(exc) or type(exc).__name__})
+
+            await asyncio.gather(
+                *(
+                    stop_device(item)
+                    for item in inventory["robots" if robots else "cameras"]
+                    if item["id"].split(":", 1)[0] not in offline
+                    and item["status"] != ("disconnected" if robots else "stopped")
+                )
+            )
+            return {"completed": completed, "failed": failed}
         if method == "access.approve":
             return await self.run(self.access.approve, params["id"], params.get("robot", False))
         if method in {"access.revoke", "access.reject"}:
@@ -812,64 +838,46 @@ class Application:
                 if params["id"] in self.owners:
                     await self._release(params["id"])
             return True
+        if method in {"robot.connect", "robot.disconnect"}:
+            async with self.control_lock:
+                key = params["id"]
+                if method == "robot.disconnect" and key in self.owners and self.owners[key].owner:
+                    await self._release(key)
+                node, device = key.split(":", 1)
+                result = await self.node_call(node, method, {"id": device})
+                self.nodes[node].update(result)
+                if method == "robot.disconnect":
+                    if key in self.owners:
+                        self.owners[key].release()
+                        self.owners[key].ready = True
+                    self.faults.pop(key, None)
+                    self.robot_state.pop(key, None)
+            return True
+        if method == "robot.start":
+            if params.get("confirmed") is not True:
+                raise PermissionError(
+                    "Confirm an operator is present before starting the controller"
+                )
+            node, device = params["id"].split(":", 1)
+            return await self.node_call(node, method, {"id": device, "confirmed": True})
         if method in {"camera.start", "camera.stop", "camera.rename"}:
             if method == "camera.stop":
                 await self.native.close(params["id"])
                 owners = {
-                    item["owner"]
-                    for item in [*self.viewer_peers.values(), *self.viewer_tickets.values()]
-                    if item["camera"] == params["id"]
+                    key for key, item in self.peers.items() if params["id"] in item["selected"]
                 }
+                owners.add(None)
                 for owner in owners:
                     await self._close_viewers(owner, {params["id"]})
             node, device = params["id"].split(":", 1)
             result = await self.node_call(node, method, {**params, "id": device})
             self.nodes[node].update(result)
             return True
-        if method == "node.add":
-            return await self.node_registry.add(
-                params["target"], int(params.get("sdk", 5)), params.get("environment")
-            )
-        if method == "node.environment":
-            key = params["id"]
-            if key == "host" or key not in self.node_registry.configs:
-                raise ValueError("Choose an enrolled remote node")
-            if self.node_registry.configs[key].get("kind") == "service":
-                raise ValueError("Environment changes require an SSH-managed node")
-            async with self.control_lock:
-                if any(
-                    name.startswith(key + ":") and owner.owner
-                    for name, owner in self.owners.items()
-                ):
-                    raise ValueError("Release robot control before changing the node environment")
-                result = await self.node_call(
-                    key, "environment.set", {"environment": params.get("environment")}
-                )
-                self.nodes[key].update(result)
-                for records in (self.owners, self.robot_state, self.robot_timings, self.faults):
-                    for name in list(records):
-                        if name.startswith(key + ":"):
-                            records.pop(name)
-            return True
-        if method == "node.connect":
-            return await self.node_registry.connect(params["address"], params["code"])
+        if method in {"node.approve", "node.reject"}:
+            return await self.node_registry.decide(params["id"], method == "node.approve")
         if method == "node.remove":
             return await self.node_registry.remove(params["id"])
         raise ValueError("Unsupported patient action")
-
-    async def _discover(self):
-        while True:
-            try:
-                self.nodes["host"].update(await self.local.call("inventory"))
-                if self.simulation and self.simulation.status()["status"] == "error":
-                    self.nodes["host"].update(
-                        status="error", error="Simulation stopped; see simulator.log"
-                    )
-                    for camera in list(self.local.local.workers):
-                        await self.local.local.stop_camera(camera)
-            except Exception:
-                LOG.exception("Device discovery failed")
-            await asyncio.sleep(2)
 
     async def _watch(self):
         tick = 0
@@ -880,15 +888,22 @@ class Application:
                         for key, owner in self.owners.items():
                             if owner.expired():
                                 await self._release(key)
-                    await self.local.call("robot.expire")
+                        if tick % 20 == 0 and self.faults:
+                            await self._recover_holds()
                 elif self.remote and not self.remote.closed.is_set() and tick % 5 == 0:
                     before = time.time()
                     started = time.monotonic()
                     reply = await self.remote.call("status")
+                    received = time.time()
                     state = await self.run(lambda value: value, reply)
                     self.timings["patient_round_trip_ms"].add((time.monotonic() - started) * 1000)
                     if "server_time" in state:
-                        self.clock_offset = state["server_time"] - (before + time.time()) / 2
+                        self.clock_offset = (
+                            0.0
+                            if self.clock.domain
+                            and self.remote.relative_clock.domain == self.clock.domain
+                            else state["server_time"] - (before + received) / 2
+                        )
                     if (
                         state.get("status") != "approved"
                         and self.remote_status.get("status") == "approved"
@@ -935,9 +950,4 @@ class Application:
         LOG.info("Closing device graphs")
         if self.video:
             await asyncio.to_thread(self.video.close)
-        if self.local:
-            await self.local.close()
-        LOG.info("Closing simulation")
-        if self.simulation:
-            await self.simulation.close()
         await asyncio.to_thread(self.engine.close)

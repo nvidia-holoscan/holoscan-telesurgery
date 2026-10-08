@@ -125,10 +125,28 @@ def _probe(path, identity):
             caps = struct.unpack_from("I", data, 88)[0]
         if not caps & 1:
             return None  # Exclude metadata-only interfaces.
+        modes = capture_modes(fd)
+        if not modes:
+            return None  # Depth/raw interfaces need a different capture adapter.
+        name = bytes(data[16:48]).split(b"\0", 1)[0].decode(errors="replace")
+        serial = ""
+        # V4L2 card names are limited to 32 bytes; USB product names are not.
+        device = Path("/sys/class/video4linux") / Path(path).name / "device"
+        for parent in device.resolve().parents:
+            product = parent / "product"
+            if product.is_file():
+                try:
+                    name = product.read_text().strip() or name
+                    if (parent / "serial").is_file():
+                        serial = (parent / "serial").read_text().strip()
+                except OSError:
+                    pass  # Keep the V4L2 name if the USB description cannot be read.
+                break
         return {
-            "name": bytes(data[16:48]).split(b"\0", 1)[0].decode(errors="replace"),
+            "name": name,
+            "serial": serial,
             "bus": bytes(data[48:80]).split(b"\0", 1)[0].decode(errors="replace"),
-            "modes": capture_modes(fd),
+            "modes": modes,
         }
     finally:
         os.close(fd)
@@ -146,22 +164,16 @@ def camera_devices():
             path = str(paths[0]) if paths else str(device)
             modes = probe["modes"]
             choices = [(m, fps) for m in modes for fps in m["fps"]]
-            mode, fps = (
-                min(
-                    choices,
-                    key=lambda pair: (
-                        abs(pair[0]["width"] - Config.width)
-                        + abs(pair[0]["height"] - Config.height),
-                        pair[0]["pixel_format"] in {"MJPG", "JPEG"},
-                        abs(pair[1] - Config.fps),
-                    ),
-                )
-                if choices
-                else (
-                    {"width": Config.width, "height": Config.height, "pixel_format": ""},
-                    Config.fps,
-                )
+            mode, fps = min(
+                choices,
+                key=lambda pair: (
+                    abs(pair[0]["width"] - Config.width) + abs(pair[0]["height"] - Config.height),
+                    pair[0]["pixel_format"] in {"MJPG", "JPEG"},
+                    abs(pair[1] - Config.fps),
+                ),
             )
+            if mode["pixel_format"] == "GREY":
+                continue
             cameras.append(
                 {
                     **probe,
@@ -180,13 +192,6 @@ def camera_devices():
     for siblings in groups.values():
         if len(siblings) < 2:
             continue
-        labels = [
-            "Monochrome"
-            if c["modes"] and all(m["pixel_format"] == "GREY" for m in c["modes"])
-            else "Color"
-            for c in siblings
-        ]
-        for index, (camera, label) in enumerate(zip(siblings, labels, strict=True)):
-            suffix = f" {index + 1}" if labels.count(label) > 1 else ""
-            camera["name"] += f" · {label}{suffix}"
+        for index, camera in enumerate(siblings, 1):
+            camera["name"] += f" · {index}"
     return cameras

@@ -22,7 +22,7 @@ COPY packages ./packages
 COPY scripts ./scripts
 COPY native ./native
 RUN --mount=type=cache,target=/root/.cache/uv \
-    python3.12 scripts/dependencies.py --sdk "$SDK" --environment /opt/telesurgery
+    python3.12 scripts/builders/dependencies.py --sdk "$SDK" --environment /opt/telesurgery
 ARG CUDAARCHS=all-major
 ENV CUDAARCHS=$CUDAARCHS
 RUN mkdir -p /root/.ssh /opt/cuda-stubs \
@@ -33,10 +33,13 @@ RUN --mount=type=ssh \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
     GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
-    LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c 'if [ "$SDK" = 4 ]; then apt-get update && TELESURGERY_SDK4_DEVELOPMENT=/opt/sdk4-development python scripts/build_sdk4.py --prefix /opt/hololink; else python scripts/build_sdk5.py; fi' \
-    && python scripts/build_pynvvideocodec.py --cuda-architectures "$CUDAARCHS" \
+    LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c 'if [ "$SDK" = 4 ]; then apt-get update && TELESURGERY_SDK4_DEVELOPMENT=/opt/sdk4-development python scripts/builders/sdk4.py --prefix /opt/hololink; else python scripts/builders/sdk5.py; fi' \
+    && python scripts/builders/codecs.py --cuda-architectures "$CUDAARCHS" \
     && rm -rf /opt/cuda-stubs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpoco-dev libeigen3-dev liburdfdom-headers-dev libfmt-dev libusb-1.0-0 \
+    && scripts/build_franka.sh && rm -rf /var/lib/apt/lists/*
 # Isaac Sim uses its own Python, with only these small gateway dependencies mounted in.
-RUN uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps 'pyzmq>=26,<28' 'websockets>=14,<17'
+RUN uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
 ENTRYPOINT ["python", "-m", "telesurgery"]
 CMD ["--help"]

@@ -1,19 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Persist and supervise a node's simulation without delaying enrollment."""
+"""Supervise one node's simulation while reporting startup progress."""
 
 import asyncio
 
-from telesurgery_core.configuration import load, save
-from telesurgery_sim.launch import Simulation
-from telesurgery_sim.presets import PRESETS
+from telesurgery_sim.environments.presets import PRESETS
+from telesurgery_sim.runtime.launch import Simulation
 
 
 class NodeSimulation:
-    def __init__(self, node, *, persist=False):
+    def __init__(self, node):
         self.node = node
-        self.path = node.local.directory / "environment.yaml" if persist else None
         self.environment = self.simulation = self.task = None
         self.error = ""
 
@@ -21,46 +19,24 @@ class NodeSimulation:
     def changing(self):
         return self.task is not None and not self.task.done()
 
-    def select(self, environment, gui=False):
-        if environment is not None and environment not in PRESETS:
-            raise ValueError("Choose physical devices, MIRA or Franka")
-        if self.changing:
-            raise RuntimeError("The node is already changing environments")
-        if self.node.local.workers:
-            raise ValueError("Stop the node's streams before changing its environment")
-        if gui and environment is None:
-            raise ValueError("--sim-gui requires --sim")
-        if self.path:
-            save(self.path, {"environment": environment, "gui": gui})
-        self.environment, self.error = environment, ""
-        self.task = asyncio.create_task(self._switch(gui))
+    def start(self, environment, gui=False):
+        if environment not in PRESETS:
+            raise ValueError("Choose MIRA or Franka")
+        self.environment = environment
+        self.task = asyncio.create_task(self._start(gui))
 
-    async def _switch(self, gui):
+    async def _start(self, gui):
         try:
-            await self.node.disconnect()
-            if self.simulation:
-                await self.simulation.close()
-                self.simulation = None
-            local = self.node.local
-            local.cameras.clear()
-            local.robots.clear()
-            local.seen_hsb.clear()
-            local.simulation = None
-            if self.environment:
-                self.simulation = Simulation(
-                    self.environment, local.directory / "simulation", gui=gui
-                )
-                local.simulation = await self.simulation.start()
+            self.simulation = Simulation(
+                self.environment, self.node.local.directory / "simulation", gui=gui
+            )
+            self.node.local.simulation = await self.simulation.start()
         except (OSError, RuntimeError, ValueError) as exc:
             self.error = str(exc)
 
-    def restore(self):
-        if self.path and (saved := load(self.path)):
-            self.select(saved["environment"], saved.get("gui", False))
-
     def status(self):
         if self.changing:
-            status = {"status": "loading", "stage": "Changing environment"}
+            status = {"status": "loading", "stage": "Starting simulation"}
         elif self.error:
             status = {"status": "error", "error": self.error}
         else:

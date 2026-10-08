@@ -13,6 +13,8 @@ MAX_HEADER = 4096
 MAX_VIDEO = 8 * 1024 * 1024
 MAX_PIXELS = 4096 * 2160
 MAX_RAW_VIDEO = MAX_PIXELS * 3
+MAX_DEPTH = MAX_PIXELS * 4 + 65536
+MAX_FRAME = MAX_RAW_VIDEO + MAX_DEPTH
 
 
 def _document(data: bytes) -> dict:
@@ -50,6 +52,7 @@ class VideoHeader:
     source_started_ns: int = 0  # Monotonic; only interpreted by processes on the source host.
     encoded_ns: int = 0
     pack_ns: int = 0
+    depth_bytes: int = 0
 
     def encode(self) -> bytes:
         return json.dumps(asdict(self), allow_nan=False, separators=(",", ":")).encode()
@@ -77,6 +80,7 @@ class VideoHeader:
             source_started_ns=_integer(doc.get("source_started_ns", 0), "source start", 0),
             encoded_ns=_integer(doc.get("encoded_ns", 0), "encode completion", 0),
             pack_ns=_integer(doc.get("pack_ns", 0), "packing duration", 0),
+            depth_bytes=_integer(doc.get("depth_bytes", 0), "depth size", 0, MAX_DEPTH),
         )
 
 
@@ -84,7 +88,9 @@ def decode_video(parts: list[bytes]) -> tuple[VideoHeader, bytes]:
     if len(parts) != 2:
         raise ValueError("expected a header and a bounded video payload")
     header = VideoHeader.decode(parts[0])
-    size = len(parts[1])
+    size = len(parts[1]) - header.depth_bytes
+    if size <= 0:
+        raise ValueError("Missing color frame")
     if header.codec == "raw-bgr8":
         if size != header.width * header.height * 3:
             raise ValueError("expected an exact raw BGR8 frame")

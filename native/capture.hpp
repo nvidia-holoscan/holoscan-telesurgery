@@ -20,7 +20,9 @@ struct CaptureFrame {
 /// Own the SDK 5 receiver graph and its IMX274 hardware for one camera session.
 class Capture {
  public:
-  Capture(const std::string& address, int mode, int expander, int gpu, bool reset);
+  Capture(const std::string& address, int mode, int expander, int gpu, bool reset,
+          const std::string& receiver);
+  static bool supports_fusa(const std::string& interface, int gpu = 0);
   ~Capture();
   Capture(const Capture&) = delete;
   Capture& operator=(const Capture&) = delete;

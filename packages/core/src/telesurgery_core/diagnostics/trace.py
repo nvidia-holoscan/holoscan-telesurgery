@@ -41,7 +41,10 @@ def source(header):
             **(
                 {"pack_ms": header.pack_ns / 1e6}
                 if header.codec == "raw-bgr8"
-                else {"encode_ms": header.encode_ns / 1e6}
+                else {
+                    "encode_ms": header.encode_ns / 1e6,
+                    **({"pack_ms": header.pack_ns / 1e6} if header.pack_ns else {}),
+                }
             ),
         },
         "error_ms": 0,

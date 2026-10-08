@@ -16,6 +16,7 @@ from dataclasses import replace
 
 import numpy as np
 from telesurgery_core.transport.protocol import MAX_VIDEO, VideoHeader
+from telesurgery_core.video import depth
 from telesurgery_core.video.formats import dimensions
 from telesurgery_core.video.gpu import nv12 as _nv12
 from telesurgery_core.video.model import Frame
@@ -63,13 +64,30 @@ class CodecWorker:
             self.codec.encode(Frame(header, image))
 
     def encode(self, frame):
-        return self.executor.submit(self.codec.encode, frame).result()
+        return self.executor.submit(self._encode, frame).result()
+
+    def _encode(self, frame):
+        header, data = self.codec.encode(frame)
+        if frame.depth is None:
+            return header, data
+        started = header.encoded_ns
+        header, data = depth.attach(header, data, frame.depth)
+        finished = time.perf_counter_ns()
+        return replace(
+            header, pack_ns=header.pack_ns + finished - started, encoded_ns=finished
+        ), data
+
+    def _decode(self, header, data, on_device=False):
+        color, packed = depth.split(header, data)
+        frame = self.codec.decode(header, color, on_device=on_device)
+        frame.depth = depth.unpack(header, packed)
+        return frame
 
     def decode(self, header, data):
-        return self.executor.submit(self.codec.decode, header, data).result()
+        return self.executor.submit(self._decode, header, data).result()
 
     def decode_device(self, header, data):
-        return self.executor.submit(self.codec.decode, header, data, on_device=True).result()
+        return self.executor.submit(self._decode, header, data, on_device=True).result()
 
     def close(self):
         try:
@@ -135,7 +153,7 @@ class GpuCodec:
                         if encode and getattr(nvc, "telesurgery_low_latency_patch", None) != 1:
                             raise RuntimeError(
                                 "NVENC requires the zero-output-delay NVIDIA binding: run "
-                                "scripts/build_pynvvideocodec.py with this Python"
+                                "scripts/builders/codecs.py with this Python"
                             )
                         # Native camera dimensions may differ from the display size.
                         # Create NVENC/NVDEC on the first validated frame.

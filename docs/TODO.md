@@ -1,11 +1,14 @@
 # TODO
 
-- [ ] **Gamepad control:** device selection, axis/button mappings, dead zones and a hold-to-enable button. Route input through the existing permission, robot lock and Holoscan command path; release control on device disconnect.
-- [ ] **Haptic devices:** a surgeon-side device bridge for pose/button input and force feedback, with calibration, clutching and bounded feedback. Robot controllers remain on patient nodes.
-- [ ] **Physical robots:** MIRA/Franka adapters with measured state, motion limits and acknowledged hold/stop behavior. The current adapters support simulation only.
-- [ ] **CMR Versius:** support the physical robot and an Isaac Sim environment through the existing Holoscan robot control pipeline.
-- [ ] **Robot feedback:** report measured simulator joint positions alongside commanded targets, then measure command-to-feedback latency at P50/P95/P99/P99.9.
-- [ ] **Hardware validation:** verify control handover, input loss, network loss, lease expiry and the controller's stop behavior with actual gamepads, haptic devices and robots.
-- [ ] **Intel RealSense cameras:** test discovery, RGB streaming, supported resolutions/FPS and codecs on SDK 5 and SDK 4, with Holoviz and WebRTC viewing. Measure latency and assess depth-stream support separately.
-- [ ] **Different-city testing:** run patient and surgeon services in different cities over the public internet. Measure P50/P95/P99/P99.9 latency, FPS, bandwidth, jitter, packet loss and clock uncertainty; verify Holoviz/WebRTC viewing, simulated robot control and recovery after disconnection.
-- [ ] **Surgical Neural Tokenizer for Telesurgery:** integrate support into the Holoscan pipeline.
+- [ ] **Franka motion:** validate sustained control, Ruckig Home and soft Stop on hardware; support a calibrated home pose per installation.
+- [ ] **MIRA API:** validate Home, 1° jogs, tool roll and grippers on hardware, including tool homing. Review the current vendor SDK; verify precise return, feedback freshness and an acknowledged stop/watchdog.
+- [ ] **Controller validation:** test physical Xbox/PlayStation gamepads, hotplug, wireless/network loss, lease expiry and control handover on real robots.
+- [ ] **Haptic devices:** add calibrated pose/button input, clutching and bounded force feedback.
+- [ ] **Cartesian controls:** add robot-specific kinematics and bounded tool movement using Isaac Lab-style keyboard mappings.
+- [ ] **Optional shared MIRA control:** assess one surgeon per arm, with coordinated commands and a whole-robot Stop. Keep one surgeon per robot as the default.
+- [ ] **CMR Versius:** add physical and Isaac Sim adapters.
+- [ ] **Robot metrics:** measure command-to-measured-feedback latency at P50/P95/P99/P99.9.
+- [ ] **Intel RealSense:** validate RGB/depth resolutions, FPS and codecs on both SDKs with Holoviz and WebRTC; measure depth overhead.
+- [ ] **Different-city testing:** measure latency percentiles, bandwidth, jitter, loss and clock uncertainty over the public internet; verify recovery and simulated control.
+- [ ] **EA3 benchmarks:** rerun the recorded SDK 5 matrix on public EA3 before publishing an updated SDK comparison.
+- [ ] **Surgical Neural Tokenizer for Telesurgery:** integrate into the Holoscan pipeline.

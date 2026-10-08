@@ -15,3 +15,4 @@ class Frame:
     header: VideoHeader
     image: object  # BGR8 for capture/diagnostics; native decoding returns owned GPU RGB8.
     ready_ns: int = 0  # Local monotonic time; never compared between machines.
+    depth: object = None

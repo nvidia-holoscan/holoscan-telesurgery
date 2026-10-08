@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Launch one local dashboard or an enrolled device node."""
+"""Launch a dashboard or an enrolled device node."""
 
 import argparse
 import asyncio
 import json
 import logging
 import os
+import re
+import socket
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
@@ -18,104 +21,127 @@ def port(value):
     return number
 
 
+def node_name(value):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value):
+        raise argparse.ArgumentTypeError("use 1–64 letters, digits, dots, underscores or hyphens")
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="./run.sh", description="Holoscan telesurgery")
     commands = parser.add_subparsers(dest="role", required=True)
     for role, default_port in (("patient", 8000), ("surgeon", 8002)):
-        command = commands.add_parser(role, help=f"start the local {role} dashboard")
+        command = commands.add_parser(role, help=f"start the {role} dashboard")
+        command.add_argument(
+            "--host", default="127.0.0.1", help="dashboard bind address (default: 127.0.0.1)"
+        )
+        command.add_argument("--ssl", action="store_true", help="serve the dashboard over HTTPS")
+        command.add_argument("--ssl-cert", type=Path, help="PEM certificate for --ssl")
+        command.add_argument("--ssl-key", type=Path, help="PEM private key for --ssl")
         command.add_argument(
             "--port",
             type=port,
             default=default_port,
-            help=f"local browser port (default: {default_port})",
+            help=f"dashboard port (default: {default_port})",
         )
-        command.add_argument("--state-dir", type=Path, help="defaults to runs/ROLE-PORT")
+        command.add_argument(
+            "--workspace",
+            type=Path,
+            default=Path("workspace"),
+            help="workspace directory (default: ./workspace)",
+        )
         if role == "patient":
-            command.add_argument(
-                "--nodes",
-                default="",
-                metavar="HOST[,HOST…]",
-                help="track node services, including offline hosts (default port: 7448)",
-            )
             command.add_argument(
                 "--endpoint-port",
                 type=port,
                 default=7447,
                 help="application endpoint for surgeons and nodes",
             )
-            command.add_argument(
-                "--sim",
-                choices=["mira", "franka"],
-                help="launch an Isaac Sim environment instead of physical discovery",
-            )
-            command.add_argument(
-                "--sim-gui", action="store_true", help="open the Isaac Sim window for --sim"
-            )
     node = commands.add_parser("node", help="run a device service without a dashboard")
-    location = node.add_mutually_exclusive_group()
-    location.add_argument("--config", type=Path, help="connection file supplied by SSH deployment")
-    location.add_argument("--state-dir", type=Path, help="defaults to runs/node-PORT")
-    node.add_argument("--port", type=port, default=7448, help="node service port (default: 7448)")
+    node.add_argument(
+        "--patient", required=True, help="patient hostname or IP (default port: 7447)"
+    )
+    node.add_argument(
+        "--name", type=node_name, help="node name (default: hostname plus environment)"
+    )
+    node.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path("workspace"),
+        help="workspace directory (default: ./workspace)",
+    )
+    node.add_argument("--port", type=port, default=0, help="direct video port (default: automatic)")
     node.add_argument("--sim", choices=["mira", "franka"], help="start a simulation on this node")
     node.add_argument("--sim-gui", action="store_true", help="open the Isaac Sim window for --sim")
     commands.add_parser("doctor", help="check the SDK and GPU video codec")
     args = parser.parse_args(argv)
+    if args.role in {"patient", "surgeon"}:
+        if bool(args.ssl_cert) != bool(args.ssl_key):
+            parser.error("--ssl-cert and --ssl-key must be supplied together")
+        if args.ssl_cert and not args.ssl:
+            parser.error("--ssl-cert and --ssl-key require --ssl")
     if getattr(args, "sim_gui", False) and not args.sim:
         parser.error("--sim-gui requires --sim")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("aioice").setLevel(logging.WARNING)
+    if args.role != "doctor":
+        args.workspace = args.workspace.expanduser().resolve()
+        os.environ["TELESURGERY_WORKSPACE"] = str(args.workspace)
     try:
         if args.role == "doctor":
             from telesurgery_core.video.codecs import probe
             from telesurgery_core.video.config import Config
-            from telesurgery_runtime.sdk import require_sdk
+            from telesurgery_runtime.backends.sdk import require_sdk
 
             print(f"Holoscan {require_sdk().__version__}")
             print(json.dumps(probe(Config(codec="h264")), indent=2))
         elif args.role == "node":
             import fcntl
 
-            from telesurgery.nodes.service import run_node
-            from telesurgery.nodes.standalone import run_service
+            from telesurgery.nodes.client import run_service
 
-            if args.config and args.port != 7448:
-                parser.error("--port is only used by standalone nodes")
-            directory = (
-                args.config.resolve().parent
-                if args.config
-                else (args.state_dir or Path(f"runs/node-{args.port}")).resolve()
-            )
+            name = args.name or socket.gethostname() + (f"-{args.sim}" if args.sim else "")
+            directory = args.workspace / "nodes" / name
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             with (directory / "service.lock").open("w") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise RuntimeError(
+                        f"Node {name} is already running; choose another --name"
+                    ) from exc
+                log = RotatingFileHandler(directory / "node.log", maxBytes=1_048_576, backupCount=1)
+                log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+                logging.getLogger().addHandler(log)
                 pid = directory / "node.pid"
                 pid.write_text(str(os.getpid()))
                 try:
                     asyncio.run(
-                        run_node(args.config.resolve(), args.sim, args.sim_gui)
-                        if args.config
-                        else run_service(directory, args.port, args.sim, args.sim_gui)
+                        run_service(
+                            directory, args.patient, name, args.port, args.sim, args.sim_gui
+                        )
                     )
                 except asyncio.CancelledError:
                     pass
                 finally:
                     pid.unlink(missing_ok=True)
+                    logging.getLogger().removeHandler(log)
+                    log.close()
         else:
             from telesurgery.server.http import serve
 
             if args.role == "patient" and args.port == args.endpoint_port:
                 parser.error("browser and application endpoint ports must differ")
-            if getattr(args, "nodes", "") and args.sim:
-                parser.error("--nodes is for physical mode; simulation uses one node")
-            directory = (args.state_dir or Path(f"runs/{args.role}-{args.port}")).resolve()
+            directory = args.workspace / f"{args.role}-{args.port}"
             serve(
                 args.role,
                 args.port,
                 getattr(args, "endpoint_port", 7447),
                 directory,
-                getattr(args, "sim", None),
-                sim_gui=getattr(args, "sim_gui", False),
-                nodes=args.nodes.split(",") if getattr(args, "nodes", "") else (),
+                host=args.host,
+                ssl=args.ssl,
+                ssl_cert=args.ssl_cert,
+                ssl_key=args.ssl_key,
             )
         return 0
     except KeyboardInterrupt:

@@ -1,77 +1,89 @@
 # Holoscan Telesurgery
 
-A distributed telesurgery demo built with **NVIDIA Holoscan and Holoscan Sensor Bridge**. A patient operator brings cameras and robot interfaces from multiple machines into one room. Approved surgeons watch the feeds they choose and share exclusive robot control—all through Holoscan pipelines.
+A distributed telesurgery demo built with **NVIDIA Holoscan and Holoscan Sensor Bridge**. Device nodes bring cameras and robots into a patient room. The patient approves nodes and surgeons; surgeons view live feeds and control permitted robots from their own dashboard.
 
-Use HSB sensors and USB cameras on Thor, DGX Spark or x86, or explore **MIRA** and **Franka** rooms in Isaac Sim. Each side has its own local dashboard, with native Holoviz viewing and per-stream latency metrics.
+Use physical devices or **MIRA and Franka simulations**, with browser or native Holoviz viewing and per-stream latency metrics.
 
-![Surgeon dashboard with live MIRA camera feeds and robot controls](docs/images/surgeon.png)
+![Surgeon workspace: live MIRA feeds and controls for both arms and grippers](docs/images/surgeon-walkthrough.gif)
 
-*MIRA simulation with H.264 browser viewing. [See the patient dashboard](docs/images/patient.png).*
+[Patient dashboard](docs/images/patient-walkthrough.gif) · [Architecture](docs/architecture.md) · [Benchmarks](BENCHMARK.md)
 
 ## System requirements
 
-- Ubuntu 24.04.
-- NVIDIA GPU and driver supporting CUDA 13.
-- Docker with NVIDIA Container Toolkit.
-- SSH access to the pinned NVIDIA GitLab sources.
-- A local desktop display for Holoviz.
+| Component        | Requirement                                                                                                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating system | Ubuntu 24.04 on x86 or ARM64. Use Docker on Ubuntu 22.04.                                                                                                                                                 |
+| GPU              | NVIDIA GPU with hardware video encoding/decoding and a CUDA 13-compatible driver.                                                                                                                         |
+| Docker           | Docker with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), usable without `sudo`. Required for `--docker` and simulation nodes. |
+| Native builds    | CUDA 13 development toolkit and GCC 13+. `setup.sh` installs the remaining build dependencies.                                                                                                            |
+| Simulation nodes | x86 with an RTX GPU, or DGX Spark, meeting [Isaac Sim requirements](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/installation/requirements.html).                                                     |
+| Viewing          | A browser for dashboards; a local desktop display for Holoviz or the Isaac Sim window.                                                                                                                    |
+| Build access     | SSH access to NVIDIA GitLab for the current SDK 5 Hololink dependency.                                                                                                                                    |
 
 ## Quickstart
 
-1. **Start the patient simulation:**
-
-   ```bash
-   ./run.sh --docker patient --sim mira
-   ```
-
-   Use `--sim franka` for Franka. Open **[localhost:8000](http://localhost:8000)**, wait for the cameras to appear, then click **Stream**.
-
-2. **Start the surgeon** in another terminal or on another machine:
-
-   ```bash
-   ./run.sh --docker surgeon
-   ```
-
-   Open **[localhost:8002](http://localhost:8002)**. Enter the patient hostname (same machine: `127.0.0.1`), your name and requested access. Approve the request under **Surgeons** on the patient dashboard, then **Add feeds** on the surgeon dashboard.
-
-## Physical devices
-
-Connect USB cameras or a configured HSB/IMX274 to the patient machine, then start:
+### 1. Patient
 
 ```bash
 ./run.sh --docker patient
 ```
 
-For cameras on other machines, run on each device host:
+Open **[localhost:8000](http://localhost:8000)**. Your room starts empty.
+
+### 2. Surgeon
+
+In a separate terminal or on the surgeon's machine:
 
 ```bash
-./run.sh --docker node
+./run.sh --docker surgeon
 ```
 
-In the patient dashboard, choose **Add node → Connect running service** and enter its hostname and printed pairing code. **Deploy over SSH** is also available.
+Open **[localhost:8002](http://localhost:8002)**. Enter the patient hostname, your name and requested access. The default endpoint works when both services run on the same machine.
 
-Choose **Physical devices**, **MIRA** or **Franka** when deploying over SSH. To change an SSH node, stop its streams and use **Environment** on its node page. For a manually started node, restart with `./run.sh node --sim mira` (or `franka`); omit `--sim` for physical devices. The dashboard reconnects automatically.
+> Approve the request in Patient.
 
-Open a node, choose each camera's settings and click **Stream**. Connect the surgeon as in Quickstart. See [HSB configuration](docs/architecture.md#camera-configuration) for sensor setup.
+### 3. Nodes
 
-Physical robot control is not implemented.
+In separate terminals, start simulation (`mira` or `franka`):
+
+```bash
+./run.sh --docker node --patient 127.0.0.1 --sim mira
+```
+
+Or physical cameras and robots:
+
+```bash
+./run.sh --docker node --patient 127.0.0.1
+```
+
+> For nodes on another machine, replace `127.0.0.1` with the patient IP.
+
+Approve each node under **Nodes**, then start streams or connect robots. In Surgeon, select the feeds and robot to use.
+
+[Camera configuration](docs/architecture.md#camera-configuration) · [Robot controls](docs/robot-controls.md)
 
 ## Native execution
 
-Requires the CUDA 13 development toolkit. Run setup once on each machine:
+With the CUDA 13 development toolkit installed, run setup once on each machine:
 
 ```bash
 ./setup.sh
-./run.sh patient --sim mira
+./run.sh patient
 
-# Another terminal or machine:
+# Another terminal:
 ./run.sh surgeon
+
+# Another terminal:
+./run.sh node --patient 127.0.0.1 --sim mira
 ```
 
-SDK 5 is the default. Add `--sdk 4` to setup and run commands to use SDK 4.
+## Miscellaneous
 
-Each dashboard runs locally. Services connect over TCP **7447** (patient) and **7448** (node control) and **7449** (direct node video). Use `--port` for additional dashboards on one machine.
+- [Holoscan SDK 5 EA3](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea3) is the default. Add `--sdk 4` to `./setup.sh` and `./run.sh` for SDK 4.
+- Dashboard ports are **8000** and **8002** (`--port`). The patient endpoint is **7447** (`--endpoint-port`).
+- Dashboards bind to `127.0.0.1`. Add `--host 0.0.0.0 --ssl` for HTTPS from another machine. There is no login.
+- Saved state, simulation assets, caches and logs use `./workspace`; pass `--workspace PATH` to setup and run commands to change it.
+- `run.sh` saves terminal output to a separate timestamped file in `workspace/logs/` for each dashboard or node.
+- Stop the services and run `mv workspace workspace-backup` to start fresh.
 
-This is a research demonstration.
-
-[Architecture](docs/architecture.md) · [System proposal](docs/system-proposal.md) · [Benchmarks](BENCHMARK.md) · [Contributing](CONTRIBUTING.md)
+Research demonstration. [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [TODO](docs/TODO.md)

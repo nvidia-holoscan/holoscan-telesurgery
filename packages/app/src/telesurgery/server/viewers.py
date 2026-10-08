@@ -6,6 +6,7 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -55,7 +56,7 @@ class NativeViews:
                     process = await asyncio.create_subprocess_exec(
                         sys.executable,
                         "-m",
-                        "telesurgery_runtime.viewer",
+                        "telesurgery_runtime.application.viewer",
                         str(path),
                         stdout=log,
                         stderr=asyncio.subprocess.STDOUT,
@@ -107,6 +108,31 @@ class NativeViews:
                     path.exists() and process.returncode is None for path, process in requests
                 ):
                     await asyncio.sleep(0.05)
+
+    async def display(self, camera, mode, distance=2.0, opacity=0.4):
+        if (
+            mode not in {"color", "depth", "overlay", "side"}
+            or not all(
+                type(value) in (int, float) and math.isfinite(value)
+                for value in (distance, opacity)
+            )
+            or not (0 < distance <= 100 and 0 <= opacity <= 1)
+        ):
+            raise ValueError("Invalid depth display settings")
+        async with self.lock:
+            if self.status().get(camera, {}).get("status") != "running":
+                raise ValueError("Open Holoviz first")
+            window = self.windows[camera]
+            config = json.loads(window["config"].read_text())
+            if not config.get("depth"):
+                raise ValueError("This stream does not include depth")
+            path = window["config"].with_name("display.json")
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"mode": mode, "distance": distance, "opacity": opacity})
+            )
+            temporary.replace(path)
+        return True
 
     async def close(self, camera=None):
         async with self.lock:

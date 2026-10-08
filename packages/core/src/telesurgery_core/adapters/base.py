@@ -20,3 +20,4 @@ class CameraSample:
     captured_ns: int
     sim_command_sequence: int = -1
     started_ns: int = 0  # Buffer handoff on the local monotonic clock; 0: read return, -1: unknown.
+    depth: object = None  # Optional color-aligned float32 axial depth in metres; <=0/NaN invalid.

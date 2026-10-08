@@ -9,5 +9,12 @@ __pycache__/
 .ruff_cache/
 build/
 dist/
-runs/
+workspace/
+workspace-backup/
 *.so
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx

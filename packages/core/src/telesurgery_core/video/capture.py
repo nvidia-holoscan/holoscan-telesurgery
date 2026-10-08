@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from telesurgery_core.transport.protocol import MAX_RAW_VIDEO
+from telesurgery_core.transport.protocol import MAX_FRAME
+from telesurgery_core.video import depth
 from telesurgery_core.video.formats import decode_raw
 
 
@@ -17,12 +18,13 @@ class Capture:
         self.gateway = None
         self.last_capture_ns = None
         self.last_header = None
+        self.depth = None
         self.background = None
         if source.startswith("gateway:"):
             import zmq
             from telesurgery_core.transport.zmq import open_socket
 
-            self.gateway = open_socket(zmq.SUB, source[8:], bind=False, max_size=MAX_RAW_VIDEO)
+            self.gateway = open_socket(zmq.SUB, source[8:], bind=False, max_size=MAX_FRAME)
         elif source != "synthetic":
             raise ValueError(f"unsupported capture source: {source}")
 
@@ -39,7 +41,9 @@ class Capture:
                 return None  # Discard queued frames from the previous simulator mode.
             self.last_capture_ns = header.captured_ns
             self.last_header = header
-            frame = decode_raw(header, data)
+            color, packed = depth.split(header, data)
+            self.depth = depth.unpack(header, packed)
+            frame = decode_raw(header, color)
             return frame.image
         if self.background is None:
             image = np.full((self.height, self.width, 3), (35, 24, 20), dtype=np.uint8)

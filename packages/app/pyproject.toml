@@ -10,7 +10,7 @@ name = "telesurgery-app"
 version = "0.3.0"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = ["telesurgery-core", "telesurgery-runtime", "telesurgery-sim", "aiohttp>=3.12,<4", "aiortc>=1.14,<2"]
+dependencies = ["telesurgery-core", "telesurgery-runtime", "telesurgery-sim", "aiohttp>=3.12,<4", "aiortc>=1.14,<2", "ifaddr>=0.2,<1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telesurgery"]
