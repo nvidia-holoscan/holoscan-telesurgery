@@ -86,4 +86,4 @@ With the CUDA 13 development toolkit installed, run setup once on each machine:
 - `run.sh` saves terminal output to a separate timestamped file in `workspace/logs/` for each dashboard or node.
 - Stop the services and run `mv workspace workspace-backup` to start fresh.
 
-Research demonstration. [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [TODO](docs/TODO.md)
+Research demonstration. [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [TODO](docs/TODO.md)
