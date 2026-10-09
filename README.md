@@ -86,6 +86,7 @@ With the CUDA 13 development toolkit installed, run setup once on each machine:
 ## Miscellaneous
 
 - [Holoscan SDK 5 EA3](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea3) is the default. Add `--sdk 4` to `./setup.sh` and `./run.sh` for SDK 4.
+- Docker images use `holoscan-telesurgery:0.1.0` for SDK 5 and `holoscan-telesurgery:0.1.0-sdk4` for SDK 4.
 - Dashboard ports are **8000** and **8002** (`--port`). The patient endpoint is **7447** (`--endpoint-port`).
 - Dashboards bind to `127.0.0.1`. Add `--host 0.0.0.0 --ssl` for HTTPS from another machine. There is no login.
 - Saved state, simulation assets, caches and logs use `./workspace`; pass `--workspace PATH` to setup and run commands to change it.

@@ -96,7 +96,7 @@ def test_dashboard_certificate_mounts(docker_launcher, tmp_path, monkeypatch, as
     assert "Run output" in log.read_text()
 
 
-@pytest.mark.parametrize("sdk", [4, 5])
+@pytest.mark.parametrize("sdk,suffix", [(4, "-sdk4"), (5, "")])
 @pytest.mark.parametrize(
     "options,role",
     [
@@ -108,7 +108,7 @@ def test_dashboard_certificate_mounts(docker_launcher, tmp_path, monkeypatch, as
         (["node", "--patient", "localhost", "--sim=franka"], "node-sim"),
     ],
 )
-def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk):
+def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk, suffix):
     root, records = docker_launcher
     # The tag follows project metadata, rather than a second hard-coded version.
     (root / "pyproject.toml").write_text('[project]\nversion = "0.1.7"\n')
@@ -120,7 +120,7 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk):
     )
     commands = [json.loads(line) for line in records.read_text().splitlines()]
     build = next(c for c in commands if c[0] == "build")
-    image = f"holoscan-telesurgery:0.1.7-sdk{sdk}"
+    image = f"holoscan-telesurgery:0.1.7{suffix}"
     assert "--target" not in build
     assert build[build.index("--tag") + 1] == image
     assert "--ssh" in build

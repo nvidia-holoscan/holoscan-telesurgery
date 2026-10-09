@@ -22,10 +22,10 @@ class MiraController:
 
     def __init__(self, spec, directory):
         self.spec, self.directory = spec, Path(directory).resolve()
+        suffix = "-sdk4" if os.environ.get("TELESURGERY_SDK") == "4" else ""
         self.image = spec["controller"].get(
             "image",
-            f"holoscan-telesurgery:{version('telesurgery-robots')}"
-            f"-sdk{os.environ.get('TELESURGERY_SDK', '5')}",
+            f"holoscan-telesurgery:{version('telesurgery-robots')}{suffix}",
         )
         self.identity = hashlib.sha256(f"{self.directory}:{spec['id']}".encode()).hexdigest()[:12]
         self.name = f"telesurgery-mira-{self.identity}"
