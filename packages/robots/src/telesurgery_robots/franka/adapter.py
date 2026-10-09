@@ -5,7 +5,7 @@
 
 import math
 
-from telesurgery_robots.adapters.base import speed_value
+from telesurgery_robots.adapters.base import cartesian_command, speed_value
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 
 
@@ -17,6 +17,7 @@ class Franka:
     max_step_deg = 5.0
     home_deg = {"joints": FRANKA_HOME}
     speed_limits = FRANKA_SPEED
+    cartesian = {"frame": "base", "linear_speed_m_s": 0.10, "angular_speed_deg_s": 30.0}
 
     def __init__(self, spec):
         try:
@@ -26,6 +27,10 @@ class Franka:
                 f"Franka dependency unavailable ({exc}); "
                 "run ./setup.sh --profile franka on this node"
             ) from exc
+        if not hasattr(Controller, "jog_cartesian"):
+            raise RuntimeError(
+                "Rebuild the Franka adapter: run ./scripts/build_franka.sh on this node"
+            )
         self.factory, self.address, self.reader = Controller, spec["address"], None
 
     def read(self):
@@ -52,9 +57,16 @@ class Franka:
             "feedback_source": "FCI measured state",
             "control_active": state["control_active"],
             "home_active": state["home_active"],
+            "stopping": state["stopping"],
         }
 
     def jog(self, command, *, speed_deg_s=None):
+        if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
+            command = cartesian_command(command)
+            speed = math.radians(speed_value(speed_deg_s, self.speed_limits))
+            self.read()
+            self.reader.jog_cartesian(command["translation"] + command["rotation"], speed=speed)
+            return self.read()
         return self._move(command, step=False, speed_deg_s=speed_deg_s)
 
     def step(self, command, *, speed_deg_s=None):

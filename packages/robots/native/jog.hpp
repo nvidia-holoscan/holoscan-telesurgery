@@ -12,12 +12,12 @@
 namespace telesurgery {
 using Joints = std::array<double, 7>;
 constexpr double default_speed = 10.0 * M_PI / 180;
+constexpr Joints joint_lower{-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973};
+constexpr Joints joint_upper{2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973};
 
 inline void validate_target(const Joints& goal) {
-  constexpr Joints lower{-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973};
-  constexpr Joints upper{2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973};
   for (size_t i = 0; i < goal.size(); ++i) {
-    if (!std::isfinite(goal[i]) || goal[i] < lower[i] || goal[i] > upper[i])
+    if (!std::isfinite(goal[i]) || goal[i] < joint_lower[i] || goal[i] > joint_upper[i])
       throw std::invalid_argument("Franka target is outside Panda joint limits");
   }
 }

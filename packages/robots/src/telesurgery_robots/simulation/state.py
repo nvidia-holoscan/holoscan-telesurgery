@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import time
 
-from telesurgery_robots.adapters.base import speed_value, values
+from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
+from telesurgery_robots.franka.cartesian import CartesianTrajectory
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.franka.trajectory import JointTrajectory
 from telesurgery_robots.mira.gripper import GripperJog, clamp, gripper_rates
-from telesurgery_robots.mira.poses import MIRA_HOME, roll_target
+from telesurgery_robots.mira.poses import MIRA_HOME, MIRA_HOME_GRIP, MIRA_HOME_ROLL, roll_target
 
 
 class SimRobot:
@@ -20,10 +21,15 @@ class SimRobot:
 
     def __init__(self, environment="mira"):
         self.pose = {
-            arm: [*MIRA_HOME, 0.0, limits[0]] for arm, limits in self.gripper_ranges.items()
+            arm: [*MIRA_HOME, MIRA_HOME_ROLL, closed + MIRA_HOME_GRIP * (opened - closed)]
+            for arm, (closed, opened) in self.gripper_ranges.items()
         }
         if environment == "franka":
             self.pose = {"joints": list(FRANKA_HOME)}
+            self.gripper_ranges = {"hand": (0.0, 0.04)}
+        self.finger_target = 0.04
+        self.cartesian = None
+        self.kinematics = None
         self.trajectory = None
         self.mode = None
         self.speed = FRANKA_SPEED["default"]
@@ -32,7 +38,20 @@ class SimRobot:
         self.feedback = {}
         self.grip = GripperJog()
 
+    @property
+    def joint_target_velocity(self):
+        trajectory = self.cartesian or self.trajectory
+        return list(trajectory.input.current_velocity) if trajectory else [0.0] * 7
+
     def _grippers(self):
+        if "joints" in self.pose:
+            if not self.gripper_ranges:
+                return {}
+            return {
+                "hand": clamp(
+                    self.feedback.get("grippers", {}).get("hand", self.finger_target / 0.04)
+                )
+            }
         return {
             arm: clamp(
                 (self.feedback.get("grippers_deg", {}).get(arm, self.pose[arm][5]) - closed)
@@ -44,14 +63,40 @@ class SimRobot:
     def _grip_targets(self, targets):
         for arm, position in targets.items():
             closed, opened = self.gripper_ranges[arm]
-            self.pose[arm][5] = closed + position * (opened - closed)
+            if arm == "hand":
+                self.finger_target = closed + position * (opened - closed)
+            else:
+                self.pose[arm][5] = closed + position * (opened - closed)
 
     def advance(self, now=None):
         now = time.monotonic() if now is None else now
         elapsed = max(0, min(now - self.updated, 0.1))
         self.updated = now
-        if "left" in self.pose:
-            self._grip_targets(self.grip.advance(self._grippers()))
+        self._grip_targets(self.grip.advance(self._grippers()))
+        if (
+            "left" in self.pose
+            and self.mode == "home"
+            and all(
+                all(
+                    abs(actual - target) <= 0.2
+                    for actual, target in zip(
+                        self.feedback.get("joints_deg", {}).get(arm, pose[:5]),
+                        pose[:5],
+                        strict=True,
+                    )
+                )
+                and abs(self.feedback.get("grippers_deg", {}).get(arm, pose[5]) - pose[5]) <= 0.2
+                for arm, pose in self.pose.items()
+            )
+        ):
+            self.mode = None
+        if self.cartesian is not None and elapsed > 0:
+            position, jacobian, sampled = self.kinematics or (self.pose["joints"], None, -1)
+            if now - sampled > 0.3:
+                self.cartesian.stop("physics feedback stale")
+            self.pose["joints"] = self.cartesian.advance(position, jacobian, elapsed, now)
+            if self.cartesian.finished:
+                self.cartesian = None
         if self.trajectory is None or elapsed <= 0:
             return
         if now > self.deadline and self.mode == "jog":
@@ -61,6 +106,9 @@ class SimRobot:
             self.trajectory = self.mode = None
 
     def _stop(self):
+        self._grip_targets(self.grip.stop(self._grippers()))
+        if self.cartesian:
+            self.cartesian.stop()
         if self.trajectory:
             self.trajectory.stop()
             self.mode = "stopping"
@@ -72,16 +120,28 @@ class SimRobot:
             **self.feedback,
             **(
                 {
-                    "control_active": self.trajectory is not None,
+                    "control_active": self.trajectory is not None
+                    or self.cartesian is not None
+                    or bool(self.grip.rates),
                     "home_active": self.mode == "home",
-                    "stopping": self.mode == "stopping",
+                    "stopping": self.mode == "stopping"
+                    or bool(self.cartesian and self.cartesian.stopping),
+                    "stop_reason": self.cartesian.stop_reason if self.cartesian else None,
+                    "grippers": self._grippers(),
+                    "gripper_available": "hand" in self.gripper_ranges,
                 }
                 if "joints" in self.pose
-                else {"grippers": self._grippers(), "control_active": bool(self.grip.rates)}
+                else {
+                    "grippers": self._grippers(),
+                    "control_active": self.mode == "home" or bool(self.grip.rates),
+                    "home_active": self.mode == "home",
+                }
             ),
         }
 
     def _target(self, goal, mode, speed):
+        if self.cartesian is not None:
+            raise ValueError("Release Cartesian input before joint motion or Home")
         if self.trajectory is not None and (
             self.mode not in {"step", "jog"} or mode not in {"step", "jog"}
         ):
@@ -106,11 +166,17 @@ class SimRobot:
             if method == "hold":
                 self._stop()
                 if "left" in self.pose:
-                    self._grip_targets(self.grip.stop(self._grippers()))
+                    self.grip.clear()
+                    self._grip_targets(self._grippers())
                     for arm in self.pose:
                         measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
+                        if self.mode == "home":
+                            self.pose[arm][:4] = measured[:4]
                         self.pose[arm][4] = measured[4]
+                    self.mode = None
             return self._state()
+        if "left" in self.pose and self.mode == "home":
+            raise ValueError("MIRA is moving home; use Stop before manual control")
         if method == "set_home" and "joints" in self.pose:
             if set(params) - {"speed_deg_s"}:
                 raise ValueError("Home uses the configured pose")
@@ -120,12 +186,38 @@ class SimRobot:
         elif method == "set_home" and "left" in self.pose:
             if params:
                 raise ValueError("Home uses the configured pose")
-            self._grip_targets(self.grip.stop(self._grippers()))
-            for arm, pose in self.pose.items():
+            self.grip.clear()
+            self._grip_targets({arm: MIRA_HOME_GRIP for arm in self.pose})
+            for pose in self.pose.values():
                 pose[:4] = MIRA_HOME
-                pose[4] = self.feedback.get("joints_deg", {}).get(arm, pose)[4]
-        elif method == "jog_gripper" and "left" in self.pose:
+                pose[4] = MIRA_HOME_ROLL
+            self.mode = "home"
+        elif method == "jog_gripper":
+            if self.mode in {"home", "stopping"} or (self.cartesian and self.cartesian.stopping):
+                raise ValueError("Franka is busy; release input before gripping")
             self.grip.command(gripper_rates(params, self.gripper_ranges), self._grippers())
+        elif method == "set_cartesian_velocity" and "joints" in self.pose:
+            command = cartesian_command({key: params[key] for key in ("translation", "rotation")})
+            if set(params) - {"translation", "rotation", "speed_deg_s"}:
+                raise ValueError("Unexpected Cartesian parameters")
+            speed = speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
+            if self.kinematics is None or time.monotonic() - self.kinematics[2] > 0.3:
+                raise ValueError("Cartesian physics feedback is unavailable or stale")
+            if self.trajectory is not None:
+                raise ValueError("Release joint input or Home before Cartesian motion")
+            if self.cartesian is not None and self.cartesian.stopping:
+                # A command already in transit may arrive after the watchdog
+                # or a release. Report the stop without treating it as a broken
+                # controller connection; never refresh or resume that motion.
+                return self._state()
+            if self.cartesian is None:
+                # Preserve the held drive target: re-seeding from measured
+                # joints would accumulate load-induced position error on
+                # every enable/release cycle. IK still uses measured joints.
+                self.cartesian = CartesianTrajectory(self.pose["joints"], speed)
+            elif self.cartesian.speed != speed:
+                raise ValueError("Release input before changing Franka speed")
+            self.cartesian.request(command, self.updated)
         elif method == "set_joint_delta" and "joints" in self.pose:
             movement = values(params["joints"], 7, 5)
             limits = [

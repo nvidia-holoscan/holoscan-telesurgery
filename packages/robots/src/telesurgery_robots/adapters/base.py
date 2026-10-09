@@ -52,10 +52,11 @@ def controls(adapter: Adapter, spec: dict) -> dict:
         **({"home_deg": adapter.home_deg} if enabled and hasattr(adapter, "home") else {}),
         **(
             {"grippers": adapter.grippers, "grip_speed_pct_s": adapter.grip_speed}
-            if enabled and hasattr(adapter, "grip")
+            if enabled and hasattr(adapter, "grip") and adapter.grippers
             else {}
         ),
         **({"speed_deg_s": adapter.speed_limits} if hasattr(adapter, "speed_limits") else {}),
+        **({"cartesian": adapter.cartesian} if enabled and hasattr(adapter, "cartesian") else {}),
         "reason": "State feedback only; motion is not supported"
         if not adapter.groups
         else ""
@@ -71,3 +72,10 @@ def validate_jog(adapter: Adapter, command: dict) -> dict:
         key: values(command[key], count, adapter.max_step_deg)
         for key, count in adapter.groups.items()
     }
+
+
+def cartesian_command(command):
+    """Dimensionless, base-frame velocity requests; limits live on the node."""
+    if not isinstance(command, dict) or set(command) != {"translation", "rotation"}:
+        raise ValueError("Cartesian input requires translation and rotation")
+    return {key: values(command[key], 3, 1) for key in ("translation", "rotation")}

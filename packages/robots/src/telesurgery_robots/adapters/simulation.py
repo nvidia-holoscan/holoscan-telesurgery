@@ -4,7 +4,7 @@
 """Isaac Sim's local controller protocol behind the same physical adapter contract."""
 
 from telesurgery_core.transport.rpc import RpcClient
-from telesurgery_robots.adapters.base import speed_value
+from telesurgery_robots.adapters.base import cartesian_command, speed_value
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.mira.gripper import GRIP_SPEED
 from telesurgery_robots.mira.poses import MIRA_HOME
@@ -61,8 +61,24 @@ class FrankaSimulation(SimulationAdapter):
     method = "set_joint_delta"
     home_deg = {"joints": FRANKA_HOME}
     speed_limits = FRANKA_SPEED
+    cartesian = {"frame": "base", "linear_speed_m_s": 0.10, "angular_speed_deg_s": 30.0}
+    grippers = ()
+    grip_speed = GRIP_SPEED
+
+    def read(self):
+        state = super().read()
+        self.grippers = ("hand",) if state.get("gripper_available") else ()
+        return state
 
     def jog(self, command, *, speed_deg_s=None):
+        if "translation" in command or "rotation" in command:
+            return self.request(
+                "set_cartesian_velocity",
+                {
+                    **cartesian_command(command),
+                    "speed_deg_s": speed_value(speed_deg_s, self.speed_limits),
+                },
+            )
         return self.request(
             self.method, {**command, "speed_deg_s": speed_value(speed_deg_s, self.speed_limits)}
         )
@@ -77,3 +93,6 @@ class FrankaSimulation(SimulationAdapter):
         return self.request(
             "set_home", {"speed_deg_s": speed_value(speed_deg_s, self.speed_limits)}
         )
+
+    def grip(self, command):
+        return self.request("jog_gripper", command)

@@ -1064,6 +1064,14 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .feedback-joints:has(> :nth-child(4):last-child) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+.feedback-joints:has(> :nth-child(5):last-child) {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+}
+.feedback-joints:has(> :nth-child(5):last-child) > div {
+    flex-direction: column;
+    gap: 0;
+}
 .feedback-joints > div {
     display: flex;
     align-items: baseline;
@@ -1091,28 +1099,92 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     padding: 12px;
     margin: 12px 0;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    background: #f6f8f2;
+    border-radius: 8px;
+    background: #f6f8f7;
 }
 .gamepad-status {
-    font-size: 12px;
-    font-weight: 600;
+    margin: 0 0 12px;
+    height: 18px;
+    line-height: 18px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.gamepad-mapping {
+.gamepad-controls[data-state="moving"] {
+    border-color: #76a443;
+}
+.gamepad-instructions {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px 12px;
-    margin: 12px 0;
-    font-size: 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 6px 8px;
+    align-items: center;
+    font-size: 11px;
 }
-.gamepad-mapping > span:nth-child(even) {
+.gamepad-instructions kbd {
+    padding: 2px 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    font: inherit;
     font-weight: 600;
-    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+.gamepad-instructions kbd[data-active="true"] {
+    border-color: #76a443;
+    background: #eaf3df;
+    color: #365809;
+}
+.gamepad-instructions kbd[data-active="true"] + span {
+    color: #365809;
+    font-weight: 600;
+}
+.gamepad-roll {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.gamepad-roll-arm {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+}
+.gamepad-roll-arm > span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+}
+.gamepad-roll-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.gamepad-roll-keys kbd {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 26px;
+    line-height: 20px;
+    font-size: 14px;
+    color: var(--ink);
+}
+.gamepad-roll-keys .icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2.5;
+}
+.gamepad-roll-arm:has(kbd[data-active="true"]) > span {
+    color: #365809;
+    font-weight: 600;
 }
 .gamepad-hint {
     color: var(--muted);
     font-size: 11px;
     line-height: 1.5;
+    margin: 10px 0 0;
 }
 .keyboard-controls {
     padding: 12px;
@@ -1129,6 +1201,23 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     align-items: center;
     gap: 8px;
     margin-top: 12px;
+}
+.robot-input-choice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+.robot-input-choice > span {
+    font-size: 11px;
+    color: var(--muted);
+}
+.input-discovery {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 11px;
 }
 .robot-toolbar select {
     flex: 1;
@@ -1154,8 +1243,18 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .gripper-controls {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 10px;
     margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.gripper-heading {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
 }
 .gripper-control {
     display: grid;
@@ -1187,7 +1286,13 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     border-radius: 3px;
     background: #f6f8f7;
     font: inherit;
-    font-weight: 600;
+    font-weight: 700;
+    color: var(--ink);
+}
+.gripper-control kbd .icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2.5;
 }
 .motion-value {
     display: flex;
@@ -1216,18 +1321,121 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .motion-value input[type="number"]::-webkit-inner-spin-button {
     opacity: 1;
 }
-.keyboard-status {
+.motion-section + .motion-section:not([hidden]) {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.speed-control {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) 32px;
+    gap: 0 8px;
+    margin: 0 0 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+.speed-control input[type="range"] {
+    width: 100%;
+    min-width: 0;
+    min-height: 28px;
     margin: 0;
-    font-size: 12px;
+    padding: 0;
+    accent-color: #659c13;
+    cursor: pointer;
+    appearance: none;
+    background: transparent;
+    border: 0;
+}
+.speed-control input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 4px;
+    background: linear-gradient(to right, #659c13 var(--speed-fill), #d7dfd3 var(--speed-fill));
+}
+.speed-control input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #659c13;
+    box-shadow: 0 0 0 1px #659c13;
+}
+.speed-control input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 4px;
+    background: #d7dfd3;
+}
+.speed-control input[type="range"]::-moz-range-progress {
+    height: 4px;
+    background: #659c13;
+}
+.speed-control input[type="range"]::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #659c13;
+    box-shadow: 0 0 0 1px #659c13;
+}
+.speed-control input:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.speed-control output {
+    text-align: right;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.gripper-controls > .speed-control {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+}
+.compact-controls > .robot-state {
+    margin-top: 8px;
+    margin-bottom: 0;
+    padding: 0;
+    background: transparent;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.compact-controls .feedback-heading {
+    margin-bottom: 2px;
+}
+.joint-positions {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+.joint-positions th,
+.joint-positions td {
+    padding: 1px 2px;
+    text-align: right;
+    border: 0;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.joint-positions th {
+    color: var(--muted);
     font-weight: 500;
+}
+.joint-positions th:first-child {
+    width: 34px;
+    text-align: left;
+}
+.joint-positions td {
+    color: var(--ink);
+}
+.keyboard-rows {
+    display: grid;
+    gap: 4px;
 }
 .keyboard-mapping {
     display: grid;
     gap: 4px;
-    margin: 12px 0;
-}
-.keyboard-status[hidden] + .keyboard-mapping {
-    margin-top: 0;
+    margin: 0 0 12px;
 }
 .keyboard-mapping:last-child {
     margin-bottom: 0;
@@ -1253,13 +1461,21 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     font-size: 11px;
     font-weight: 600;
 }
-.keyboard-arm-divider {
-    border-top: 1px solid var(--border);
-    margin-top: 4px;
-    padding-top: 8px;
+.keyboard-arms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
 }
 .keyboard-paired {
-    grid-template-columns: minmax(58px, 1fr) minmax(78px, 1fr) 40px 40px;
+    grid-template-columns: 18px minmax(0, 1fr) 28px 28px;
+    gap: 3px;
+    font-size: 11px;
+}
+.keyboard-paired.keyboard-columns {
+    grid-template-columns: minmax(0, 1fr) 10px 28px 28px;
+}
+.keyboard-paired .joint-position {
+    font-size: 11px;
+    padding-right: 2px;
 }
 .keyboard-columns > span:nth-child(2),
 .joint-position {
@@ -1300,6 +1516,191 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .keyboard-binding .key-cap[data-pressed="true"] {
     background: #e4f1cf;
     border-color: #76b900;
+}
+.keyboard-paired .keyboard-binding .key-cap {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    min-height: 28px;
+}
+.robot-panel:has(.compact-controls) {
+    padding: 14px;
+}
+body[data-role="surgeon"] .robot-panel:has(.compact-controls) {
+    margin-top: 0;
+}
+body[data-role="surgeon"]:not(.controller-window) #content:has(.compact-controls) {
+    padding-bottom: 16px;
+}
+body[data-role="surgeon"] .app-shell:has(.compact-controls) {
+    min-height: 0;
+}
+.robot-panel:has(.compact-controls) > .section-title {
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+.robot-panel:has(.compact-controls) .section-kicker {
+    display: none;
+}
+.compact-controls .robot-toolbar {
+    margin-top: 6px;
+}
+.compact-controls .keyboard-controls,
+.compact-controls .gamepad-controls {
+    padding: 10px;
+    margin: 10px 0 0;
+}
+.compact-controls .motion-section + .motion-section:not([hidden]),
+.compact-controls .gripper-controls {
+    margin-top: 8px;
+    padding-top: 8px;
+}
+.compact-controls .speed-control {
+    margin-bottom: 6px;
+}
+.compact-controls .gripper-controls > .speed-control {
+    margin-bottom: 0;
+}
+.compact-controls .gamepad-status {
+    margin-bottom: 8px;
+}
+.franka-joint-group + .franka-joint-group {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.franka-sticks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+.franka-sticks .keyboard-rows {
+    align-content: start;
+}
+.franka-stick-heading {
+    display: flex;
+    justify-content: space-between;
+    padding-right: 34px;
+    color: var(--muted);
+    font-size: 11px;
+}
+.franka-stick-joint {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 28px;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    font-size: 11px;
+}
+.gamepad-joint-position {
+    padding-right: 4px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.franka-stick-joint kbd {
+    display: grid;
+    place-items: center;
+    height: 26px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+}
+.franka-stick-joint kbd[data-active="true"] {
+    border-color: #76a443;
+    background: #eaf3df;
+    color: #365809;
+}
+.cartesian-mapping {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+}
+.cartesian-label {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 5px;
+}
+.cartesian-direction {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 11px;
+}
+.cartesian-direction kbd {
+    min-width: 28px;
+    padding: 2px;
+    text-align: center;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+}
+.cartesian-direction kbd[data-active="true"] {
+    color: #365809;
+    border-color: #76a443;
+    background: #eaf3df;
+}
+.cartesian-frame {
+    align-self: end;
+    justify-self: end;
+    font-size: 10px;
+    color: var(--muted);
+}
+.cartesian-keyboard {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+}
+.cartesian-keyboard-row {
+    display: grid;
+    grid-template-columns: 28px 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    margin-top: 5px;
+    font-size: 11px;
+}
+.cartesian-keyboard .key-cap {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    min-height: 28px;
+}
+.cartesian-keyboard .key-cap[data-key^="arrow"] {
+    font-size: 17px;
+    font-weight: 700;
+}
+.cartesian-keyboard-hint {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 10px;
+}
+.single-gripper {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+}
+.single-gripper .gripper-control {
+    gap: 8px;
+}
+.franka-controls .feedback-joints {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
+}
+.franka-controls .feedback-joints > div {
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
 }
 body[data-role="patient"] #workspace-title {
     font-size: 16px;

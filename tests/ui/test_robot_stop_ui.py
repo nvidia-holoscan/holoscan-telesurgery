@@ -64,6 +64,7 @@ async def test_stop_acknowledgement_blocks_repress_with_stale_inventory():
             await page.goto("http://localhost:8777/")
             key = page.locator('.key-cap[data-key="g"]')
             await expect(key).to_be_enabled()
+            position = await key.bounding_box()
             await page.locator(".keyboard-controls").focus()
             await page.keyboard.down("g")
             async with asyncio.timeout(3):
@@ -72,7 +73,7 @@ async def test_stop_acknowledgement_blocks_repress_with_stale_inventory():
             await page.keyboard.up("g")
             await asyncio.wait_for(stopped.wait(), 2)
             await expect(key).to_be_disabled()
-            await expect(page.locator(".keyboard-status")).to_have_text("Stopping · Release keys")
+            assert await key.bounding_box() == position
             count = len(moves)
             # Polls still return the pre-stop state. A held new key must neither
             # bypass braking nor be queued to run when braking completes.

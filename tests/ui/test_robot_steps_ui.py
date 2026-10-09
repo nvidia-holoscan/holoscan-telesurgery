@@ -15,9 +15,11 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("step_size", [0.07, 0.2, 1])
+@pytest.mark.parametrize("percent", [1, 20, 100])
 @pytest.mark.parametrize("simulation", [False, True])
-async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simulation):
+async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulation):
+    speed_value = FRANKA_SPEED["max"] * percent / 100
+    step_size = speed_value * 0.05
     robot = {
         "id": "node:franka",
         "name": "Franka",
@@ -87,18 +89,15 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simula
             await page.goto("http://localhost:8777/")
             await expect(page.get_by_label("Franka input", exact=True)).to_have_value("keyboard")
             await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
-            step = page.get_by_label("Franka joint step", exact=True)
-            await expect(step).to_have_value("1")
-            await expect(step).to_have_attribute("max", "5")
-            await step.fill(str(step_size))
-            speed = page.get_by_label("Franka joint speed", exact=True)
-            await expect(speed).to_have_value("10")
-            await speed.fill("3.5")
-            step_box, speed_box = await step.bounding_box(), await speed.bounding_box()
-            assert abs(step_box["y"] - speed_box["y"]) < 1
-            await speed.fill("21")
+            await expect(page.get_by_label("Franka joint step", exact=True)).to_have_count(0)
+            speed = page.get_by_label("Franka arm speed", exact=True)
+            await expect(speed).to_have_value("20")
+            await expect(speed).to_have_attribute("min", "1")
+            await expect(speed).to_have_attribute("max", "100")
+            await speed.focus()
+            await speed.evaluate("(s,v)=>{s.value=v;s.dispatchEvent(new Event('input'))}", percent)
             await speed.press("Enter")
-            await expect(speed).to_have_value("3.5")
+            await expect(speed).to_have_value(str(percent))
             plus = page.get_by_role("button", name="Franka joints 5 increase (T)", exact=True)
             await plus.click()
             await page.wait_for_timeout(100)
@@ -107,7 +106,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simula
                 "id": robot["id"],
                 "command": {"joints": [0, 0, 0, 0, step_size, 0, 0]},
                 "mode": "step",
-                "speed_deg_s": 3.5,
+                "speed_deg_s": speed_value,
             }
             assert not any(c["action"] == "robot.release" for c in calls)
             # A held input must promote a still-active step into a jog. Physical
@@ -131,7 +130,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simula
             await wait_moves(count + 4)
             assert all(c["params"]["mode"] == "jog" for c in moves()[count + 1 :])
             await page.keyboard.press("g")  # An additional held key is discarded.
-            assert all(c["params"]["command"]["joints"][4] == step_size for c in moves())
+            for move in moves():
+                delta = move["params"]["command"]["joints"][4]
+                if move["params"]["mode"] == "step":
+                    assert delta == pytest.approx(step_size)
+                else:
+                    assert 0 < delta <= step_size * 2
+                assert move["params"]["speed_deg_s"] == speed_value
             await page.keyboard.up("t")
             await page.wait_for_timeout(150)
             assert calls[-1]["action"] == "robot.release"
@@ -141,14 +146,17 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simula
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(100)
             assert calls[-1]["action"] == "robot.release"
-            # Invalid edits cannot replace the last valid value or send motion.
+            # Slider endpoints respect node limits and never send motion.
             count = len(moves())
-            await step.fill("6")
-            await page.keyboard.press("Enter")
-            await expect(step).to_have_value(str(step_size))
-            await step.fill("")
-            await page.keyboard.press("Enter")
-            await expect(step).to_have_value(str(step_size))
+            await speed.focus()
+            await speed.press("End")
+            await speed.press("ArrowRight")
+            await expect(speed).to_have_value("100")
+            await speed.press("Home")
+            await speed.press("ArrowLeft")
+            await expect(speed).to_have_value("1")
+            await speed.evaluate("(s,v)=>{s.value=v;s.dispatchEvent(new Event('input'))}", percent)
+            await speed.press("Enter")
             assert len(moves()) == count
             # Home is one fixed-pose request, with manual input paused until
             # completion. Escape still stops it through the existing release.
@@ -158,7 +166,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, step_size, simula
                 "id": robot["id"],
                 "command": {},
                 "mode": "home",
-                "speed_deg_s": 3.5,
+                "speed_deg_s": speed_value,
             }
             await expect(plus).to_be_disabled()
             await page.keyboard.press("t")

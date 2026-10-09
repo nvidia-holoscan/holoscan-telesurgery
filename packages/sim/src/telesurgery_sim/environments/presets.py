@@ -17,6 +17,8 @@ PRESETS = {
         "mounted_camera": "/World/A5_GUI_MODEL/A5_GUI_MODEL_001/C_ASM_6543210"
         "/C_ASM_654321/C_ASM_65432/C_ASM_6543/C_ASM_654/C_ASM_65/C_ASM_6/Camera_Tip/Camera",
         "focal_length": 5.0,
+        # Oblique front view of the hands and pad after physics settles (cm, Y up).
+        "room_view": ((240.0, 260.0, -40.0), (25.0, 95.0, 0.0)),
         # MIRA is authored in centimetres with Y up; these props use metres and Z up.
         "props": [
             (

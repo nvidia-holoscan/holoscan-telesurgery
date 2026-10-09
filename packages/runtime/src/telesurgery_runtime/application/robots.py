@@ -140,7 +140,14 @@ class Controller:
             gripper_rates(command, self.adapter.grippers)
             self.sequence = sequence
             return self.record(lambda: self.adapter.grip(command))
-        command = validate_jog(self.adapter, command)
+        if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
+            from telesurgery_robots.adapters.base import cartesian_command
+
+            if mode != "jog" or not hasattr(self.adapter, "cartesian"):
+                raise ValueError("Cartesian jogging is not supported by this robot")
+            command = cartesian_command(command)
+        else:
+            command = validate_jog(self.adapter, command)
         self.sequence = sequence
         # Most adapters already accept a finite target. A local servo adapter may
         # distinguish one step from a continuously refreshed gamepad target.

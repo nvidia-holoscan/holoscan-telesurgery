@@ -97,8 +97,8 @@ def main():
             articulation = PhysxSchema.PhysxArticulationAPI.Apply(
                 stage.GetPrimAtPath(preset["root"])
             )
-            articulation.CreateSolverPositionIterationCountAttr(8)
-            articulation.CreateSolverVelocityIterationCountAttr(0)
+            articulation.CreateSolverPositionIterationCountAttr(64)
+            articulation.CreateSolverVelocityIterationCountAttr(4)
         for name, path, position, rotation, scale in props:
             place_static(stage, f"/Telesurgery/{name}", path, position, rotation, scale)
         if stage.GetPrimAtPath("/Needle"):
@@ -113,6 +113,7 @@ def main():
 
             enable_tool_roll(stage)
         drives = {"left": {}, "right": {}} if args.sim == "mira" else {"joints": {}}
+        fingers = {}
         for prim in stage.Traverse():
             if args.sim == "mira":
                 match = re.fullmatch(r"([LR])J([1-6])(?:_1)?_joint", prim.GetName())
@@ -125,10 +126,29 @@ def main():
                 if match:
                     index = int(match[1]) - 1
                     drive = UsdPhysics.DriveAPI.Apply(prim, "angular")
-                    drive.CreateStiffnessAttr(400)
+                    # Inertia-scaled drives stay well damped as the shoulder
+                    # and elbow axes align. Fixed force gains oscillate in
+                    # these configurations even at low commanded speeds.
+                    drive.CreateTypeAttr(UsdPhysics.Tokens.acceleration)
+                    drive.CreateStiffnessAttr(1600)
                     drive.CreateDampingAttr(80)
                     drive.CreateMaxForceAttr(87 if index < 4 else 12)
+                    drive.CreateTargetVelocityAttr(0)
+                    # Bound the physics response as well as the commanded
+                    # trajectory, especially near aligned articulation axes.
+                    joint_physics = PhysxSchema.PhysxJointAPI.Apply(prim)
+                    joint_physics.CreateMaxJointVelocityAttr(30)
+                    # Small reflected motor inertia prevents nearly aligned
+                    # shoulder axes from becoming numerically ill-conditioned.
+                    joint_physics.CreateArmatureAttr(0.01)
                     drives["joints"][index] = drive
+                finger = re.fullmatch(r"panda_finger_joint([12])", prim.GetName())
+                if finger:
+                    drive = UsdPhysics.DriveAPI.Apply(prim, "linear")
+                    drive.CreateStiffnessAttr(10000)
+                    drive.CreateDampingAttr(200)
+                    drive.CreateMaxForceAttr(40)
+                    fingers[int(finger[1])] = drive
         expected = 6 if args.sim == "mira" else 7
         if any(len(group) != expected for group in drives.values()):
             raise RuntimeError(f"Robot asset has unexpected joint drives: {drives}")
@@ -195,7 +215,14 @@ def main():
             prim.ApplyAPI("OmniSensorAPI")
             cameras.append(
                 CameraSensor(
-                    RtxCamera(path, tick_rate=30, reset_xform_op_properties=False),
+                    # Franka uses wall-clock physics catch-up. Render the
+                    # newest state once per camera loop, never older sensor
+                    # ticks accumulated during a slow frame.
+                    RtxCamera(
+                        path,
+                        tick_rate=0 if args.sim == "franka" else 30,
+                        reset_xform_op_properties=False,
+                    ),
                     resolution=(height, width),
                     annotators=["rgb"],
                 )
@@ -242,7 +269,28 @@ def main():
             if args.sim == "mira"
             else None,
         )
+        cartesian_feedback = None
+        if args.sim == "franka":
+            from telesurgery_sim.runtime.franka import FrankaFeedback
+
+            if fingers and len(fingers) != 2:
+                raise RuntimeError("Incomplete Franka finger drives")
+            robot.gripper_ranges = {"hand": (0.0, 0.04)} if fingers else {}
+            cartesian_feedback = FrankaFeedback(feedback, fingers)
         timeline = omni.timeline.get_timeline_interface()
+        if args.sim == "franka":
+            import carb.settings
+            from omni.kit.loop import _loop
+
+            # Isaac's standalone loop runner defaults to 1/60 s per update,
+            # regardless of camera rendering time. Follow wall time like the
+            # jog controller, with bounded physics catch-up after slow frames.
+            _loop.acquire_loop_interface().set_manual_mode(False)
+            settings = carb.settings.get_settings()
+            settings.set_bool("/app/player/useFixedTimeStepping", False)
+            settings.set_int("/persistent/simulation/minFrameRate", 10)
+            physics = PhysxSchema.PhysxSceneAPI.Apply(stage.GetPrimAtPath("/World/Physics"))
+            physics.CreateTimeStepsPerSecondAttr(120)
         timeline.play()
         progress("Warming up camera rendering")
         pending = queue.Queue(maxsize=8)
@@ -329,16 +377,29 @@ def main():
             with robot_lock:
                 robot.advance()
                 targets = {arm: list(pose) for arm, pose in robot.pose.items()}
+                finger_target = robot.finger_target
+                joint_velocity = robot.joint_target_velocity
                 applied_sequence = command_sequence
             for arm, joints in drives.items():
                 for index, drive in joints.items():
                     drive.GetTargetPositionAttr().Set(targets[arm][index])
+                    if args.sim == "franka":
+                        # Feed forward the same bounded trajectory velocity.
+                        # A zero velocity target makes drive damping resist a
+                        # held jog and leaves the tool trailing its target.
+                        drive.GetTargetVelocityAttr().Set(joint_velocity[index])
+            for drive in fingers.values():
+                drive.GetTargetPositionAttr().Set(finger_target)
             for future, result in applied:
                 future.set_result(result)
             app.update()
             measured = feedback.read()
+            if cartesian_feedback:
+                measured.update(cartesian_feedback.read(measured))
             with robot_lock:
                 robot.feedback = measured
+                if cartesian_feedback:
+                    robot.kinematics = cartesian_feedback.kinematics
                 feedback_at = time.monotonic()
             for index, camera in enumerate(cameras):
                 pixels, _ = camera.get_data("rgb")

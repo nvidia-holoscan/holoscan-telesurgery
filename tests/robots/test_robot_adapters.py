@@ -455,7 +455,7 @@ def test_discrete_step_uses_adapter_completion_without_repeating_input():
         robot.move("owner", 2, command, time.time(), mode="unknown")
 
 
-def test_mira_simulation_home_restores_both_arms_and_preserves_tools():
+def test_mira_simulation_home_restores_both_arms_and_tools():
     from telesurgery_robots.adapters.base import controls
     from telesurgery_robots.adapters.simulation import MiraSimulation
     from telesurgery_robots.mira.adapter import MiraAdapter
@@ -479,7 +479,9 @@ def test_mira_simulation_home_restores_both_arms_and_preserves_tools():
     )
     assert all(pose[:4] != list(MIRA_HOME) for pose in moved["targets_deg"].values())
     restored = controller.move("owner", 2, {}, time.time(), mode="home")
-    assert restored["targets_deg"] == {arm: [*MIRA_HOME, 12, 34] for arm in ("left", "right")}
+    assert restored["targets_deg"] == {
+        arm: [*MIRA_HOME, 0, limits[0]] for arm, limits in sim.gripper_ranges.items()
+    }
     with pytest.raises(ValueError, match="configured pose"):
         sim.apply({"method": "set_home", "params": {"left": [0] * 4}})
     # Physical controls require patient motion permission.

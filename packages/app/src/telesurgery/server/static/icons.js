@@ -32,6 +32,10 @@ const paths = {
     check: "m4 12 5 5L20 6",
     left: "m10 5-7 7 7 7M3 12h18",
     right: "m14 5 7 7-7 7M3 12h18",
+    up: "m5 10 7-7 7 7M12 3v18",
+    down: "m5 14 7 7 7-7M12 3v18",
+    square: "M4 4h16v16H4V4Z",
+    circle: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
 };
 
 export function icon(name) {

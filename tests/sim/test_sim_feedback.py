@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from telesurgery_robots.simulation.state import SimRobot
 from telesurgery_sim.runtime.feedback import JointFeedback
+from telesurgery_sim.runtime.franka import FrankaFeedback, rotation_matrix
 
 
 def view(paths, positions, velocities, *, valid=True):
@@ -51,3 +52,46 @@ def test_feedback_waits_for_physics_and_rejects_missing_joint():
     feedback.views = [view(["/J1"], [1], [0])]
     with pytest.raises(RuntimeError, match="/J2"):
         feedback.read()
+
+
+def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch):
+    monkeypatch.setattr("time.monotonic", lambda: 123)
+    feedback = FrankaFeedback.__new__(FrankaFeedback)
+    feedback.hand, feedback.tool_name = 2, "TCP"
+    feedback.joint_paths = [f"/J{i}" for i in range(7)]
+    feedback.finger_paths = []
+    feedback.kinematics = None
+    # The USD articulation's order differs from the controller's joint order.
+    paths = list(reversed(feedback.joint_paths))
+    jacobian = np.arange(42).reshape(6, 7)
+    tensors = np.zeros((1, 2, 6, 7))
+    tensors[0, 1] = jacobian[:, ::-1]
+    feedback.view = SimpleNamespace(
+        is_physics_tensor_entity_valid=lambda: True,
+        dof_paths=[paths],
+        num_links=3,
+        num_dofs=7,
+        get_jacobian_matrices=lambda: SimpleNamespace(numpy=lambda: tensors),
+        get_dof_positions=lambda: SimpleNamespace(numpy=lambda: np.zeros((1, 7))),
+    )
+    # Base rotated 90 degrees around world Z; tool is world +Y from the base.
+    quaternion = np.array([np.sqrt(0.5), 0, 0, np.sqrt(0.5)])
+    base = rotation_matrix(quaternion)
+    feedback.frames = SimpleNamespace(
+        get_world_poses=lambda: (
+            SimpleNamespace(numpy=lambda: np.array([[1, 2, 3], [1, 2.5, 3]])),
+            SimpleNamespace(numpy=lambda: np.array([quaternion, quaternion])),
+        )
+    )
+    measured = {"joints_deg": {"joints": list(range(7))}}
+    state = feedback.read(measured)
+    np.testing.assert_allclose(state["tool_pose"]["position_m"], [0.5, 0, 0], atol=1e-12)
+    np.testing.assert_allclose(state["tool_pose"]["orientation_matrix"], np.eye(3), atol=1e-12)
+    np.testing.assert_allclose(
+        feedback.kinematics[1], np.vstack((base.T @ jacobian[:3], base.T @ jacobian[3:]))
+    )
+    assert feedback.kinematics[2] == 123
+    assert "grippers" not in state
+    feedback.view.is_physics_tensor_entity_valid = lambda: False
+    assert feedback.read(measured) == {}
+    assert feedback.kinematics is None
