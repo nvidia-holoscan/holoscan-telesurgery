@@ -18,6 +18,8 @@ from telesurgery_core.diagnostics.trace import mark, wire
 MAX_HEADER = 64 * 1024
 MAX_PAYLOAD = 64 * 1024 * 1024
 PREFIX = struct.Struct("!II")
+PROBE_INTERVAL = 2
+RECEIVE_TIMEOUT = 10
 
 
 class Peer:
@@ -61,10 +63,10 @@ class Peer:
     async def _probe(self):
         try:
             for attempt in count():
-                if self.relative_clock.domain == self.clock.domain and self.clock.domain:
-                    return
+                # Keep probing even with a shared clock: replies also establish
+                # liveness when a reboot or network loss leaves TCP half-open.
                 self._queue({"type": "clock", "id": secrets.token_hex(12)})
-                await asyncio.sleep(0.2 if attempt < 5 else 2)
+                await asyncio.sleep(min(0.2, PROBE_INTERVAL) if attempt < 5 else PROBE_INTERVAL)
         except (ConnectionError, RuntimeError):
             return
 
@@ -144,11 +146,14 @@ class Peer:
     async def _receive(self):
         try:
             while True:
-                hsize, psize = PREFIX.unpack(await self.reader.readexactly(PREFIX.size))
-                if not 0 < hsize <= MAX_HEADER or psize > self.max_payload:
-                    raise ValueError("Invalid application message size")
-                header = json.loads(await self.reader.readexactly(hsize))
-                payload = await self.reader.readexactly(psize)
+                # Bound the whole read, including a peer that stalls mid-message.
+                # Healthy idle peers exchange clock probes without device actions.
+                async with asyncio.timeout(RECEIVE_TIMEOUT):
+                    hsize, psize = PREFIX.unpack(await self.reader.readexactly(PREFIX.size))
+                    if not 0 < hsize <= MAX_HEADER or psize > self.max_payload:
+                        raise ValueError("Invalid application message size")
+                    header = json.loads(await self.reader.readexactly(hsize))
+                    payload = await self.reader.readexactly(psize)
                 if not isinstance(header, dict):
                     raise ValueError("Expected a message object")
                 kind = header.get("type")
@@ -197,6 +202,7 @@ class Peer:
             TypeError,
             KeyError,
             RecursionError,
+            TimeoutError,
         ):
             pass
         finally:

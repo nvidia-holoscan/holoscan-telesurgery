@@ -13,6 +13,8 @@ from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from telesurgery_robots.mira.binary import checksum
+
 
 class MiraController:
     # This is a vendor process, not a robot stop or a motion permission switch.
@@ -79,6 +81,8 @@ class MiraController:
         binary = Path(settings["executable"]).expanduser().resolve(strict=True)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ValueError("MIRA controller executable is not runnable")
+        if settings.get("sha256") and checksum(binary) != settings["sha256"]:
+            raise ValueError("MIRA API changed; restart the node to load the updated executable")
         uri = urlsplit(self.spec["uri"])
         if uri.scheme != "ws" or uri.hostname != "127.0.0.1" or not uri.port:
             raise ValueError("Managed MIRA API must use ws://127.0.0.1:PORT")

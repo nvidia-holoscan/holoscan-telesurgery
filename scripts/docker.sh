@@ -11,10 +11,14 @@ workspace="$root/workspace"
 app_args=("$@")
 mounts=()
 simulation=false
+mira=false
+api_supplied=false
+api_path=""
+help=false
 for ((i=0; i<${#app_args[@]}; i++)); do
     option="${app_args[i]%%=*}"
     case "$option" in
-        --workspace|--ssl-cert|--ssl-key)
+        --workspace|--ssl-cert|--ssl-key|--mira-api)
             index=$i
             if [[ "${app_args[i]}" == *=* ]]; then
                 path="${app_args[i]#*=}"
@@ -27,7 +31,12 @@ for ((i=0; i<${#app_args[@]}; i++)); do
                 path="$workspace"
             else
                 path="$(realpath -e -- "$path")"
-                mounts+=(--volume "$path:$path:ro")
+                if [[ "$option" == --mira-api ]]; then
+                    api_supplied=true
+                    api_path="$path"
+                else
+                    mounts+=(--volume "$path:$path:ro")
+                fi
             fi
             if [[ "$index" == "$i" ]]; then
                 app_args[i]="$option=$path"
@@ -35,8 +44,31 @@ for ((i=0; i<${#app_args[@]}; i++)); do
                 app_args[i]="$path"
             fi ;;
         --sim) simulation=true ;;
+        --profile)
+            if [[ "${app_args[i]}" == *=* ]]; then
+                profile="${app_args[i]#*=}"
+            else
+                ((i+=1))
+                profile="${app_args[i]:?--profile requires a value}"
+            fi
+            if [[ "$profile" == mira ]]; then mira=true; fi ;;
+        -h|--help) help=true ;;
     esac
 done
+# Ask on the host so a file outside the workspace can be mounted into the node.
+if [[ "${1:-}" == node && -t 0 ]] && $mira && ! $api_supplied && ! $simulation && ! $help &&
+    [[ ! -f "$workspace/mira-api" ]]; then
+    read -r -p 'Path to the vendor MIRA API executable: ' path
+    [[ -n "$path" ]] || { echo "MIRA API path is required; use --mira-api PATH" >&2; exit 1; }
+    if [[ "$path" == \~/* ]]; then path="$HOME/${path:2}"; fi
+    api_path="$(realpath -e -- "$path")"
+    [[ -f "$api_path" ]] || { echo "MIRA API must be a file: $api_path" >&2; exit 1; }
+    app_args+=(--mira-api "$api_path")
+fi
+# The default file is already in the writable workspace and may need executable permissions.
+if [[ -n "$api_path" && "$api_path" != "$workspace/mira-api" ]]; then
+    mounts+=(--volume "$api_path:$api_path:ro")
+fi
 version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$root/pyproject.toml")"
 [[ -n "$version" ]] || { echo "Missing project version in pyproject.toml" >&2; exit 1; }
 image="holoscan-telesurgery:$version-sdk$sdk"

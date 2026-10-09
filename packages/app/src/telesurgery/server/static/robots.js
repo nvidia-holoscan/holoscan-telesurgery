@@ -5,7 +5,7 @@ import { $, element, button, action, notice, hasSelection } from "./ui.js";
 import { gamepadInput } from "./gamepad.js";
 import { keyboardInput } from "./keyboard.js";
 import { gripperControls } from "./grippers.js";
-import { jogGroups, gripSpeed, jointStep, jointSpeed } from "./robot-input.js";
+import { jogGroups, pairedArms, gripSpeed, armSpeed, rollSpeed, jointStep, jointSpeed } from "./robot-input.js";
 import { openLog } from "./logs.js";
 import { robotStartup } from "./robot-start.js";
 import { deviceStatus } from "./device-status.js";
@@ -49,6 +49,42 @@ function renderFeedback(container, robot) {
             ),
         );
     container.append(heading);
+    if (mira && container.closest(".mira-controls")) {
+        const table = element("table", undefined, "joint-positions");
+        table.setAttribute("aria-label", state.joints_deg
+            ? "Measured joint positions in degrees" : "Joint targets in degrees");
+        const columns = element("tr");
+        const count = robot.controls?.groups?.left || 5;
+        for (const label of ["", ...Array.from({length: count}, (_, i) => i === 4 ? "Roll" : `J${i + 1}`)]) {
+            const cell = element("th", label);
+            cell.scope = "col";
+            columns.append(cell);
+        }
+        const head = element("thead"), body = element("tbody");
+        head.append(columns);
+        for (const arm of ["left", "right"]) {
+            const row = element("tr");
+            const label = element("th", arm === "left" ? "Left" : "Right");
+            label.scope = "row";
+            row.append(label);
+            for (let i = 0; i < count; i++) {
+                const value = joints[arm]?.[i];
+                const cell = element("td", Number.isFinite(value)
+                    ? value.toFixed(robot.simulation ? 1 : 2) : "—");
+                const velocity = state.velocity_deg_s?.[arm]?.[i],
+                    torque = state.effort_nm?.[arm]?.[i];
+                cell.title = [
+                    Number.isFinite(velocity) ? `${velocity.toFixed(2)} degrees per second` : "",
+                    Number.isFinite(torque) ? `${torque.toFixed(2)} Nm` : "",
+                ].filter(Boolean).join(" · ");
+                row.append(cell);
+            }
+            body.append(row);
+        }
+        table.append(head, body);
+        container.append(table);
+        return;
+    }
     for (const [group, values] of Object.entries(joints)) {
         if (group !== "joints")
             container.append(element("div", group, "feedback-group"));
@@ -116,7 +152,7 @@ export function robotControls(refresh, openMetrics) {
             card.keyboard?.feedback(result);
             card.keyboard?.update(card.mode?.value === "keyboard", false);
             card.gamepad?.update(card.mode?.value !== "keyboard", false);
-            card.grippers?.update(false, card.mode?.value === "keyboard");
+            card.grippers?.update(false, card.mode?.value === "keyboard", card.gamepad?.bindings());
         }
     }
     function connectionButton(robot) {
@@ -195,13 +231,13 @@ export function robotControls(refresh, openMetrics) {
         };
         current = input;
         try {
+            const card = cards.get(robot.id);
+            const speed = robot.controls.speed_deg_s && (card?.armSpeed || card?.speed);
             const result = await action("robot.move", {
                 id: robot.id,
                 command,
                 mode,
-                ...(cards.get(robot.id)?.speed
-                    ? { speed_deg_s: cards.get(robot.id).speed.value() }
-                    : {}),
+                ...(speed ? { speed_deg_s: speed.value() } : {}),
             });
             acknowledge(robot.id, result);
             if (mode === "jog") stepping.delete(robot.id);
@@ -341,12 +377,46 @@ export function robotControls(refresh, openMetrics) {
                 actions.append(card.release);
                 element_.append(actions);
             } else if (state.session?.robot && jogGroups(robot).length) {
-                card.step = jointStep(robot, () => stopInputs(card));
+                const mira = robot.kind === "mira" || robot.kind === "mira-sim";
+                const franka = robot.kind === "franka" || robot.kind === "franka-sim";
+                if (mira || franka) {
+                    element_.classList.add("compact-controls", mira ? "mira-controls" : "franka-controls");
+                    card.armSpeed = armSpeed(robot, () => stopInputs(card));
+                    if (pairedArms(robot) && robot.controls.groups.left === 5)
+                        card.rollSpeed = rollSpeed(robot, () => stopInputs(card));
+                } else {
+                    card.step = jointStep(robot, () => stopInputs(card));
+                    if (robot.controls.speed_deg_s)
+                        card.speed = jointSpeed(robot, () => stopInputs(card));
+                }
+                if (robot.controls.grippers?.length)
+                    card.gripSpeed = gripSpeed(robot, () => stopInputs(card));
+                const increment = (group, index, seconds = 0.05) =>
+                    card.armSpeed ? (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
+                        : card.step.value();
+                const goHome = async () => {
+                    if (!card.home || card.home.disabled) return;
+                    card.home.disabled = true;
+                    card.home.blur();
+                    stopInputs(card);
+                    await endInput(robot.id);
+                    await refresh();
+                    await step(card.robot, {}, "home");
+                    await refresh();
+                };
                 card.gamepad = gamepadInput(
                     robot,
-                    (command) => send(card.robot, command),
+                    (command, mode) => send(card.robot, command, mode),
                     () => endInput(robot.id),
-                    card.step.value,
+                    increment,
+                    () => card.gripSpeed?.value() ?? 20,
+                    {
+                        home: robot.controls.home_deg ? {
+                            available: () => card.home && !card.home.disabled,
+                            run: () => goHome().catch(notice),
+                        } : null,
+                        gripFeedback: velocity => card.grippers?.gamepad(velocity),
+                    },
                 );
                 const mode = card.gamepad.select;
                 card.mode = mode;
@@ -366,19 +436,13 @@ export function robotControls(refresh, openMetrics) {
                 shortcut.setAttribute("aria-hidden", "true");
                 card.release.append(shortcut);
                 const actions = element("div", undefined, "robot-toolbar");
-                actions.append(mode);
+                const inputLabel = element("label", undefined, "robot-input-choice");
+                inputLabel.append(mode);
+                actions.append(inputLabel);
                 if (robot.controls.home_deg) {
                     card.home = button(
                         "Home",
-                        async () => {
-                            card.home.disabled = true;
-                            card.home.blur();
-                            stopInputs(card);
-                            await endInput(robot.id);
-                            await refresh();
-                            await step(card.robot, {}, "home");
-                            await refresh();
-                        },
+                        goHome,
                         "secondary icon-button",
                         "home",
                     );
@@ -386,14 +450,13 @@ export function robotControls(refresh, openMetrics) {
                     actions.append(card.home);
                 }
                 actions.append(card.release);
-                element_.append(actions);
-                const settings = element("div", undefined, "motion-settings");
-                settings.append(card.step.element);
-                if (robot.controls.speed_deg_s) {
-                    card.speed = jointSpeed(robot, () => stopInputs(card));
-                    settings.append(card.speed.element);
+                element_.append(actions, card.gamepad.discovery);
+                if (card.step) {
+                    const settings = element("div", undefined, "motion-settings");
+                    settings.append(card.step.element);
+                    if (card.speed) settings.append(card.speed.element);
+                    element_.append(settings);
                 }
-                element_.append(settings);
                 card.keyboard = keyboardInput(
                     robot,
                     (command, continuous) =>
@@ -401,33 +464,46 @@ export function robotControls(refresh, openMetrics) {
                             ? send(card.robot, command)
                             : step(card.robot, command),
                     () => endInput(robot.id),
-                    card.step.value,
+                    increment,
                 );
+                const placeControls = () => {
+                    const input = mode.value === "keyboard" ? card.keyboard : card.gamepad;
+                    if (card.armSpeed) input.arms.prepend(card.armSpeed.element);
+                    if (card.rollSpeed) input.roll.prepend(card.rollSpeed.element);
+                    if (card.grippers) input.element.append(card.grippers.element);
+                };
                 mode.onchange = async () => {
                     await releaseAll();
+                    const available = permitted(card.robot) &&
+                        !motionState(card.robot).home_active && !motionState(card.robot).stopping;
                     card.gamepad.update(
                         mode.value !== "keyboard",
-                        permitted(card.robot),
+                        available,
                     );
                     card.keyboard.update(
                         mode.value === "keyboard",
-                        permitted(card.robot),
+                        available,
                     );
+                    card.grippers?.update(available, mode.value === "keyboard", card.gamepad.bindings());
+                    placeControls();
+                    renderFeedback(card.pose, card.robot);
+                    if (mode.value === "keyboard" ? card.keyboard.inlineFeedback : card.gamepad.inlineFeedback)
+                        card.pose.hidden = true;
                 };
                 card.gamepad.update(false, permitted(robot));
                 card.keyboard.update(true, permitted(robot));
                 element_.append(card.keyboard.element, card.gamepad.element);
                 if (robot.controls.grippers?.length) {
-                    card.gripSpeed = gripSpeed(robot, () => stopInputs(card));
-                    settings.append(card.gripSpeed.element);
                     card.grippers = gripperControls(
                         robot,
                         (command) => send(card.robot, command, "grip"),
                         () => endInput(robot.id),
                         card.gripSpeed.value,
                     );
-                    element_.append(card.grippers.element);
+                    card.grippers.element.prepend(card.gripSpeed.element);
                 }
+                placeControls();
+                element_.append(pose);
             } else
                 element_.append(
                     element(
@@ -643,21 +719,34 @@ export function robotControls(refresh, openMetrics) {
                         "home",
                         robot.state?.home_active ? "Going home…" : "Home",
                     );
+                    let homeHint = card.armSpeed
+                        ? "Home · Return to starting pose"
+                        : `Home · ${Object.values(robot.controls.home_deg).flat().join(", ")}°`;
+                    if (card.mode?.value !== "keyboard") {
+                        const bindings = card.gamepad.bindings();
+                        homeHint += ` · Hold ${bindings.home} or ${bindings.homeFallback} for 1s`;
+                        homeHint += robot.controls.cartesian
+                            ? " with controls centered"
+                            : ` with ${bindings.enable} released`;
+                    }
                     card.home.title = robot.state?.home_active
                         ? "Going home · Stop or Esc interrupts motion"
-                        : `Home · ${Object.values(robot.controls.home_deg).flat().join(", ")}°`;
+                        : homeHint;
                 }
                 const inputAllowed =
                     allowed &&
                     !robot.state?.home_active &&
                     !robot.state?.stopping;
                 if (card.mode) card.mode.disabled = !inputAllowed;
+                card.armSpeed?.update(inputAllowed);
+                card.rollSpeed?.update(inputAllowed);
                 card.step?.update(inputAllowed);
                 card.speed?.update(inputAllowed);
                 card.gripSpeed?.update(inputAllowed);
                 card.grippers?.update(
                     inputAllowed,
                     card.mode?.value === "keyboard",
+                    card.gamepad?.bindings(),
                 );
                 card.gamepad?.update(
                     card.mode?.value !== "keyboard",
@@ -668,7 +757,8 @@ export function robotControls(refresh, openMetrics) {
                     inputAllowed,
                 );
                 card.keyboard?.feedback(robot.state);
-                if (card.keyboard && card.mode.value === "keyboard") {
+                card.gamepad?.feedback(robot.state);
+                if (card.keyboard && (card.mode.value === "keyboard" ? card.keyboard.inlineFeedback : card.gamepad.inlineFeedback)) {
                     card.pose.hidden = true;
                 }
                 if (

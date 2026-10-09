@@ -27,11 +27,19 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     container.setAttribute("aria-label", `${robot.name} keyboard controls`);
     const group = document.createElement("select");
     group.setAttribute("aria-label", `${robot.name} keyboard joints`);
+    const toolControl = Boolean(robot.controls.cartesian);
+    if (toolControl) {
+        group.setAttribute("aria-label", `${robot.name} keyboard mode`);
+        const option = element("option", "Tool movement");
+        option.value = "cartesian";
+        group.append(option);
+    }
+    const cartesian = () => toolControl && group.value === "cartesian";
     for (const [key, count] of jogGroups(robot)) {
         for (let offset = 0; offset < count; offset += pairs.length) {
             const label =
                 key === "joints"
-                    ? "Joints"
+                    ? toolControl ? "Individual joints (advanced)" : "Joints"
                     : `${key[0].toUpperCase()}${key.slice(1)} arm`;
             const option = element(
                 "option",
@@ -44,27 +52,38 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         }
     }
     group.hidden = dual || group.options.length < 2;
-    const status = element("p", undefined, "keyboard-status");
-    status.hidden = true;
-    status.setAttribute("role", "status");
     const mapping = element("div", undefined, "keyboard-mapping");
+    const arms = element("div", undefined, "motion-section");
+    const rollControls = element("div", undefined, "motion-section");
+    const armRows = element("div", undefined, "keyboard-rows");
+    const rollRows = element("div", undefined, "keyboard-rows");
+    if (dual) {
+        armRows.classList.add("keyboard-arms");
+        rollRows.classList.add("keyboard-arms");
+    }
+    arms.append(armRows);
+    rollControls.append(rollRows);
+    rollControls.hidden = !dual || robot.controls.groups.left !== 5;
+    mapping.append(arms, rollControls);
     let feedback = robot.state || {};
-    let feedbackLabel;
-    container.append(group, status, mapping);
-    if (!group.hidden)
+    let feedbackLabels = [];
+    container.append(group, mapping);
+    if (!group.hidden && !toolControl)
         container.append(
             element("p", "[ / ] switch joint groups", "gamepad-hint"),
         );
     const keys = new Set();
     const heldKeys = new Set();
     let repeatAt = 0,
-        repeating = false;
+        repeating = false,
+        lastJogAt = 0;
     let enabled = false,
         allowed = false,
         disposed = false,
         active = false,
         busy = false,
         stopping = false,
+        lastSentAt = -Infinity,
         lastTick = 0;
 
     function pause() {
@@ -76,6 +95,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         });
     }
     function halt() {
+        lastJogAt = 0;
         keys.clear();
         heldKeys.clear();
         repeating = false;
@@ -83,6 +103,43 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     }
     function renderMapping() {
         halt();
+        armRows.classList.toggle("cartesian-keyboard", cartesian());
+        if (cartesian()) {
+            bindings.clear();
+            armRows.replaceChildren();
+            feedbackLabels = [];
+            for (const [title, rows] of [
+                ["Move", [
+                    ["Forward / back", "translation", 0, [["w", "W", 1, "Forward"], ["s", "S", -1, "Back"]]],
+                    ["Left / right", "translation", 1, [["a", "A", 1, "Left"], ["d", "D", -1, "Right"]]],
+                    ["Up / down", "translation", 2, [["r", "R", 1, "Up"], ["f", "F", -1, "Down"]]],
+                ]],
+                ["Rotate", [
+                    ["Turn", "rotation", 2, [["q", "Q", 1, "Turn left"], ["e", "E", -1, "Turn right"]]],
+                    ["Side tilt", "rotation", 0, [["arrowleft", "←", 1, "Tilt left"], ["arrowright", "→", -1, "Tilt right"]]],
+                    ["Forward tilt", "rotation", 1, [["arrowup", "↑", -1, "Tilt forward"], ["arrowdown", "↓", 1, "Tilt back"]]],
+                ]],
+            ]) {
+                const section = element("div");
+                section.append(element("span", title, "cartesian-label"));
+                for (const [label, group, index, keys] of rows) {
+                    const row = element("div", undefined, "cartesian-keyboard-row");
+                    for (const [key, symbol, sign, direction] of keys) {
+                        bindings.set(key, {group, index, sign});
+                        row.append(keyButton(key, symbol, `${robot.name} ${direction} (${symbol})`));
+                    }
+                    row.append(element("span", label));
+                    section.append(row);
+                }
+                armRows.append(section);
+            }
+            const hint = element("div", undefined, "cartesian-keyboard-hint");
+            const frame = element("span", "Robot axes");
+            frame.title = "Directions follow the robot base, independent of the camera view";
+            hint.append(element("span", "Hold to move · release to stop"), frame);
+            armRows.append(hint);
+            return;
+        }
         const [key, start] = group.value.split(":"),
             offset = Number(start);
         const rows = dual
@@ -104,33 +161,36 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                       pair,
                   }));
         bindings.clear();
-        mapping.replaceChildren();
-        const heading = element(
-            "div",
-            undefined,
-            "keyboard-joint keyboard-columns",
-        );
-        if (dual) heading.classList.add("keyboard-paired");
-        feedbackLabel = element("span");
-        heading.append(
-            element("span", "Joint"),
-            feedbackLabel,
-            element("span", "−"),
-            element("span", "+"),
-        );
-        mapping.append(heading);
+        armRows.replaceChildren();
+        rollRows.replaceChildren();
+        feedbackLabels = [];
+        const sections = new Map();
+        for (const section of [armRows, ...(!rollControls.hidden ? [rollRows] : [])]) {
+            for (const arm of dual ? ["left", "right"] : [key]) {
+                const block = element("div", undefined, "keyboard-rows");
+                sections.set(`${section === rollRows ? "roll" : "arm"}:${arm}`, block);
+                const heading = element("div", undefined, "keyboard-joint keyboard-columns");
+                if (dual) heading.classList.add("keyboard-paired");
+                const feedbackLabel = element("span");
+                feedbackLabels.push(feedbackLabel);
+                heading.append(
+                    element("span", dual ? (arm === "left" ? "Left" : "Right") : "Joint"),
+                    feedbackLabel, element("span", "−"), element("span", "+"),
+                );
+                block.append(heading);
+                section.append(block);
+            }
+        }
         for (const joint of rows) {
             const row = element("div", undefined, "keyboard-joint");
             if (dual) row.classList.add("keyboard-paired");
-            if (dual && joint.group === "right" && joint.index === 0)
-                row.classList.add("keyboard-arm-divider");
             const value = element("output", "—", "joint-position");
             value.dataset.joint = String(joint.index);
             value.dataset.group = joint.group;
             const name = element(
                 "span",
                 dual
-                    ? `${joint.group === "left" ? "Left" : "Right"} ${joint.index === 4 ? "Roll" : `J${joint.index + 1}`}`
+                    ? (joint.index === 4 ? "" : `J${joint.index + 1}`)
                     : `J${joint.joint}`,
             );
             name.title = dual
@@ -146,43 +206,45 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                     index: joint.index,
                     sign: direction === "+" ? 1 : -1,
                 });
-                const label = element("span", undefined, "keyboard-binding");
-                const cap = element("button", key.toUpperCase(), "key-cap");
-                cap.type = "button";
-                cap.dataset.key = key;
-                cap.setAttribute(
-                    "aria-label",
+                row.append(keyButton(key, key.toUpperCase(),
                     `${robot.name} ${joint.group} ${dual && joint.index === 4 ? "roll" : joint.index + 1} ${direction === "+" ? "increase" : "decrease"} (${key.toUpperCase()})`,
-                );
-                cap.onpointerdown = (event) => {
-                    if (event.button !== 0) return;
-                    event.preventDefault();
-                    container.focus();
-                    cap.setPointerCapture(event.pointerId);
-                    press(key);
-                };
-                cap.onpointerup = cap.onlostpointercapture = () => release(key);
-                cap.onpointercancel = halt;
-                cap.onclick = (event) => {
-                    if (event.detail !== 0) return;
-                    container.focus();
-                    press(key);
-                    release(key);
-                };
-                label.append(cap);
-                row.append(label);
+                ));
             }
-            mapping.append(row);
+            sections.get(`${dual && joint.index === 4 ? "roll" : "arm"}:${joint.group}`).append(row);
         }
         showFeedback();
     }
+    function keyButton(key, symbol, description) {
+        const label = element("span", undefined, "keyboard-binding");
+        const cap = element("button", symbol, "key-cap");
+        cap.type = "button";
+        cap.dataset.key = key;
+        cap.setAttribute("aria-label", description);
+        cap.title = description;
+        cap.onpointerdown = (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            container.focus();
+            cap.setPointerCapture(event.pointerId);
+            press(key);
+        };
+        cap.onpointerup = cap.onlostpointercapture = () => release(key);
+        cap.onpointercancel = halt;
+        cap.onclick = (event) => {
+            if (event.detail !== 0) return;
+            container.focus();
+            press(key);
+            release(key);
+        };
+        label.append(cap);
+        return label;
+    }
     function showFeedback() {
         const joints = feedback.joints_deg || feedback.targets_deg || {};
-        feedbackLabel.textContent = feedback.joints_deg
-            ? "Measured (°)"
-            : "Target (°)";
-        feedbackLabel.title =
-            feedback.feedback_source || "Simulator drive targets";
+        for (const feedbackLabel of feedbackLabels) {
+            feedbackLabel.textContent = dual ? "°" : feedback.joints_deg ? "Measured (°)" : "Target (°)";
+            feedbackLabel.title = `${feedback.joints_deg ? "Measured" : "Target"} · ${feedback.feedback_source || "Simulator drive targets"}`;
+        }
         for (const value of mapping.querySelectorAll(".joint-position")) {
             const key = value.dataset.group;
             const position = joints[key]?.[Number(value.dataset.joint)];
@@ -215,51 +277,65 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         container.focus();
     };
     renderMapping();
-    function command(pressed) {
-        const value = emptyJog(robot);
+    function command(pressed, seconds) {
+        const value = cartesian() ? {translation: [0, 0, 0], rotation: [0, 0, 0]} : emptyJog(robot);
         for (const key of pressed) {
             const binding = bindings.get(key);
             if (binding)
                 value[binding.group][binding.index] +=
-                    binding.sign * stepSize();
+                    binding.sign * (cartesian() ? 1 : stepSize(binding.group, binding.index, seconds));
         }
         return value;
     }
     function press(key) {
         if (!enabled || !allowed || inputBlocked() || keys.has(key)) return;
         keys.add(key);
-        if (stopping || (heldKeys.size && !dual)) return;
+        if (stopping || (heldKeys.size && !dual && !cartesian())) return;
         // Track both hands while held; never queue a released tap behind a request.
-        if (busy && !(dual && heldKeys.size)) return;
+        if (busy && !cartesian() && !(dual && heldKeys.size)) return;
         if (!heldKeys.size) {
+            lastJogAt = 0;
             repeating = false;
-            repeatAt = performance.now() + 450;
+            repeatAt = performance.now() + (cartesian() ? 0 : 450);
         }
         heldKeys.add(key);
-        if (!busy) issue([key]);
+        if (!busy) issue(cartesian() ? heldKeys : [key], cartesian());
     }
     function release(key) {
         keys.delete(key);
         heldKeys.delete(key);
         if (!heldKeys.size) {
-            if (repeating) pause();
+            if (repeating || cartesian()) pause();
             repeating = false;
         }
     }
     function issue(pressed, continuous = false) {
         if (busy || stopping) return;
-        const value = command(pressed);
+        const now = performance.now();
+        if (cartesian() && now - lastSentAt < 50) return;
+        const seconds = continuous && lastJogAt ? Math.min(0.1, (now - lastJogAt) / 1000) : 0.05;
+        const value = command(pressed, seconds);
         if (
             !Object.values(value)
                 .flat()
                 .some((v) => v !== 0)
-        )
+        ) {
+            if (cartesian()) pause();
             return;
+        }
         active = busy = true;
+        lastSentAt = now;
+        lastJogAt = continuous ? now : 0;
         Promise.resolve(send(value, continuous))
             .catch(halt)
             .finally(() => {
                 busy = false;
+                // Resample held keys immediately after a slow response; never
+                // queue old directions or add another 50 ms to its latency.
+                if (cartesian() && !disposed) {
+                    clearTimeout(timer);
+                    timer = setTimeout(poll, Math.max(0, 50 - (performance.now() - lastSentAt)));
+                }
             });
     }
     function keydown(event) {
@@ -312,14 +388,6 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             repeatAt = now + 50;
             issue(heldKeys, true);
         }
-        status.textContent = feedback.stopping
-            ? "Stopping · Release keys"
-            : feedback.home_active
-              ? "Going home · Esc to stop"
-              : !allowed
-                ? "Keyboard unavailable"
-                : "";
-        status.hidden = !status.textContent;
         for (const cap of mapping.querySelectorAll(".key-cap")) {
             cap.dataset.pressed = String(keys.has(cap.dataset.key));
             cap.disabled = !enabled || !allowed;
@@ -333,6 +401,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     let timer = setTimeout(poll, 50);
     return {
         element: container,
+        arms,
+        roll: rollControls,
+        get inlineFeedback() { return !cartesian(); },
         update(on, available) {
             if ((enabled && !on) || (allowed && !available)) halt();
             if (on && !enabled) {

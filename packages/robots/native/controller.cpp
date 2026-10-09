@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <franka/model.h>
 #include <franka/robot.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
@@ -17,6 +18,7 @@
 #include <thread>
 #include <utility>
 
+#include "cartesian.hpp"
 #include "jog.hpp"
 
 namespace nb = nanobind;
@@ -29,6 +31,8 @@ class Controller {
   explicit Controller(const std::string& address)
       : robot_(std::make_unique<franka::Robot>(address)) {
     state_ = robot_->readOnce();
+    // Load during connection, never after accepting a time-sensitive jog.
+    model_ = std::make_unique<franka::Model>(robot_->loadModel());
     observed_ = Clock::now();
   }
   ~Controller() { hold(); }
@@ -62,6 +66,7 @@ class Controller {
     } else {
       std::unique_lock lock(mutex_);
       if (homing_) throw std::runtime_error("Stop Franka Home before manual control");
+      if (cartesian_) throw std::runtime_error("Stop tool motion before joint control");
       // Finish libfranka's handoff before starting another motion. Do not lose
       // a fresh tap that arrives as the previous trajectory completes.
       if (finishing_) {
@@ -77,6 +82,24 @@ class Controller {
       command_ = goal;
       step_ = step;  // Update the active trajectory; never wait for the previous target.
       speed_ = speed;
+      updated_ = Clock::now();
+    }
+  }
+
+  void jog_cartesian(const telesurgery::Twist& command, double speed = telesurgery::default_speed) {
+    telesurgery::validate_cartesian(command);
+    telesurgery::validate_speed(speed);
+    if (needs_release_)
+      throw std::runtime_error("Franka input timed out; release input before retrying");
+    if (!running_) {
+      const auto state = read();
+      start(state, state.q_d, false, false, speed, command);
+    } else {
+      std::lock_guard lock(mutex_);
+      if (!cartesian_) throw std::runtime_error("Stop joint motion before tool control");
+      if (stopped_) throw std::runtime_error("Franka is stopping; release input before retrying");
+      if (speed != speed_) throw std::runtime_error("Release input before changing Franka speed");
+      twist_ = command;
       updated_ = Clock::now();
     }
   }
@@ -97,6 +120,7 @@ class Controller {
 
   bool active() const { return running_; }
   bool homing() const { return running_ && homing_; }
+  bool stopping() const { return running_ && stopped_; }
 
   void close() {
     hold();
@@ -105,7 +129,7 @@ class Controller {
 
  private:
   void start(const franka::RobotState& state, const telesurgery::Joints& goal, bool step, bool home,
-             double speed) {
+             double speed, std::optional<telesurgery::Twist> twist = std::nullopt) {
     if (state.robot_mode != franka::RobotMode::kIdle || state.current_errors) {
       throw std::runtime_error("Franka is not idle (mode " +
                                std::to_string(static_cast<int>(state.robot_mode)) + ", faults " +
@@ -115,11 +139,13 @@ class Controller {
     telesurgery::validate_target(goal);
     step_ = step;
     homing_ = home;
+    cartesian_ = twist.has_value();
     finishing_ = false;
     stopped_ = false;
     {
       std::lock_guard lock(mutex_);
       command_ = goal;
+      twist_ = twist.value_or(telesurgery::Twist{});
       speed_ = speed;
       updated_ = Clock::now();
     }
@@ -144,6 +170,8 @@ class Controller {
       double speed;
       bool step, timed_out = false;
       std::optional<telesurgery::JointMotion> motion;
+      std::optional<telesurgery::CartesianMotion> tool_motion;
+      telesurgery::Twist twist{};
       std::chrono::duration<double> deadline{0.2};
       {
         std::lock_guard lock(mutex_);
@@ -151,6 +179,7 @@ class Controller {
         updated = updated_;
         speed = speed_;
         step = step_;
+        twist = twist_;
       }
       robot_->control(
           [&](const franka::RobotState& state, franka::Duration period) -> franka::JointPositions {
@@ -163,12 +192,17 @@ class Controller {
                 goal = command_;
                 updated = updated_;
                 step = step_;
+                twist = twist_;
               }
             }
-            if (!motion) {
+            if (!motion && !tool_motion) {
               // Start from the last desired state to avoid a command discontinuity.
-              motion.emplace(state.q_d, state.dq_d, state.ddq_d, goal, speed);
-              if (step) deadline = std::chrono::duration<double>(motion->duration() + 5.0);
+              if (cartesian_) {
+                tool_motion.emplace(state.q_d, state.dq_d, state.ddq_d, speed);
+              } else {
+                motion.emplace(state.q_d, state.dq_d, state.ddq_d, goal, speed);
+                if (step) deadline = std::chrono::duration<double>(motion->duration() + 5.0);
+              }
               return state.q_d;
             }
             if (!step) deadline = std::chrono::duration<double>(0.2);
@@ -176,6 +210,13 @@ class Controller {
               stopped_ = true;
               needs_release_ = true;
               timed_out = true;
+            }
+            if (tool_motion) {
+              const auto jacobian = model_->zeroJacobian(franka::Frame::kEndEffector, state);
+              franka::JointPositions output(
+                  tool_motion->advance(jacobian, state.q, twist, stopped_, period.toSec()));
+              if (tool_motion->finished) return franka::MotionFinished(output);
+              return output;
             }
             const auto& position = motion->advance(goal, stopped_, period.toSec());
             if (step) deadline = std::chrono::duration<double>(motion->duration() + 5.0);
@@ -218,13 +259,16 @@ class Controller {
   }
 
   std::unique_ptr<franka::Robot> robot_;
+  std::unique_ptr<franka::Model> model_;
   franka::RobotState state_{};
   std::mutex mutex_;
   std::array<double, 7> command_{};
+  telesurgery::Twist twist_{};
   Clock::time_point updated_, observed_;
   std::thread worker_;
   bool step_{false};
   bool homing_{false};
+  bool cartesian_{false};
   bool finishing_{false};
   double speed_{telesurgery::default_speed};
   std::atomic<bool> running_{false}, stopped_{true}, needs_release_{false};
@@ -235,6 +279,8 @@ NB_MODULE(_franka, m) {
   nb::class_<Controller>(m, "Controller")
       .def(nb::init<const std::string&>(), nb::call_guard<nb::gil_scoped_release>())
       .def("jog", &Controller::jog, nb::arg("delta"), nb::arg("step") = false,
+           nb::arg("speed") = telesurgery::default_speed, nb::call_guard<nb::gil_scoped_release>())
+      .def("jog_cartesian", &Controller::jog_cartesian, nb::arg("command"),
            nb::arg("speed") = telesurgery::default_speed, nb::call_guard<nb::gil_scoped_release>())
       .def("home", &Controller::home, nb::arg("goal"),
            nb::arg("speed") = telesurgery::default_speed, nb::call_guard<nb::gil_scoped_release>())
@@ -255,6 +301,7 @@ NB_MODULE(_franka, m) {
         result["faults"] = static_cast<std::string>(state.current_errors);
         result["control_active"] = controller.active();
         result["home_active"] = controller.homing();
+        result["stopping"] = controller.stopping();
         const char* mode = "other";
         switch (state.robot_mode) {
           case franka::RobotMode::kIdle:

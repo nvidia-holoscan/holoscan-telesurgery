@@ -2,19 +2,36 @@
 
 The patient connects robots and grants surgeon access. A surgeon's first input takes the exclusive robot lock. **Stop / Esc** requests a hold and releases that lock. **Disconnect**, on the patient side, releases the controller connection without powering off the robot.
 
-The surgeon lists connected robots automatically. Use the panel's pop-out icon to place controls beside Holoviz; keep that window focused for keyboard or gamepad input. Dock or close it to return controls to the dashboard. **Pop out all**, beside Fullscreen, opens every live stream in Holoviz and detaches the selected robot controls. **Dock all** returns H.264 views and controls to the dashboard and closes other native viewers.
+The surgeon lists connected robots automatically. Use the panel's pop-out icon to place controls beside Holoviz; keep that window focused for keyboard or gamepad input. Dock or close it to return controls to the dashboard. **Pop out all**, beside Fullscreen, opens only selected live or stale streams in Holoviz and detaches the selected robot controls. Unselected streams stay untouched. **Dock all** returns H.264 views and controls to the dashboard and closes other native viewers.
 
 ## Keyboard and gamepad
 
-Tap a key or click its on-screen button for one step. Hold it to move continuously after 450 ms; the target advances without waiting for the previous step to finish. Releasing held input requests a smooth stop. Adjust **Step** for distance per input and **Speed** for Franka's maximum joint speed.
+In joint mode, tap a key or click its on-screen button for a short move. Hold it to move continuously after 450 ms; the target advances without waiting for the previous move to finish. Franka tool mode starts continuous motion immediately. Releasing held input requests a smooth stop.
 
-| Robot                          | Default step | Maximum step | Default speed              |
-| ------------------------------ | ------------ | ------------ | -------------------------- |
-| Franka, physical or simulation | 1°           | 5°           | 10°/s; adjustable to 20°/s |
-| Physical MIRA                  | 1°           | 1°           | Vendor controller          |
-| Simulated MIRA                 | 1°           | 5°           | Simulation controller      |
+MIRA has independent **Arm speed**, **Roll speed**, and **Grip speed** sliders, shared by keyboard, gamepad and on-screen controls. Their defaults are **20%, 50%, and 40%**, respectively. Percentages are relative to the node's configured limits; they set the requested rate, not measured robot speed. Arm and roll increments account for elapsed input time and stay within the node's per-command limit. Changing a speed stops active input and requires a fresh enable/key press. The keyboard shows both arms side by side; gamepad joint positions stay visible in compact left/right rows below the controls.
 
-Keys increase/decrease the corresponding joint:
+Franka uses one **Arm speed** slider, defaulting to **20%**, for keyboard, gamepad, on-screen controls, and Home. On current physical and simulation nodes, all three inputs move the configured tool tip in space; inverse kinematics coordinates all seven joints. Joint positions remain visible below the tool controls, and active directions highlight. Keyboard offers **Individual joints (advanced)** for joint adjustments. Older nodes without Cartesian support retain joint controls. The joint speed limit is 4°/s at 20% and 20°/s at 100%; acceleration, joint configuration, and short moves can reduce actual speed. Joint-mode keyboard step limits are:
+
+| Robot                          | Default step        | Maximum step | Default speed              |
+| ------------------------------ | ------------------- | ------------ | -------------------------- |
+| Franka, physical or simulation | 0.2° at 20%         | 5°           | 4°/s at 20%; up to 20°/s   |
+| Physical MIRA                  | Arm 0.2°; roll 0.5° | 1°           | Vendor controller          |
+| Simulated MIRA                 | Arm 1°; roll 2.5°   | 5°           | Simulation controller      |
+
+Franka tool-mode keyboard mappings match the gamepad's robot-base directions:
+
+| Motion | Keys |
+| --- | --- |
+| Forward / back | W / S |
+| Left / right | A / D |
+| Up / down | R / F |
+| Turn left / right | Q / E |
+| Tilt left / right | ← / → |
+| Tilt forward / back | ↑ / ↓ |
+
+Hold keys or on-screen buttons to move; release to stop. Multiple axes can be held together. Commands refresh immediately without the joint-mode repeat delay, and slow replies never queue old directions. After an interruption, release and press again.
+
+In joint mode, keys increase/decrease the corresponding joint:
 
 | Robot / arm | J1    | J2    | J3    | J4    | J5    | J6    | J7    |
 | ----------- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
@@ -28,17 +45,35 @@ MIRA tool roll uses **T / G** on the left and **Y / H** on the right. Tap to ste
 
 For a gamepad, press a button and select its name in the input dropdown. Compatible Xbox and PlayStation controllers use the browser's standard mapping:
 
-- Center the sticks, then hold **LB/L1** to enable input. Release it to stop and release the lock.
-- **MIRA:** each stick controls its arm's J1–J2; **RB/R1** selects J3–J4. Hold **L3 / R3** and move that stick up/down to roll the tool. Release LB/L1 and center the sticks before changing controls.
-- **Franka:** select a joint group; the sticks control its first four joints.
+- Center the sticks and release tool buttons before starting. MIRA and direct-joint Franka controls use **LB/L1** to enable input; release it to stop and release the lock. Franka tool controls work directly from neutral, without a shoulder button.
+- **MIRA J1–J2:** hold **LB/L1** and move each stick to control its arm. Horizontal movement controls J1; vertical movement controls J2.
+- **MIRA J3–J4:** with both sticks centered and tool buttons released, hold **LB/L1 + RB/R1** in either order, then move the sticks. Keep both shoulder buttons held: horizontal movement controls J3; vertical movement controls J4. RB/R1 alone does not enable motion. While input is armed and idle, adding or releasing RB/R1 switches joint pairs without releasing LB/L1. Changing pairs during movement, with a tool button held, or with a command still pending stops input and requires releasing LB/L1 and centering the controls before enabling again. Changing RB/R1 cannot resume input after a loss of focus, permission, or connection.
+- **MIRA tool roll:** while holding **LB/L1**, hold **D-pad up / down** to increase/decrease left tool roll, or **Triangle / Cross** (Xbox **Y / A**) for right tool roll. Release the roll button to stop that tool; opposite directions together cancel. **Roll speed** sets the rotation rate independently of arm speed. Sticks continue controlling J1–J4; there is no roll mode switch or stick-click binding.
+- **MIRA grippers:** while holding **LB/L1**, hold **D-pad left / right** to close/open the left gripper, and **Square / Circle** (Xbox **X / B**) to close/open the right. Release the gripper button to stop that gripper; release LB/L1 to stop all gamepad motion. Opposite directions together cancel. Release all gripper buttons and center the sticks before enabling. **Grip speed** applies to controller buttons as well as keyboard and on-screen input.
+- **Franka tool movement:** move the controls directly; **LB/L1 is not required**. The **left stick** moves left/right and forward/back; **right stick up/down** raises/lowers the tool, and **right stick left/right** turns it. **D-pad left/right** tilts sideways; **D-pad up/down** tilts forward/back. Center the sticks and release D-pad to stop. After Stop/Esc, a speed change, loss of focus, or reconnection, return all controls to neutral before moving again. No joint groups or stick clicks are needed. Directions follow the robot base, independent of the camera view: forward is +X, left is +Y, up is +Z. Left turn is +Z rotation; D-pad left is +X rotation and D-pad up is −Y rotation. **Arm speed** scales translation and rotation together: at 20%, requested maxima are 0.02 m/s and 6°/s, additionally bounded by the joint speed limit.
+- **Simulated Franka grip, when available:** press **Square** (Xbox **X**) to toggle open/closed. **Stop / Esc** interrupts the motion, and **Grip speed** sets the rate. Keyboard uses **Z / X**, and on-screen buttons remain available. The Healthcare scene on Spark has a **fixed surgical instrument**, so it exposes no gripper controls; its actual **TCP** is the controlled tool tip.
+- **Older Franka nodes:** retain direct joint control unless the node advertises Cartesian support. Hold **LB/L1** for J1–J4 (left stick J1/J2, right stick J3/J4), or **LB/L1 + RB/R1** for J5–J7 (left stick J5/J6, right horizontal J7). Changing groups during motion requires releasing LB/L1 and centering the sticks. Physical nodes must rebuild the native adapter before advertising tool control.
+- **Home:** use the on-screen house button, or, with sticks centered and tool buttons released, hold the **PS / Xbox logo button** for one second. MIRA and direct-joint Franka also require LB/L1 released. If the operating system intercepts the logo button, use **Options** (PlayStation, right of the touchpad) or **Menu ☰ / Start** (Xbox, right of the Xbox logo). A countdown appears before the request. A tap does nothing; release and hold again for another request. Switching or overlapping Home shortcuts cancels the hold; release both before retrying. The same availability checks apply as the on-screen Home button. **Stop / Esc** interrupts Home.
 
-Input sends the latest command at up to 20 Hz without queuing moves. Franka's local loop expires held input after 200 ms without a fresh command. A lost controller or permission cannot resume motion automatically.
+Input sends the latest command at up to 20 Hz without queuing moves. Franka's simulator expires tool input after 500 ms without a fresh command, allowing for the 300 ms command transport window plus refresh/render scheduling; physical Franka tool input and joint jogging retain their 200 ms deadline. Releasing input or pressing Stop sends a hold immediately. A lost controller or permission cannot resume motion automatically.
+
+The Franka simulator derives the tool Jacobian and pose from live PhysX feedback. Damped inverse kinematics limits velocities near singularities; joint speed, acceleration, jerk, and joint-range limits still apply. Missing/stale physics feedback or excessive target tracking error initiates a smooth stop. Cartesian jogging does not plan collision-free paths.
+
+The Franka scene follows wall time with 120 Hz physics and bounded catch-up after slow frames. Cameras render the newest state once per update. Position drives receive both the planned position and velocity so damping does not resist commanded motion. Isaac's default standalone update advances only 1/60 second per camera update, which would let real-time joystick targets outrun physics in this 30 Hz camera loop.
+
+The Healthcare Franka scene uses inertia-scaled drives, 0.01 kg·m² joint armature, and a 30°/s physics velocity bound to stabilize aligned shoulder axes. These simulator settings follow the [PhysX articulation stability guidance](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.0/dev_guide/guides/articulation_stability_guide.html) and do not apply to physical Franka. Cartesian acceleration and jerk limits are 1 rad/s² and 10 rad/s³, giving a planned full-speed release ramp under half a second. Home retains its slower position trajectory.
 
 ## Franka
 
-Docker includes the Franka adapter. For native execution, run `./scripts/build_franka.sh` after setup, then start the node from a new login session. It installs libfranka 0.15.2 (protocol 9) and realtime scheduling permissions. Use a [firmware-compatible libfranka](https://frankarobotics.github.io/docs/compatibility.html), a realtime kernel and FCI enabled in Desk.
+Docker includes the Franka adapter. For native execution, run `./setup.sh --profile franka`, then start the node from a new login session. It installs libfranka 0.15.2 (protocol 9) and realtime scheduling permissions. Use a [firmware-compatible libfranka](https://frankarobotics.github.io/docs/compatibility.html), a realtime kernel and FCI enabled in Desk.
 
-Add to the node's `devices.yaml`:
+Create and save a physical device profile on first use:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile franka
+```
+
+The default address is `172.16.0.3`. Supply `--franka-address ROBOT_IP` to save a different address; later starts reuse it without the option. Alternatively, add to the node's `devices.yaml`:
 
 ```yaml
 robots:
@@ -50,19 +85,46 @@ robots:
     motion_enabled: true
 ```
 
-Click **Connect** on the patient dashboard. The native controller runs synchronized Ruckig position trajectories at 1 kHz; simulation uses the same motion limits. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
+Click **Connect** on the patient dashboard. Physical tool jogging uses the configured end-effector Jacobian from libfranka in the native 1 kHz loop. Damped inverse kinematics feeds synchronized Ruckig joint velocity trajectories, with the same tool mapping and speed scale as simulation. The planner slows before joint limits and limits acceleration to 1 rad/s² and jerk to 10 rad/s³. Home and advanced joint moves keep their existing position trajectories. The native loop stops on missing input after 200 ms; release/Stop requests braking immediately. Desk collision thresholds, motor enable and fault recovery remain under the operator’s control. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
 
 **Home** uses the configured reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. It leaves the gripper unchanged. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical Home and sustained motion still need supervised validation. Motor enable, fault recovery and gripper control are not exposed.
 
 ## MIRA
 
-**Home** returns both arms to the vendor nominal pose `[15.7, 80.6, 45, 98.9]°`, also used at simulation startup. Tool roll and grasp stay unchanged. Physical Home blocks manual input until the reported joints reach the target; **Stop** requests a hold.
+**Home** returns both arms to `[15.7, 80.6, 45, 98.9]°`, resets tool roll to 0°, and closes both grippers, matching simulation startup. Both physical and simulated Home block manual input until arms and tools reach their targets; **Stop** cancels Home and holds measured positions. Physical Home also requests a hold after a timeout or failed tool command.
 
-Hold **Z / X** to close/open the left gripper, or **N / M** for the right. The matching buttons work with keyboard or gamepad selected. Release to stop; **Grip speed** controls speed independently of arm Step. Both simulation and physical MIRA use these controls. Physical grippers require successful tool homing through the vendor controller; arm **Home** does not calibrate tools or bypass this requirement.
+With Keyboard selected, hold **Z / X** to close/open the left gripper, or **N / M** for the right. With a gamepad selected, the panel shows that controller's gripper bindings instead. The on-screen buttons work in either mode. Release to stop; **Grip speed** is independent of arm and roll speed. Both simulation and physical MIRA use these controls. Physical grippers require successful tool homing through the vendor controller; arm **Home** does not calibrate tools or bypass this requirement.
 
 Use the **Virtual Incision MIRA API** supplied by the vendor. Request the current Linux API and POD firmware documentation from [Virtual Incision](https://virtualincision.com/customer-support/); `mira-project.org` is unrelated middleware.
 
-The patient can start the supplied controller in Docker, then connect to its loopback WebSocket API. Vendor startup can enable motor power, so the dashboard requires operator confirmation. Add to `devices.yaml`:
+Start with the MIRA profile:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira
+```
+
+Copy the vendor API executable to `workspace/mira-api` first (`PATH/mira-api` with `--workspace PATH`). If it is missing on first use in a terminal, the launcher asks for its path. For scripts or unattended startup, supply the path directly:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira \
+  --mira-api /path/to/MiraAPI-linux-arm64-2025-07-18
+```
+
+The profile checks the executable's ELF architecture, saves it as `workspace/mira-api`, marks it executable, and records its SHA-256 checksum. The vendor binary stays local in the workspace; it is not fetched, uploaded or embedded in the Docker image. Docker mounts an explicitly supplied file read-only during installation.
+
+Later starts reuse the saved executable without prompting:
+
+```bash
+./run.sh --docker node --patient PATIENT_IP --profile mira
+```
+
+The node's POD-facing address defaults to `192.168.0.1`. Set `--mira-pod-interface IP` to save a different address; this does not configure the host's network interface or change the POD address embedded in the vendor API. The supplied July build targets `192.168.0.10:10000` (UDP). Configure the node interface as `192.168.0.1/24` for that package.
+
+The robot initially appears disconnected. The patient can start the supplied controller in Docker, then connect to its loopback WebSocket API. Vendor startup can enable motor power, so the dashboard requires operator confirmation. The July 2025 API generates its lookup table on first controller startup; allow extra time and about 503 MB of disk space. Generated data and logs persist in the node's controller directory.
+
+Native node execution supports the same profile options, but the managed MIRA controller still requires Docker and the matching `holoscan-telesurgery:0.1.0-sdk5` (or `sdk4`) image locally.
+
+For an existing manual setup, the equivalent `devices.yaml` entry is:
 
 ```yaml
 robots:
@@ -75,12 +137,19 @@ robots:
     controller:
       executable: /absolute/path/MiraAPI-linux-arm64-2025-07-18
       pod_interface: 192.168.0.1
-      image: holoscan-telesurgery:sdk5
 ```
 
-Install the executable and image first. Omit `controller` when managing the API externally. The supplied ARM64 build uses POD address `192.168.0.10:10000` (UDP), with node interface `192.168.0.1/24`; confirm these against your vendor package.
+Install the executable and image first when configuring manually. Omit `controller` when managing the API externally. Remove the manual robot entry before selecting a profile with the same robot ID.
 
 Physical jogs use reported joint positions; tool roll uses the vendor's absolute roll command. Release requests the measured position as a hold target. The vendor API does not provide a verified stop acknowledgement or hardware feedback timestamp; Home, tool operation and network-loss behavior still need supervised hardware validation. Keep a physical stop available. Set `motion_enabled: false` for feedback only.
+
+## Saved device profiles
+
+Profiles live in `workspace/profiles/mira.yaml` and `workspace/profiles/franka.yaml`, under `--workspace` when supplied. Edit the profile's `robot` settings to change its ID, display name, endpoint or motion permission, then restart the node. Pass a new `--mira-api` or replace `workspace/mira-api` to install a replacement API on the next node start.
+
+Combine physical devices with `--profile franka --profile mira`. The selection is remembered per node name, so later starts of that node can omit `--profile`. An explicit selection replaces the saved selection; `--profile none` clears it. Physical profiles cannot be combined with `--sim`.
+
+Connections remain node-local. Restarting with unchanged settings preserves the patient's connection choice; adding or changing a profile resets that robot to disconnected. Selecting a profile never starts the vendor controller. Cameras and manually configured robots continue to use `devices.yaml`; duplicate robot IDs are rejected.
 
 ## Adding a robot
 

@@ -4,6 +4,8 @@
 """Vendor nominal arm pose and the application's physical jog limit, in degrees."""
 
 MIRA_HOME = (15.7, 80.6, 45.0, 98.9)
+MIRA_HOME_ROLL = 0.0
+MIRA_HOME_GRIP = 0.0  # fraction of tool travel; zero is closed
 MIRA_STEP_LIMIT = 1.0
 MIRA_ROLL_LIMIT = 180.0  # application travel limit, not a vendor hardware rating
 

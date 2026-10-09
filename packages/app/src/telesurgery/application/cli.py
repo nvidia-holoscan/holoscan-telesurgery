@@ -73,6 +73,24 @@ def main(argv=None):
     node.add_argument("--port", type=port, default=0, help="direct video port (default: automatic)")
     node.add_argument("--sim", choices=["mira", "franka"], help="start a simulation on this node")
     node.add_argument("--sim-gui", action="store_true", help="open the Isaac Sim window for --sim")
+    node.add_argument(
+        "--profile",
+        action="append",
+        choices=["mira", "franka", "none"],
+        help="physical device profile; repeat for multiple devices (saved per node)",
+    )
+    node.add_argument(
+        "--mira-api",
+        type=Path,
+        help="vendor executable (default: WORKSPACE/mira-api; prompts if missing)",
+    )
+    node.add_argument(
+        "--mira-pod-interface",
+        help="node's POD-facing IPv4 address (first-use default: 192.168.0.1)",
+    )
+    node.add_argument(
+        "--franka-address", help="Franka IPv4 address (first-use default: 172.16.0.3)"
+    )
     commands.add_parser("doctor", help="check the SDK and GPU video codec")
     args = parser.parse_args(argv)
     if args.role in {"patient", "surgeon"}:
@@ -82,6 +100,12 @@ def main(argv=None):
             parser.error("--ssl-cert and --ssl-key require --ssl")
     if getattr(args, "sim_gui", False) and not args.sim:
         parser.error("--sim-gui requires --sim")
+    if (
+        args.role == "node"
+        and args.sim
+        and (args.profile or args.mira_api or args.mira_pod_interface or args.franka_address)
+    ):
+        parser.error("physical device profiles cannot be combined with --sim")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("aioice").setLevel(logging.WARNING)
     if args.role != "doctor":
@@ -98,7 +122,7 @@ def main(argv=None):
         elif args.role == "node":
             import fcntl
 
-            from telesurgery.nodes.client import run_service
+            from telesurgery.nodes.profiles import prepare
 
             name = args.name or socket.gethostname() + (f"-{args.sim}" if args.sim else "")
             directory = args.workspace / "nodes" / name
@@ -110,6 +134,17 @@ def main(argv=None):
                     raise RuntimeError(
                         f"Node {name} is already running; choose another --name"
                     ) from exc
+                if not args.sim:
+                    prepare(
+                        args.workspace,
+                        directory,
+                        args.profile,
+                        mira_api=args.mira_api,
+                        pod_interface=args.mira_pod_interface,
+                        franka_ip=args.franka_address,
+                    )
+                from telesurgery.nodes.client import run_service
+
                 log = RotatingFileHandler(directory / "node.log", maxBytes=1_048_576, backupCount=1)
                 log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
                 logging.getLogger().addHandler(log)

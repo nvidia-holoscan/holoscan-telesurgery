@@ -30,6 +30,7 @@ class Controller:
         self.active = False
         self.closing = self.closed = False
         self.feedback = {"status": "starting", "state": None, "error": ""}
+        self.connection_deadline = time.monotonic() + 60
         self.observed = self.next_poll = 0.0
         self.sample = 0
 
@@ -44,7 +45,18 @@ class Controller:
             if not isinstance(state, dict):
                 raise RuntimeError("Controller returned invalid state")
         except Exception as exc:
-            self.feedback = {**self.feedback, "status": "offline", "error": str(exc)}
+            # A freshly started vendor API may still be loading its lookup table.
+            # Only initial transport failures get this bounded startup window.
+            starting = (
+                not self.sample
+                and isinstance(exc, (ConnectionError, TimeoutError))
+                and time.monotonic() < self.connection_deadline
+            )
+            self.feedback = {
+                **self.feedback,
+                "status": "starting" if starting else "offline",
+                "error": "" if starting else str(exc),
+            }
             self.next_poll = time.monotonic() + 2
             raise
         self.observed = time.monotonic()
@@ -128,7 +140,14 @@ class Controller:
             gripper_rates(command, self.adapter.grippers)
             self.sequence = sequence
             return self.record(lambda: self.adapter.grip(command))
-        command = validate_jog(self.adapter, command)
+        if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
+            from telesurgery_robots.adapters.base import cartesian_command
+
+            if mode != "jog" or not hasattr(self.adapter, "cartesian"):
+                raise ValueError("Cartesian jogging is not supported by this robot")
+            command = cartesian_command(command)
+        else:
+            command = validate_jog(self.adapter, command)
         self.sequence = sequence
         # Most adapters already accept a finite target. A local servo adapter may
         # distinguish one step from a continuously refreshed gamepad target.

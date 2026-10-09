@@ -19,7 +19,13 @@ from telesurgery_robots.mira.gripper import (
     clamp,
     gripper_rates,
 )
-from telesurgery_robots.mira.poses import MIRA_HOME, MIRA_STEP_LIMIT, roll_target
+from telesurgery_robots.mira.poses import (
+    MIRA_HOME,
+    MIRA_HOME_GRIP,
+    MIRA_HOME_ROLL,
+    MIRA_STEP_LIMIT,
+    roll_target,
+)
 
 
 class Mira:
@@ -33,6 +39,7 @@ class Mira:
     def __init__(self, uri):
         self.uri, self.client = uri, None
         self.home_target = None
+        self.home_holding = False
         self.home_deadline = 0.0
         self.grip = GripperJog()
         self.grip_stopping = set()
@@ -46,6 +53,9 @@ class Mira:
         try:
             pose = self.client.send({"method": "get_mira_pose", "params": None})
             state = self._feedback(pose)
+            if self.home_holding:
+                self.client.notify({"method": "set_mira_pose", "params": state["joints_deg"]})
+                self.home_holding = False
             if self.roll_holding:
                 state = self._write_roll(state["joints_deg"])
                 self.roll_active = self.roll_holding = False
@@ -103,14 +113,17 @@ class Mira:
         }
         if self.home_target:
             if all(
-                abs(joints[arm][index] - target) <= 0.2
+                all(
+                    abs(joints[arm][index] - target) <= 0.2
+                    for index, target in enumerate(targets[:5])
+                )
+                and abs(joints[arm][5] - targets[5]) <= GRIP_COUNTS[arm] * 0.01
                 for arm, targets in self.home_target.items()
-                for index, target in enumerate(targets[:4])
             ):
                 self.home_target = None
             elif time.monotonic() >= self.home_deadline:
+                self._cancel_home()
                 self.client.notify({"method": "set_mira_pose", "params": joints})
-                self.home_target = None
                 raise RuntimeError("MIRA Home timed out after 30 seconds; hold requested")
         return {
             "joints_deg": joints,
@@ -131,6 +144,8 @@ class Mira:
             raise ValueError("Unsupported physical MIRA operation")
         if method == "set_home" and request.get("params"):
             raise ValueError("Home uses the configured pose")
+        if method == "set_home" and self.home_target and self.state()["home_active"]:
+            raise ValueError("MIRA is moving home; use Stop before manual control")
         movement = None
         if method == "jog_gripper":
             rates = gripper_rates(request.get("params"), GRIP_COUNTS)
@@ -139,6 +154,8 @@ class Mira:
                 arm: values(request["params"][arm], 5, MIRA_STEP_LIMIT) for arm in ("left", "right")
             }
         if method in {"hold", "set_home"}:
+            if method == "hold":
+                self._cancel_home()
             self.grip_stopping.update(self.grip.rates)
             self.grip.clear()
             self.roll_holding = self.roll_active
@@ -160,12 +177,18 @@ class Mira:
                 pose[arm][4] = rolls[arm]
         elif method == "set_home":
             for arm in pose:
-                pose[arm][:4] = MIRA_HOME
+                pose[arm] = [*MIRA_HOME, MIRA_HOME_ROLL, MIRA_HOME_GRIP * GRIP_COUNTS[arm]]
             self.home_target = pose
             self.home_deadline = time.monotonic() + 30
-        self.client.notify({"method": "set_mira_pose", "params": pose})
-        if movement and any(movement[arm][4] for arm in movement):
-            self._write_roll(pose)
+        try:
+            self.client.notify({"method": "set_mira_pose", "params": pose})
+            if method == "set_home" or movement and any(movement[arm][4] for arm in movement):
+                self._write_roll(pose)
+            if method == "set_home":
+                self._write_grips({arm: MIRA_HOME_GRIP for arm in pose})
+        except Exception:
+            self.close()
+            raise
         if method == "hold":
             self.home_target = None
         state = self.state()
@@ -176,7 +199,14 @@ class Mira:
         }[method]
         return state
 
+    def _cancel_home(self):
+        if self.home_target is not None:
+            self.home_holding = True
+            self.grip_stopping.update(self.home_target)
+            self.home_target = None
+
     def close(self):
+        self._cancel_home()
         self.roll_holding = self.roll_active
         self.grip_stopping.update(self.grip.rates)
         self.grip.clear()

@@ -47,6 +47,57 @@ def test_installed_adapters_and_unknown_kind():
         adapter_type("uninstalled-robot")
 
 
+@pytest.mark.parametrize("failure", [ConnectionError, TimeoutError])
+def test_initial_connection_retries_are_bounded_and_do_not_hide_later_faults(monkeypatch, failure):
+    now = 100.0
+    monkeypatch.setattr("telesurgery_runtime.application.robots.time.monotonic", lambda: now)
+    adapter = Gantry({})
+    read = adapter.read
+
+    def unavailable():
+        raise failure("controller is not ready")
+
+    adapter.read = unavailable
+    robot = Controller(adapter, lambda: {}, lambda: 0)
+    robot.tick()
+    assert robot.report()["status"] == "starting"
+    assert robot.report()["stale"] and robot.report()["state"] is None
+    assert not robot.report()["error"]
+    now += 40  # The MIRA API can spend this long generating its first lookup table.
+    robot.tick()
+    assert robot.report()["status"] == "starting"
+    now += 20
+    robot.tick()
+    assert robot.report()["status"] == "offline"
+    assert robot.report()["error"] == "controller is not ready"
+    adapter.read = read
+    now += 2
+    robot.tick()
+    assert robot.report()["status"] == "online"
+    assert not robot.report()["stale"] and not robot.report()["error"]
+
+    # A connection which succeeds quickly must also expose subsequent faults
+    # immediately, even while its original startup deadline has not elapsed.
+    robot = Controller(adapter, lambda: {}, lambda: 0)
+    robot.tick()
+    adapter.read = unavailable
+    now += 1
+    robot.tick()
+    assert robot.report()["status"] == "offline"
+    assert robot.report()["error"] == "controller is not ready"
+
+
+def test_initial_non_transport_failure_is_reported_immediately():
+    class Invalid(Gantry):
+        def read(self):
+            raise RuntimeError("invalid robot feedback")
+
+    robot = Controller(Invalid({}), lambda: {}, lambda: 0)
+    robot.tick()
+    assert robot.report()["status"] == "offline"
+    assert robot.report()["error"] == "invalid robot feedback"
+
+
 def test_franka_adjustable_steps_and_jogs_enforce_the_controller_limit():
     from types import SimpleNamespace
 
@@ -404,7 +455,7 @@ def test_discrete_step_uses_adapter_completion_without_repeating_input():
         robot.move("owner", 2, command, time.time(), mode="unknown")
 
 
-def test_mira_simulation_home_restores_both_arms_and_preserves_tools():
+def test_mira_simulation_home_restores_both_arms_and_tools():
     from telesurgery_robots.adapters.base import controls
     from telesurgery_robots.adapters.simulation import MiraSimulation
     from telesurgery_robots.mira.adapter import MiraAdapter
@@ -428,7 +479,9 @@ def test_mira_simulation_home_restores_both_arms_and_preserves_tools():
     )
     assert all(pose[:4] != list(MIRA_HOME) for pose in moved["targets_deg"].values())
     restored = controller.move("owner", 2, {}, time.time(), mode="home")
-    assert restored["targets_deg"] == {arm: [*MIRA_HOME, 12, 34] for arm in ("left", "right")}
+    assert restored["targets_deg"] == {
+        arm: [*MIRA_HOME, 0, limits[0]] for arm, limits in sim.gripper_ranges.items()
+    }
     with pytest.raises(ValueError, match="configured pose"):
         sim.apply({"method": "set_home", "params": {"left": [0] * 4}})
     # Physical controls require patient motion permission.

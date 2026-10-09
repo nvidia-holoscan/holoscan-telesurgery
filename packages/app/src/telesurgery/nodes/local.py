@@ -18,6 +18,8 @@ from pathlib import Path
 import zmq
 import zmq.asyncio
 from telesurgery.nodes.camera_settings import modes, select
+from telesurgery.nodes.profiles import devices as profile_devices
+from telesurgery.nodes.profiles import manual_devices
 from telesurgery_core.adapters.realsense import enrich
 from telesurgery_core.adapters.v4l2 import camera_devices
 from telesurgery_core.configuration import load, save
@@ -53,6 +55,7 @@ def discover(directory, simulation=None):
                 for item in data["robots"]
             ]
             return data["cameras"], robots
+    data = manual_devices(directory)
     cameras = camera_devices()
     enrich(cameras)
     # Listen to the vendor's board announcements; do not infer a camera from a ping.
@@ -71,9 +74,12 @@ def discover(directory, simulation=None):
                 "fps": 60,
             }
         )
-    data = load(directory / "devices.yaml")
     cameras.extend(data.get("cameras", []))
-    return cameras, data.get("robots", [])
+    robots = [*data.get("robots", []), *profile_devices(directory)]
+    ids = [item["id"] for item in robots]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate robot id across profiles and devices.yaml")
+    return cameras, robots
 
 
 class LocalNode:

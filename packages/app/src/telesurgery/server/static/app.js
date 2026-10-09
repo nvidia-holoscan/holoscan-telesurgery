@@ -932,8 +932,7 @@ function renderCurrent() {
     $("#hide-all").disabled = !state.selected?.length;
     $("#popout-all").disabled =
         changingWorkspace ||
-        (!cameras.some((c) => ["live", "stale"].includes(c.status)) &&
-            !currentRobotControl());
+        (!selectedPopoutCameras().length && !currentRobotControl());
     $("#dock-all").disabled =
         changingWorkspace ||
         (!controller.detached &&
@@ -1048,8 +1047,14 @@ function currentRobotControl() {
         )
     );
 }
+function selectedPopoutCameras() {
+    const selected = new Set(state.selected || []);
+    return (inventory().cameras || []).filter(c =>
+        selected.has(c.id) && ["live", "stale"].includes(c.status) && !nativeViewing(c.id));
+}
 async function changeWorkspace(native) {
     if (changingWorkspace) return;
+    const selectedCameras = native ? selectedPopoutCameras() : [];
     changingWorkspace = native ? "popout" : "dock";
     const control = $(native ? "#popout-all" : "#dock-all");
     const icon = native ? "popout" : "dock";
@@ -1067,11 +1072,7 @@ async function changeWorkspace(native) {
         if (document.fullscreenElement) await document.exitFullscreen();
         const inventoryCameras = inventory().cameras || [];
         const cameras = native
-            ? inventoryCameras.filter(
-                  (c) =>
-                      ["live", "stale"].includes(c.status) &&
-                      !nativeViewing(c.id),
-              )
+            ? selectedCameras
             : Object.keys(state.native_views || {})
                   .filter(nativeViewing)
                   .map(

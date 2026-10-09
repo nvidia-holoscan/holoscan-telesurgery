@@ -68,14 +68,16 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             await page.get_by_label("Robot input", exact=True).select_option("keyboard")
             await expect(page.locator(".keyboard-controls")).to_be_visible()
             await expect(page.locator(".robot-state")).to_be_hidden()
-            await expect(page.locator(".keyboard-columns")).to_contain_text("Measured (°)")
+            if kind.startswith("franka"):
+                await expect(page.locator(".keyboard-columns")).to_contain_text("Measured (°)")
             if not kind.startswith("franka"):
                 await expect(page.locator(".joint-position")).to_have_count(8)
                 await expect(page.locator(".key-cap")).to_have_count(16)
                 await expect(page.locator('.joint-position[data-joint="5"]')).to_have_count(0)
                 await expect(page.get_by_label("Robot keyboard joints")).to_be_hidden()
-                await expect(page.locator(".keyboard-mapping")).to_contain_text("Left J1")
-                await expect(page.locator(".keyboard-mapping")).to_contain_text("Right J4")
+                await expect(page.locator(".keyboard-columns")).to_have_text(
+                    ["Left°−+", "Right°−+"]
+                )
             await page.keyboard.down("q")
             await page.wait_for_timeout(160)
             await page.keyboard.up("q")
@@ -88,7 +90,7 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             first = "joints" if kind.startswith("franka") else "left"
             for move in moves:
                 command = move["params"]["command"]
-                assert command[first] == [0.2] + [0] * (groups[first] - 1)
+                assert command[first] == pytest.approx([0.08] + [0] * (groups[first] - 1))
                 assert all(
                     v == 0 for key, values in command.items() if key != first for v in values
                 )
@@ -103,22 +105,29 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                 await page.wait_for_timeout(650)
                 moves = [c for c in calls if c["action"] == "robot.move"]
                 command = moves[-1]["params"]["command"]
-                assert command == {"left": [0.2, 0, 0, 0], "right": [0.2, 0, 0, 0]}
+                distance = command["left"][0]
+                assert 0.076 <= distance <= 0.16
+                assert command == {"left": [distance, 0, 0, 0], "right": [distance, 0, 0, 0]}
                 await page.keyboard.up("q")
                 await page.wait_for_timeout(150)
                 moves = [c for c in calls if c["action"] == "robot.move"]
-                assert moves[-1]["params"]["command"] == {
+                command = moves[-1]["params"]["command"]
+                assert 0.076 <= command["right"][0] <= 0.16
+                assert command == {
                     "left": [0, 0, 0, 0],
-                    "right": [0.2, 0, 0, 0],
+                    "right": [command["right"][0], 0, 0, 0],
                 }
                 await page.keyboard.up("u")
                 await page.wait_for_timeout(150)
                 assert calls[-1]["action"] == "robot.release"
                 calls.clear()
             # Older nodes advertise only step_deg; their limit still applies.
-            step = page.get_by_label("Robot joint step", exact=True)
-            await expect(step).to_have_attribute("max", "0.4")
-            await step.fill("0.37")
+            setting = "arm speed"
+            step = page.get_by_label(f"Robot {setting}", exact=True)
+            await expect(step).to_have_attribute("max", "100")
+            await step.focus()
+            await step.press("End")
+            distance = 0.4
             await step.press("Enter")
             if not kind.startswith("franka"):
                 robot["state"]["joints_deg"]["right"][3] = 12.34
@@ -136,7 +145,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             moves = [c for c in calls if c["action"] == "robot.move"]
             assert len(moves) == 1
             key, count = ("joints", 7) if kind.startswith("franka") else ("right", 4)
-            assert all(c["params"]["command"][key] == [0] * (count - 1) + [-0.37] for c in moves)
+            assert all(
+                c["params"]["command"][key] == [0] * (count - 1) + [-distance] for c in moves
+            )
             assert calls[-1]["action"] == "robot.release"
             await page.screenshot(path=str(tmp_path / f"{kind}-keyboard.png"))
             calls.clear()
@@ -149,9 +160,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             await page.wait_for_timeout(100)
             assert all(c["params"]["id"] == "host:robot" for c in calls)
             await page.keyboard.up("q")
-            await expect(page.get_by_label("Other joint step", exact=True)).to_have_value("0.2")
+            await expect(page.get_by_label(f"Other {setting}", exact=True)).to_have_value("20")
             await page.get_by_label("Selected robot").select_option("host:robot")
-            await expect(page.get_by_label("Robot joint step", exact=True)).to_have_value("0.37")
+            await expect(page.get_by_label(f"Robot {setting}", exact=True)).to_have_value("100")
             await page.locator(".keyboard-controls").focus()
             # Each joint keeps producing fresh jogs without OS key-repeat events.
             # Both robot types use this behavior on physical and simulated nodes.
@@ -170,8 +181,10 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                 group = (
                     "joints" if kind.startswith("franka") else ("left" if index < 4 else "right")
                 )
-                expected[group][index if group == "joints" else index % 4] = -0.37
-                assert all(c["params"]["command"] == expected for c in moves)
+                expected[group][index if group == "joints" else index % 4] = -distance
+                for move in moves:
+                    for name, values in expected.items():
+                        assert move["params"]["command"][name] == pytest.approx(values, abs=0.008)
                 assert calls[-1]["action"] == "robot.release"
                 await page.wait_for_timeout(100)
                 assert len([c for c in calls if c["action"] == "robot.move"]) == len(moves)

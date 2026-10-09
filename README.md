@@ -62,6 +62,12 @@ Approve each node under **Nodes**, then start streams or connect robots. In Surg
 
 [Camera configuration](docs/architecture.md#camera-configuration) · [Robot controls](docs/robot-controls.md)
 
+## Physical devices
+
+- **MIRA:** Copy the vendor API executable to `workspace/mira-api` (or provide `--mira-api PATH`) and run `./run.sh --docker node --patient PATIENT_IP --profile mira`.
+- **Franka:** Enable FCI in Desk and run `./run.sh --docker node --patient PATIENT_IP --profile franka` (native: run `./setup.sh --profile franka` first and omit `--docker`); the default address is `172.16.0.3`, overridden with `--franka-address ROBOT_IP`.
+- **HSB camera:** Connect the board to the node's camera network and run `./run.sh --docker node --patient PATIENT_IP`; boards are discovered automatically with IMX274 sensor 0 as the default ([other sensors](docs/architecture.md#camera-configuration)).
+
 ## Native execution
 
 With the CUDA 13 development toolkit installed, run setup once on each machine:

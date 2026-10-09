@@ -225,7 +225,7 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
     measured = {"left": [10, 20, 30, 40, 5, 1000], "right": [11, 21, 31, 41, 6, 1351.8]}
     original = copy.deepcopy(measured)
     observed = []
-    homed = False
+    homed = True
 
     def handle(socket):
         for text in socket:
@@ -265,7 +265,18 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             state = controller.move("owner", 2, {}, time.time(), mode="home")
             assert state["home_active"]
             for arm in measured:
-                assert state["targets_deg"][arm] == [*MIRA_HOME, *original[arm][4:]]
+                assert state["targets_deg"][arm] == [*MIRA_HOME, 0, 0]
+                assert [r for r in observed if r["method"] == f"set_{arm}_gripper"][-1][
+                    "params"
+                ] == 0
+            assert [r for r in observed if r["method"] == "set_mira_roll"][-1]["params"] == {
+                "left": 0,
+                "right": 0,
+            }
+            writes = [r for r in observed if r["method"].startswith("set_")]
+            with pytest.raises(ValueError, match="moving home"):
+                adapter.home()
+            assert [r for r in observed if r["method"].startswith("set_")] == writes
             with pytest.raises(ValueError, match="moving home"):
                 adapter.jog({"left": [1, 0, 0, 0, 0], "right": [0] * 5})
             with pytest.raises(ValueError, match="moving home"):
@@ -273,11 +284,23 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             controller.release()
             assert not adapter.read()["home_active"]
             assert [r for r in observed if r["method"] == "set_mira_pose"][-1]["params"] == original
+            assert [r for r in observed if r["method"] == "set_mira_roll"][-1]["params"] == {
+                arm: pose[4] for arm, pose in original.items()
+            }
+            for arm, maximum in (("left", 1150), ("right", 1350)):
+                assert [r for r in observed if r["method"] == f"set_{arm}_gripper"][-1][
+                    "params"
+                ] == pytest.approx(min(1, original[arm][5] / maximum))
             adapter.home()
             for arm in measured:
                 measured[arm][:4] = MIRA_HOME
+            assert adapter.read()["home_active"]  # Arms alone do not complete Home.
+            for arm in measured:
+                measured[arm][4] = 0
+            assert adapter.read()["home_active"]  # Wait for the jaws too.
+            for arm in measured:
+                measured[arm][5] = 0
             assert not adapter.read()["home_active"]
-            assert measured["left"][4:] == [5, 1000]
             for bad in (
                 {},
                 {"left": 2},
@@ -296,6 +319,9 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             monkeypatch.setattr(
                 "telesurgery_robots.mira.gripper.time", SimpleNamespace(monotonic=lambda: clock[0])
             )
+            for arm in measured:
+                measured[arm][4:] = original[arm][4:]
+            homed = False
             adapter.grip({"velocity": {"left": -0.2}})
             clock[0] += 0.05
             with pytest.raises(RuntimeError, match="Tools not homed"):
@@ -337,7 +363,7 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             thread.join(timeout=2)
 
 
-def test_simulated_mira_grippers_are_independent_and_home_preserves_them(monkeypatch):
+def test_simulated_mira_grippers_are_independent_and_home_resets_them(monkeypatch):
     from types import SimpleNamespace
 
     from telesurgery_robots.adapters.base import controls
@@ -368,7 +394,101 @@ def test_simulated_mira_grippers_are_independent_and_home_preserves_them(monkeyp
         assert state["targets_deg"][arm][5] == sim.feedback["grippers_deg"][arm]
     clock[0] += 1
     assert adapter.read()["targets_deg"] == state["targets_deg"]
-    assert adapter.home()["targets_deg"] == state["targets_deg"]
+    adapter.grip({"velocity": {"left": 0.2, "right": 0.2}})
+    assert adapter.home()["targets_deg"] == before
+    assert not sim.grip.rates
+    clock[0] += 0.1
+    assert adapter.read()["targets_deg"] == before
+
+
+def test_simulated_mira_home_waits_for_tools_and_stop_holds_measured_pose():
+    from telesurgery_robots.mira.poses import MIRA_HOME
+
+    sim = SimRobot()
+    initial = {arm: list(pose) for arm, pose in sim.pose.items()}
+    sim.feedback = {
+        "joints_deg": {"left": [10, 20, 30, 40, 50], "right": [20, 30, 40, 50, -60]},
+        "grippers_deg": {"left": 20, "right": -30},
+    }
+    state = sim.apply({"method": "set_home"})
+    assert state["targets_deg"] == initial
+    assert state["home_active"] and state["control_active"]
+    with pytest.raises(ValueError, match="moving home"):
+        sim.apply({"method": "jog_gripper", "params": {"velocity": {"left": 0.2}}})
+    sim.apply({"method": "hold"})
+    for arm in initial:
+        assert sim.pose[arm] == [
+            *sim.feedback["joints_deg"][arm],
+            sim.feedback["grippers_deg"][arm],
+        ]
+    assert not sim.apply({"method": "get_state"})["home_active"]
+    sim.apply({"method": "set_home"})
+    for arm in initial:
+        sim.feedback["joints_deg"][arm][:4] = MIRA_HOME
+    assert sim.apply({"method": "get_state"})["home_active"]
+    for arm in initial:
+        sim.feedback["joints_deg"][arm][4] = 0
+    assert sim.apply({"method": "get_state"})["home_active"]
+    for arm in initial:
+        sim.feedback["grippers_deg"][arm] = initial[arm][5]
+    state = sim.apply({"method": "get_state"})
+    assert not state["home_active"] and not state["control_active"]
+    assert state["targets_deg"] == initial
+
+
+@pytest.mark.parametrize(
+    "failed_method", ["set_mira_roll", "set_left_gripper", "set_right_gripper"]
+)
+def test_physical_mira_failed_home_recovers_with_measured_holds(failed_method):
+    from telesurgery_robots.mira.adapter import Mira
+
+    serve = pytest.importorskip("websockets.sync.server").serve
+    measured = {"left": [10, 20, 30, 40, 50, 500], "right": [11, 21, 31, 41, -60, 600]}
+    observed = []
+    reject = True
+
+    def handle(socket):
+        for raw in socket:
+            request = json.loads(raw)
+            observed.append(request)
+            if request["method"] == "get_mira_pose":
+                socket.send(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": measured}))
+            elif reject and request["method"] == failed_method:
+                socket.send(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "error": {"code": 11, "message": "Tools not homed"},
+                        }
+                    )
+                )
+
+    with serve(handle, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        robot = Mira(f"ws://127.0.0.1:{server.socket.getsockname()[1]}")
+        try:
+            with pytest.raises(RuntimeError, match="Tools not homed"):
+                robot.send({"method": "set_home"})
+            assert robot.home_target is None and robot.home_holding
+            reject = False
+            observed.clear()
+            assert not robot.state()["home_active"]
+            writes = {r["method"]: r["params"] for r in observed if r["method"].startswith("set_")}
+            assert writes == {
+                "set_mira_pose": measured,
+                "set_mira_roll": {arm: pose[4] for arm, pose in measured.items()},
+                "set_left_gripper": pytest.approx(500 / 1150),
+                "set_right_gripper": pytest.approx(600 / 1350),
+            }
+            observed.clear()
+            robot.state()
+            assert all(r["method"] == "get_mira_pose" for r in observed)
+        finally:
+            robot.close()
+            server.shutdown()
+            thread.join(timeout=2)
 
 
 def test_physical_roll_is_bounded_measured_and_recovery_never_replays():

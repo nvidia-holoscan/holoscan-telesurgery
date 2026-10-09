@@ -66,10 +66,10 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
-            await expect(page.get_by_label("MIRA joint step", exact=True)).to_have_value("1")
+            await expect(page.get_by_label("MIRA arm speed", exact=True)).to_have_value("20")
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
-            speed = page.get_by_label("MIRA gripper speed", exact=True)
-            await expect(speed).to_have_value("20")
+            speed = page.get_by_label("MIRA grip speed", exact=True)
+            await expect(speed).to_have_value("40")
             for arm in ("left", "right"):
                 for label, sign in (("Open", 1), ("Close", -1)):
                     control = page.get_by_role("button", name=f"{label} {arm} gripper")
@@ -96,7 +96,8 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
                     count = len(calls)
                     await page.wait_for_timeout(250)
                     assert not [c for c in calls[count:] if c["action"] == "robot.move"]
-            await speed.fill("10")
+            await speed.focus()
+            await speed.evaluate("s => {s.value='20';s.dispatchEvent(new Event('input'))}")
             await speed.press("Enter")
             await page.locator(".gripper-controls").focus()
             await page.keyboard.down("x")
@@ -150,5 +151,124 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             state["session"]["robot"] = False
             await expect(page.locator(".gripper-controls")).to_have_count(0)
             assert not errors
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
+    robot = {
+        "id": "node:mira",
+        "name": "MIRA",
+        "kind": "mira-sim",
+        "status": "online",
+        "controls": controls(MiraSimulation({"uri": "unused"}), {"motion_enabled": True}),
+        "state": {"sequence": 1},
+    }
+    state = {
+        "role": "surgeon",
+        "sdk": "5",
+        "selected": [],
+        "session": {
+            "id": "surgeon",
+            "status": "approved",
+            "robot": True,
+            "cameras": [],
+            "robots": [robot],
+        },
+    }
+    calls = []
+
+    async def route(request):
+        path = request.request.url.removeprefix("http://localhost:8777/")
+        if path.startswith("api/status"):
+            await request.fulfill(json=state)
+        elif path == "api/action":
+            calls.append(request.request.post_data_json)
+            await request.fulfill(json={"result": robot["state"]})
+        else:
+            await request.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.add_init_script("""
+                window.pad={id:'Sony Interactive Entertainment DualSense Wireless Controller',
+                    index:0,mapping:'standard',connected:true,axes:[0,0,0,0],
+                    buttons:Array.from({length:17},()=>({pressed:false}))};
+                navigator.getGamepads=()=>[pad];document.hasFocus=()=>true;
+            """)
+            await page.route("http://localhost:8777/**", route)
+            await page.goto("http://localhost:8777/")
+            selector = page.get_by_label("MIRA input", exact=True)
+            await expect(selector.locator("option")).to_have_text(["Keyboard", "Sony DualSense"])
+            badges = page.locator(".gripper-control kbd")
+            await expect(badges).to_have_text(["Z", "X", "N", "M"])
+            await expect(page.locator(".keyboard-controls .gripper-controls")).to_be_visible()
+            await selector.select_option("0")
+            await expect(badges).to_have_text(["←", "→", "□", "○"])
+            await expect(page.locator(".gamepad-controls .gripper-controls")).to_be_visible()
+            await expect(selector).to_have_attribute("title", await page.evaluate("pad.id"))
+            await expect(page.locator(".gamepad-status")).to_have_text(
+                "Hold L1 for arms, roll & grip"
+            )
+            await page.locator(".gripper-controls").focus()
+            await page.keyboard.press("z")
+            assert not [c for c in calls if c["action"] == "robot.move"]
+            await page.evaluate("pad.buttons[4].pressed=pad.buttons[15].pressed=true")
+            for _ in range(40):
+                if any(c["action"] == "robot.move" for c in calls):
+                    break
+                await page.wait_for_timeout(50)
+            moves = [c for c in calls if c["action"] == "robot.move"]
+            assert moves[-1]["params"]["mode"] == "grip"
+            assert moves[-1]["params"]["command"] == {"velocity": {"left": 0.2, "right": 0}}
+            await expect(page.get_by_role("button", name="Open left gripper")).to_have_attribute(
+                "data-pressed", "true"
+            )
+            await selector.select_option("keyboard")
+            await expect(badges).to_have_text(["Z", "X", "N", "M"])
+            assert calls[-1]["action"] == "robot.release"
+            count = len([c for c in calls if c["action"] == "robot.move"])
+            await page.wait_for_timeout(180)
+            assert len([c for c in calls if c["action"] == "robot.move"]) == count
+            await page.evaluate("""() => {
+                pad.buttons.forEach(b=>b.pressed=false);
+                pad.id='Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
+            }""")
+            await expect(selector.locator("option")).to_have_text(["Keyboard", "Xbox controller"])
+            await selector.select_option("0")
+            await expect(badges).to_have_text(["←", "→", "X", "B"])
+            await expect(page.locator(".gamepad-status")).to_have_text(
+                "Hold LB for arms, roll & grip"
+            )
+            # Two devices with the same friendly name remain distinguishable.
+            await page.evaluate("navigator.getGamepads=()=>[pad,{...pad,index:1}]")
+            await expect(selector.locator("option")).to_have_text(
+                ["Keyboard", "Xbox controller · 1", "Xbox controller · 2"]
+            )
+            # Both shortcuts use the same Home action as the on-screen button.
+            await expect(page.get_by_role("button", name="Home", exact=True)).to_have_attribute(
+                "title",
+                "Home · Return to starting pose · "
+                "Hold Xbox button or Menu ☰ for 1s with LB released",
+            )
+            for count, (button, label) in enumerate([(16, "Xbox button"), (9, "Menu")], 1):
+                await page.evaluate("i=>pad.buttons[i].pressed=true", button)
+                await expect(page.locator(".gamepad-status")).to_contain_text(f"Hold {label}")
+                for _ in range(40):
+                    homes = [c for c in calls if c.get("params", {}).get("mode") == "home"]
+                    if len(homes) == count:
+                        break
+                    await page.wait_for_timeout(50)
+                assert len(homes) == count
+                assert homes[-1]["params"]["command"] == {}
+                await page.wait_for_timeout(1100)
+                assert len([c for c in calls if c.get("params", {}).get("mode") == "home"]) == count
+                await page.evaluate("i=>pad.buttons[i].pressed=false", button)
+                await expect(page.locator(".gamepad-controls")).to_have_attribute(
+                    "data-state", "ready"
+                )
         finally:
             await browser.close()

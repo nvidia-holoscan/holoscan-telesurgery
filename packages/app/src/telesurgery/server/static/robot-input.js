@@ -37,19 +37,6 @@ export function jointSpeed(robot, stop) {
     );
 }
 
-export function gripSpeed(robot, stop) {
-    return motionValue(
-        robot,
-        stop,
-        "grip-speed",
-        "Grip speed",
-        "gripper speed",
-        robot.controls.grip_speed_pct_s,
-        1,
-        "Percent of gripper travel per second while held",
-    );
-}
-
 function motionValue(
     robot,
     stop,
@@ -101,6 +88,79 @@ function motionValue(
         update(available) {
             number.disabled = !available;
         },
+    };
+}
+
+export function armSpeed(robot, stop) {
+    const maximum = robot.controls.max_step_deg || robot.controls.step_deg || 0.2;
+    const limits = robot.controls.speed_deg_s || {
+        min: 0,
+        max: maximum * 20,
+        default: (robot.controls.default_step_deg || 0.2) * 20,
+    };
+    return motionSpeed(robot, stop, "arm-speed", "Arm speed", limits, 20, maximum);
+}
+
+export function rollSpeed(robot, stop) {
+    const maximum = robot.controls.max_step_deg || robot.controls.step_deg || 0.2;
+    return motionSpeed(robot, stop, "roll-speed", "Roll speed", {
+        min: 0,
+        max: maximum * 20,
+        default: (robot.controls.default_step_deg || 0.2) * 20,
+    }, 50, maximum);
+}
+
+export function gripSpeed(robot, stop) {
+    return motionSpeed(robot, stop, "grip-speed", "Grip speed", robot.controls.grip_speed_pct_s, 40);
+}
+
+function motionSpeed(robot, stop, kind, title, limits, defaultPercent, maximumStep) {
+    const key = `${robot.id}:${kind}`;
+    const minimum = Math.max(1, Math.ceil(limits.min / limits.max * 100));
+    let percent = Math.max(minimum, Math.min(100,
+        motionValues.get(key) ?? defaultPercent));
+    const container = element("div", undefined, "motion-value speed-control");
+    const label = element("label", title);
+    const slider = document.createElement("input");
+    const output = element("output");
+    slider.type = "range";
+    slider.id = `speed-${kind}-${robot.id}`;
+    slider.setAttribute("aria-label", `${robot.name} ${title.toLowerCase()}`);
+    label.htmlFor = slider.id;
+    output.htmlFor = slider.id;
+    slider.min = String(minimum);
+    slider.max = "100";
+    slider.step = "1";
+    slider.title = "Slow to fast";
+    function show() {
+        slider.value = String(percent);
+        output.textContent = `${percent}%`;
+        slider.style.setProperty("--speed-fill", `${(percent - minimum) / Math.max(1, 100 - minimum) * 100}%`);
+        slider.setAttribute("aria-valuetext", `${percent}% speed`);
+    }
+    show();
+    slider.oninput = () => {
+        stop();
+        if (!Number.isFinite(slider.valueAsNumber)) return;
+        percent = Math.max(minimum, Math.min(100, Math.round(slider.valueAsNumber)));
+        motionValues.set(key, percent);
+        show();
+    };
+    container.onfocusin = stop;
+    slider.onpointerup = () => slider.blur();
+    slider.onkeydown = event => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            slider.blur();
+        }
+    };
+    container.append(label, slider, output);
+    const value = () => Math.max(limits.min, limits.max * percent / 100);
+    return {
+        element: container,
+        value,
+        increment: (seconds = 0.05) => Math.min(maximumStep, value() * seconds),
+        update(available) { slider.disabled = !available; },
     };
 }
 

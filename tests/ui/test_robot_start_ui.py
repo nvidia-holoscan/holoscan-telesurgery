@@ -21,6 +21,7 @@ async def test_patient_start_confirmation_and_node_layout(tmp_path):
         "connection_enabled": False,
         "node_online": True,
         "stale": True,
+        "controls": {"groups": {"left": 5, "right": 5}},
         "controller": {"status": "stopped", "error": ""},
     }
     state = {
@@ -91,6 +92,12 @@ async def test_patient_start_confirmation_and_node_layout(tmp_path):
                 "button", name="Disconnect", exact=True
             )
             await expect(disconnect).to_be_enabled()
+            await expect(page.locator("#equipment-rows")).to_contain_text("Connecting")
+            robot.update(status="online", stale=False)
+            await expect(page.locator("#equipment-rows")).to_contain_text("Connected")
+            robot.update(status="offline", stale=True, error="Controller connection failed")
+            await expect(page.locator("#equipment-rows")).to_contain_text("Control error")
+            robot["error"] = ""
             await disconnect.click()
             assert calls[-1]["action"] == "robot.disconnect"
             await expect(page.locator("#equipment-rows")).to_contain_text("Disconnected")

@@ -90,6 +90,53 @@ async def test_returning_surgeon_waits_for_previous_connection_cleanup(tmp_path,
         await patient.close()
 
 
+async def test_silent_surgeon_expires_and_same_identity_can_return(tmp_path, monkeypatch):
+    from telesurgery_core.transport.peer import PREFIX
+    from telesurgery_core.transport.tls import client_context
+
+    monkeypatch.setattr("telesurgery_core.transport.peer.RECEIVE_TIMEOUT", 1)
+    monkeypatch.setattr("telesurgery_core.transport.peer.PROBE_INTERVAL", 0.1)
+    patient = Application("patient", tmp_path / "patient", endpoint_port=0)
+    surgeon = Application("surgeon", tmp_path / "surgeon")
+    writer = None
+    try:
+        await patient.start()
+        await surgeon.start()
+        address = f"127.0.0.1:{patient.endpoint_port}"
+        _, writer = await asyncio.open_connection(
+            "127.0.0.1", patient.endpoint_port, ssl=client_context()
+        )
+        request = json.dumps(
+            {
+                "type": "request",
+                "id": "first",
+                "method": "access.request",
+                "params": {"name": "Surgeon", "robot": True, "credential": surgeon._identity()},
+            }
+        ).encode()
+        writer.write(PREFIX.pack(len(request), 0) + request)
+        await writer.drain()
+        await until(lambda: bool(patient.access.surgeons))
+        previous = next(iter(patient.access.surgeons))
+        await patient.action("access.approve", {"id": previous, "robot": True})
+        # Preserve the live duplicate-identity guard.
+        with pytest.raises(RuntimeError, match="already connected"):
+            await surgeon.connect(address, "Surgeon", True)
+        # Leave the old socket open, but send no more data, like a lost laptop.
+        await until(lambda: previous not in patient.access.surgeons)
+        assert not patient.access.identities
+        returning = await surgeon.connect(address, "Surgeon", True)
+        assert returning["status"] == "approved" and returning["robot"]
+        assert returning["id"] != previous
+        assert set(patient.access.surgeons) == {returning["id"]}
+    finally:
+        if writer:
+            writer.close()
+            await writer.wait_closed()
+        await surgeon.close()
+        await patient.close()
+
+
 async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_node):
     observed = []
     robot = SimRobot()
