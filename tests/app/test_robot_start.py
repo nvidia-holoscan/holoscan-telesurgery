@@ -98,7 +98,22 @@ async def test_node_checks_confirmation_and_does_not_restart_online_robot():
 
 
 @pytest.mark.asyncio
-async def test_controller_observation_never_starts_or_restarts_vendor(tmp_path):
+@pytest.mark.parametrize(
+    "sdk,image",
+    [
+        (None, "holoscan-telesurgery:0.1.7"),
+        ("5", "holoscan-telesurgery:0.1.7"),
+        ("4", "holoscan-telesurgery:0.1.7-sdk4"),
+    ],
+)
+async def test_controller_observation_never_starts_or_restarts_vendor(
+    tmp_path, monkeypatch, sdk, image
+):
+    monkeypatch.setattr("telesurgery_robots.mira.controller.version", lambda package: "0.1.7")
+    if sdk is None:
+        monkeypatch.delenv("TELESURGERY_SDK", raising=False)
+    else:
+        monkeypatch.setenv("TELESURGERY_SDK", sdk)
     binary = tmp_path / "vendor-api"
     binary.write_text("fixture")
     binary.chmod(0o700)
@@ -131,6 +146,8 @@ async def test_controller_observation_never_starts_or_restarts_vendor(tmp_path):
     runs = [c for c in calls if c[0] == "run"]
     assert len(runs) == 1
     command = runs[0]
+    assert command[-1] == image
+    assert ("image", "inspect", image) in calls
     assert "127.0.0.1:8081:8081" in command
     assert "192.168.0.1:10000:10000/udp" in command
     assert command[command.index("--restart") + 1] == "no"

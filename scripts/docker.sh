@@ -71,7 +71,8 @@ if [[ -n "$api_path" && "$api_path" != "$workspace/mira-api" ]]; then
 fi
 version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$root/pyproject.toml")"
 [[ -n "$version" ]] || { echo "Missing project version in pyproject.toml" >&2; exit 1; }
-image="holoscan-telesurgery:$version-sdk$sdk"
+image="holoscan-telesurgery:$version"
+if [[ "$sdk" == 4 ]]; then image+="-sdk4"; fi
 if ! command -v docker >/dev/null; then
     echo "Install Docker and NVIDIA Container Toolkit first." >&2
     exit 1

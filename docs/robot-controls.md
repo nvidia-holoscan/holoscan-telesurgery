@@ -122,7 +122,7 @@ The node's POD-facing address defaults to `192.168.0.1`. Set `--mira-pod-interfa
 
 The robot initially appears disconnected. The patient can start the supplied controller in Docker, then connect to its loopback WebSocket API. Vendor startup can enable motor power, so the dashboard requires operator confirmation. The July 2025 API generates its lookup table on first controller startup; allow extra time and about 503 MB of disk space. Generated data and logs persist in the node's controller directory.
 
-Native node execution supports the same profile options, but the managed MIRA controller still requires Docker and the matching `holoscan-telesurgery:0.1.0-sdk5` (or `sdk4`) image locally.
+Native node execution supports the same profile options, but the managed MIRA controller still requires Docker and the matching image locally: `holoscan-telesurgery:0.1.0` for SDK 5 or `holoscan-telesurgery:0.1.0-sdk4` for SDK 4.
 
 For an existing manual setup, the equivalent `devices.yaml` entry is:
 
