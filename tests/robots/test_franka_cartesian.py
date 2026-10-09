@@ -187,6 +187,35 @@ def test_full_speed_release_brakes_within_half_second():
     assert 0 < position[5] - start[5] < 5
 
 
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_full_speed_limit_approach_and_reversal(direction):
+    position = JOINT_LIMITS.mean(axis=1)
+    position[5] = JOINT_LIMITS[5, int(direction > 0)] - direction * 20
+    trajectory = CartesianTrajectory(position, 20)
+    jacobian = np.eye(6, 7)
+    command = {"translation": [0, 0, 0], "rotation": [0, 0, direction]}
+    peak_speed = 0
+    for tick in range(1000):
+        now = tick * 0.01
+        trajectory.request(command, now)
+        position = trajectory.advance(position, jacobian, 0.01, now)
+        planned = np.array(trajectory.input.current_position)
+        assert np.all(planned >= JOINT_LIMITS[:, 0])
+        assert np.all(planned <= JOINT_LIMITS[:, 1])
+        np.testing.assert_allclose(position, planned)
+        peak_speed = max(peak_speed, abs(trajectory.input.current_velocity[5]))
+    assert peak_speed == pytest.approx(20)
+    assert abs(trajectory.input.current_velocity[5]) < 0.001
+    stopped = position[5]
+    command["rotation"][2] = -direction
+    for tick in range(50):
+        now = 10 + tick * 0.01
+        trajectory.request(command, now)
+        position = trajectory.advance(position, jacobian, 0.01, now)
+    assert (stopped - position[5]) * direction > 1
+    assert not trajectory.stopping
+
+
 def test_cartesian_refresh_tolerates_jitter_but_expires_missing_input():
     position = JOINT_LIMITS.mean(axis=1)
     trajectory = CartesianTrajectory(position, 4)

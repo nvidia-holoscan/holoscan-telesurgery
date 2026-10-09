@@ -129,6 +129,7 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
         )
         try:
             context = await browser.new_context(no_viewport=True)
+            await context.clock.install(time=1000)
             await context.route("http://localhost:8777/**", route)
             await context.add_init_script(INPUT)
             context.on("page", lambda page: page.on("pageerror", lambda e: errors.append(str(e))))
@@ -164,9 +165,13 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
             await expect(page.locator("#robots")).to_be_hidden()
             await expect(popup.locator("#camera-workspace")).to_be_hidden()
             await expect(popup.get_by_role("button", name="Home", exact=True)).to_be_enabled()
+            # Both windows share this clock. Advance every input poll instead
+            # of making a loaded CI worker satisfy the 200 ms stall watchdog.
+            await context.clock.pause_at(10000)
+            await context.clock.run_for(50)
             await popup.locator(".keyboard-controls").focus()
             await popup.keyboard.down("q")
-            await popup.wait_for_timeout(850)
+            await context.clock.run_for(850)
             assert len(moves()) >= 3
             assert moves()[0]["params"]["mode"] == "step"
             assert moves()[-1]["params"]["mode"] == "jog"
@@ -177,32 +182,47 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
                 "window.dispatchEvent(new Event('blur')); "
                 "window.dispatchEvent(new KeyboardEvent('keydown', {key:'q'}))"
             )
-            await popup.wait_for_timeout(1100)
+            await context.clock.run_for(1100)
             assert len(moves()) > count
             assert not [c for c in calls if c["action"] == "robot.release"]
-            await popup.evaluate("inputFocus=false; window.dispatchEvent(new Event('blur'))")
-            await popup.wait_for_timeout(150)
+            # A genuinely missed polling deadline must still stop held input.
+            await context.clock.fast_forward(250)
+            await context.clock.run_for(150)
             assert calls[-1]["action"] == "robot.release"
             count = len(moves())
-            await popup.wait_for_timeout(200)
+            await context.clock.run_for(200)
+            assert len(moves()) == count
+            await popup.keyboard.up("q")
+            await popup.keyboard.down("q")
+            await context.clock.run_for(650)
+            assert len(moves()) > count
+            assert moves()[-1]["params"]["mode"] == "jog"
+            await popup.evaluate("inputFocus=false; window.dispatchEvent(new Event('blur'))")
+            await context.clock.run_for(150)
+            assert calls[-1]["action"] == "robot.release"
+            count = len(moves())
+            await context.clock.run_for(200)
             assert len(moves()) == count
             await popup.keyboard.up("q")
             await popup.evaluate("inputFocus=true")
             await popup.get_by_label(f"{robot['name']} input", exact=True).select_option("0")
+            await context.clock.run_for(50)
             await expect(popup.locator(".gamepad-controls")).to_have_attribute(
                 "data-state", "ready"
             )
             await popup.evaluate("pad.buttons[4].pressed=true; pad.axes[0]=1")
-            await popup.wait_for_timeout(250)
+            await context.clock.run_for(250)
             assert len(moves()) > count
             await popup.evaluate("inputFocus=false; window.dispatchEvent(new Event('blur'))")
-            await popup.wait_for_timeout(150)
+            await context.clock.run_for(150)
             assert calls[-1]["action"] == "robot.release"
             count = len(moves())
             await popup.evaluate("inputFocus=true")
-            await popup.wait_for_timeout(200)
+            await context.clock.run_for(200)
             assert len(moves()) == count  # Held deadman cannot resume after refocus.
             await popup.evaluate("pad.buttons[4].pressed=false; pad.axes.fill(0)")
+            await context.clock.run_for(50)
+            await context.clock.resume()
             await expect(popup.locator(".gamepad-controls")).to_have_attribute(
                 "data-state", "ready"
             )
@@ -233,16 +253,19 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
                 await page.get_by_role("button", name="Pop out robot controls", exact=True).click()
             popup = await event.value
             await expect(popup.get_by_label(step_label, exact=True)).to_have_value(second_speed)
+            await context.clock.pause_at(20000)
+            await context.clock.run_for(50)
             await popup.locator(".keyboard-controls").focus()
             await popup.keyboard.down("q")
-            await popup.wait_for_timeout(650)
+            await context.clock.run_for(650)
             await popup.close()
             await expect(page.get_by_label(step_label, exact=True)).to_be_visible()
-            await page.wait_for_timeout(200)
+            await context.clock.run_for(200)
             assert calls[-1]["action"] == "robot.release"
             count = len(moves())
-            await page.wait_for_timeout(250)
+            await context.clock.run_for(250)
             assert len(moves()) == count
+            await context.clock.resume()
             # Disconnection never silently selects a different robot.
             robot["status"] = "disconnected"
             offline["status"] = "online"

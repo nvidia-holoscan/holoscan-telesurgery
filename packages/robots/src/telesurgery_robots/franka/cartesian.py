@@ -53,7 +53,10 @@ def joint_velocity(jacobian, position, translation, rotation, speed):
     room = np.where(velocity > 0, JOINT_LIMITS[:, 1] - position, position - JOINT_LIMITS[:, 0])
     moving = np.abs(velocity) > 1e-8
     if moving.any():
-        velocity *= np.clip(np.min(room[moving]) / 3.0, 0, 1)
+        # Match the native planner's 0.02 rad reserve and 0.15 rad taper:
+        # jerk-limited braking needs room before reaching the position clamp.
+        reserve, taper = np.rad2deg([0.02, 0.15])
+        velocity *= np.clip((np.min(room[moving]) - reserve) / taper, 0, 1)
     return velocity.tolist()
 
 

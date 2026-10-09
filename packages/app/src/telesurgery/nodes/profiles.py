@@ -13,6 +13,21 @@ from telesurgery_core.configuration import load, save
 from telesurgery_robots.mira.binary import install
 
 
+def manual_devices(directory):
+    """Load manual inventory with robot ids suitable for profile conflict checks."""
+    path = directory / "devices.yaml"
+    data = load(path)
+    robots = data.get("robots", [])
+    if not isinstance(robots, list) or any(
+        not isinstance(spec, dict) or not isinstance(spec.get("id"), str) or not spec["id"].strip()
+        for spec in robots
+    ):
+        raise ValueError(
+            f"Expected a robots list with a nonempty string id for each entry in {path}"
+        )
+    return data
+
+
 def _address(value):
     address = ipaddress.IPv4Address(value)
     if address.is_unspecified or address.is_multicast or address.is_loopback:
@@ -69,6 +84,7 @@ def prepare(workspace, directory, names=None, *, mira_api=None, pod_interface=No
         raise ValueError("MIRA settings require --profile mira or a saved MIRA profile selection")
     if franka_ip is not None and "franka" not in names:
         raise ValueError("--franka-address requires --profile franka or a saved Franka selection")
+    manual = manual_devices(directory).get("robots", [])
     if not names and not previous:
         return
     root = workspace / "profiles"
@@ -109,7 +125,6 @@ def prepare(workspace, directory, names=None, *, mira_api=None, pod_interface=No
                 )
             prepared[name] = profile
             robots.append(spec)
-        manual = load(directory / "devices.yaml").get("robots", [])
         ids = [item["id"] for item in [*manual, *robots]]
         if len(ids) != len(set(ids)):
             raise ValueError(

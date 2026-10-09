@@ -215,6 +215,39 @@ def test_profiles_join_physical_inventory_and_reject_conflicts(tmp_path, monkeyp
         local.discover(directory)
 
 
+@pytest.mark.parametrize(
+    "robots",
+    [None, {}, "franka", [None], ["franka"], [{}], [{"id": []}], [{"id": 1}], [{"id": ""}]],
+)
+def test_invalid_manual_robots_report_configuration_error(tmp_path, monkeypatch, caplog, robots):
+    from telesurgery.nodes import local
+
+    monkeypatch.setattr(local, "camera_devices", lambda: [])
+    monkeypatch.setattr(local, "enrich", lambda cameras: None)
+    monkeypatch.setattr(local, "backend", lambda kind: SimpleNamespace(discover=lambda: {}))
+    directory = tmp_path / "nodes/test"
+    prepare(tmp_path, directory, ["franka"])
+    save(directory / "connections.yaml", {"franka": True})
+    saved = {
+        path: path.read_bytes()
+        for path in [
+            directory / "profiles.yaml",
+            directory / "connections.yaml",
+            tmp_path / "profiles/franka.yaml",
+        ]
+    }
+    save(directory / "devices.yaml", {"robots": robots})
+    with pytest.raises(ValueError, match="devices.yaml"):
+        prepare(tmp_path, directory, ["franka"], franka_ip="172.16.0.8")
+    with pytest.raises(ValueError, match="devices.yaml"):
+        local.discover(directory)
+    assert (
+        main(["node", "--patient", "unused", "--workspace", str(tmp_path), "--name", "test"]) == 1
+    )
+    assert "devices.yaml" in caplog.text
+    assert all(path.read_bytes() == content for path, content in saved.items())
+
+
 def test_franka_default_and_saved_address_precedence(tmp_path):
     directory = tmp_path / "nodes/one"
     prepare(tmp_path, directory, ["franka"])
