@@ -122,8 +122,8 @@ Version unpinned, requires >=13,<14. SDK 4 build tool.
 Licensed under Apache-2.0 (https://github.com/NVIDIA/cuda-python/blob/main/LICENSE)
 
 aiohttp (https://github.com/aio-libs/aiohttp)
-Version 3.14.3.
-Licensed under Apache-2.0 AND MIT (https://github.com/aio-libs/aiohttp/blob/v3.14.3/LICENSE.txt)
+Version 3.14.4.
+Licensed under Apache-2.0 AND MIT (https://github.com/aio-libs/aiohttp/blob/v3.14.4/LICENSE.txt)
 
 aiortc (https://github.com/aiortc/aiortc)
 Version 1.15.0.
@@ -156,8 +156,8 @@ Version 1.9.2.
 Licensed under Apache-2.0 (https://github.com/websocket-client/websocket-client/blob/v1.9.2/LICENSE)
 
 websockets (https://github.com/python-websockets/websockets)
-Version 16.1.1.
-Licensed under BSD-3-Clause (https://github.com/python-websockets/websockets/blob/16.1.1/LICENSE)
+Version 17.2.
+Licensed under BSD-3-Clause (https://github.com/python-websockets/websockets/blob/17.2/LICENSE)
 
 cryptography (https://github.com/pyca/cryptography)
 Version 50.0.2.
