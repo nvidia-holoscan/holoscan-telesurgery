@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""One local controller window per surgeon service."""
+
+import asyncio
+import json
+import math
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+
+class NativeController:
+    def __init__(self, directory):
+        self.directory = Path(directory)
+        self.lock = asyncio.Lock()
+        self.process = self.temporary = self.path = None
+        self.finished = {"status": "closed"}
+
+    def status(self):
+        if self.process is None:
+            return self.finished
+        state = json.loads(self.path.read_text()) if self.path.exists() else {"status": "starting"}
+        if self.process.returncode is not None and state["status"] != "error":
+            state["status"] = "closed"
+        return state
+
+    async def open(self, server, robot=None, certificate=None, preferences=None):
+        preferences = preferences or {}
+        if (
+            not isinstance(preferences, dict)
+            or len(preferences) > 512
+            or any(
+                not isinstance(key, str)
+                or not key.endswith((":arm-speed", ":roll-speed", ":grip-speed"))
+                or type(value) not in (int, float)
+                or not math.isfinite(value)
+                or not 1 <= value <= 100
+                for key, value in preferences.items()
+            )
+        ):
+            raise ValueError("Controller speeds must be percentages from 1 to 100")
+        if not os.environ.get("DISPLAY"):
+            raise RuntimeError("Native controls need a desktop display on this service's machine")
+        async with self.lock:
+            if self.status()["status"] in {"starting", "running"}:
+                return True
+            await self._close()
+            self.temporary = tempfile.TemporaryDirectory(prefix="telesurgery-controller-")
+            self.path = Path(self.temporary.name) / "status.json"
+            config = self.path.with_name("config.json")
+            config.write_text(
+                json.dumps(
+                    {
+                        "server": server,
+                        "robot": robot,
+                        "certificate": certificate,
+                        "status_path": str(self.path),
+                        "generation": self.temporary.name,
+                        "preferences": {**self.finished.get("preferences", {}), **preferences},
+                    }
+                )
+            )
+            config.chmod(0o600)
+            self.directory.mkdir(parents=True, exist_ok=True)
+            try:
+                # The SDK's managed Python ships Tk without Xft on Linux.
+                # Use the desktop Python/Tk build for antialiased system fonts;
+                # this process needs only the standard library and SDL2.
+                python = "/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable
+                environment = dict(os.environ)
+                environment["PYTHONPATH"] = os.pathsep.join(
+                    filter(
+                        None,
+                        (str(Path(__file__).resolve().parents[2]), environment.get("PYTHONPATH")),
+                    )
+                )
+                with (self.directory / "controller.log").open("w") as log:
+                    self.process = await asyncio.create_subprocess_exec(
+                        python,
+                        "-m",
+                        "telesurgery.controller.window",
+                        str(config),
+                        stdout=log,
+                        stderr=asyncio.subprocess.STDOUT,
+                        env=environment,
+                    )
+                async with asyncio.timeout(10):
+                    while True:
+                        state = self.status()
+                        if state["status"] == "running":
+                            return True
+                        if state["status"] in {"error", "closed"}:
+                            raise RuntimeError(
+                                state.get("error", "Native controller closed during startup")
+                            )
+                        await asyncio.sleep(0.05)
+            except BaseException:
+                await self._close()
+                raise
+
+    async def _close(self):
+        if self.process and self.process.returncode is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), 10)
+            except TimeoutError:
+                self.process.kill()
+                await self.process.wait()
+        self.finished = {**self.status(), "status": "closed"}
+        self.process = None
+        if self.temporary:
+            self.temporary.cleanup()
+        self.temporary = self.path = None
+
+    async def close(self):
+        async with self.lock:
+            await self._close()

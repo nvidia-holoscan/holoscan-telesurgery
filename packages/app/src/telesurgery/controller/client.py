@@ -1,0 +1,140 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Use the same surgeon API as the dashboard, with one outstanding control request."""
+
+import json
+import ssl
+import time
+from concurrent.futures import ThreadPoolExecutor
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+
+
+class Client:
+    def __init__(self, server, certificate=None):
+        url = urlsplit(server)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.path not in {"", "/"}
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError("Use a surgeon dashboard URL, such as http://127.0.0.1:8002")
+        self.server = server.rstrip("/")
+        self.context = ssl.create_default_context(cafile=certificate) if certificate else None
+
+    def request(self, path, body=None):
+        request = Request(
+            self.server + path,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={"Content-Type": "application/json", "Origin": self.server},
+        )
+        try:
+            with urlopen(request, timeout=8, context=self.context) as response:  # nosec B310
+                return json.load(response)
+        except HTTPError as exc:
+            try:
+                message = json.load(exc).get("error", str(exc))
+            except (ValueError, AttributeError):
+                message = str(exc)
+            raise RuntimeError(message) from exc
+
+    def status(self):
+        return self.request("/api/status")
+
+    def action(self, method, params):
+        return self.request("/api/action", {"action": method, "params": params})["result"]
+
+
+class Control:
+    """Resample after replies; never enqueue motion behind a slow or interrupted request."""
+
+    def __init__(self, client):
+        self.client = client
+        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="robot-input")
+        self.pending = None
+        self.owned = None
+        self.releasing = False
+        self.last_renew = 0
+        self.reply = {}
+        self.error = ""
+        self.failed = False
+
+    @property
+    def ready(self):
+        return self.pending is None and not self.releasing
+
+    def _send(self, method, params):
+        if self.pending is not None:
+            return False
+        self.pending = (
+            method,
+            params["id"],
+            self.worker.submit(self.client.action, method, params),
+        )
+        return True
+
+    def move(self, robot, mode, command, speed):
+        if not self.ready:
+            return False
+        if self.owned and self.owned != robot:
+            self.stop()
+            return False
+        self.owned = robot  # An interrupted reply may still have accepted the command.
+        self.error = ""
+        if mode == "grip":
+            command = {"velocity": command}
+        return self._send(
+            "robot.move",
+            {
+                "id": robot,
+                "mode": mode,
+                "command": command,
+                **({"speed_deg_s": speed} if speed is not None else {}),
+            },
+        )
+
+    def stop(self):
+        self.releasing = bool(self.owned)
+
+    def poll(self, now):
+        if self.pending is not None:
+            method, robot, future = self.pending
+            if not future.done():
+                return
+            self.pending = None
+            try:
+                result = future.result()
+                if isinstance(result, dict):
+                    self.reply[robot] = result
+            except Exception as exc:
+                self.error = str(exc)
+                self.failed = True
+                if method != "robot.release":
+                    self.stop()
+            if method == "robot.release":
+                self.owned = None
+                self.releasing = False
+            self.last_renew = now
+        if self.releasing and self.owned:
+            self._send("robot.release", {"id": self.owned})
+        elif self.owned and now - self.last_renew >= 0.5:
+            self._send("robot.renew", {"id": self.owned})
+
+    def feedback(self, robot):
+        state = robot.get("state", {})
+        reply = self.reply.get(robot["id"], {})
+        return reply if reply.get("sequence", -1) > state.get("sequence", -1) else state
+
+    def close(self):
+        self.stop()
+        deadline = time.monotonic() + 9
+        while (self.owned or self.pending) and time.monotonic() < deadline:
+            self.poll(time.monotonic())
+            time.sleep(0.01)
+        self.worker.shutdown(wait=True, cancel_futures=True)

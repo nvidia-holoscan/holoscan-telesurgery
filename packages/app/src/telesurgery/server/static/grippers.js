@@ -3,7 +3,7 @@
 
 import { element } from "./ui.js";
 import { icon } from "./icons.js";
-import { inputBlocked } from "./robot-input.js";
+import { inputBlocked, keyboardHolds } from "./robot-input.js";
 
 const editing = () => document.activeElement?.closest(
     "input, textarea, select, button, a, [contenteditable]:not([contenteditable=false])",
@@ -24,7 +24,8 @@ export function gripperControls(robot, send, stop, speed) {
     toggle.append(toggleKey, element("span", "Open / close"));
     toggle.hidden = true;
     if (single) panel.append(toggle);
-    const bindings = new Map(), pressed = new Set(), buttons = new Map();
+    const bindings = new Map(), pressed = new Set(), buttons = new Map(), readings = new Map();
+    const physicalKeys = keyboardHolds(release);
     let gamepadVelocity = {};
     let allowed = false, keyboard = false, busy = false, active = false,
         stopping = false, previous = performance.now();
@@ -53,6 +54,7 @@ export function gripperControls(robot, send, stop, speed) {
     }
     function release(key) {
         if (!pressed.delete(key)) return;
+        buttons.get(key).dataset.pressed = "false";
         if (pressed.size) issue();
         else halt();
     }
@@ -80,27 +82,52 @@ export function gripperControls(robot, send, stop, speed) {
             control.onkeydown = event => {
                 if (![" ", "Enter"].includes(event.key)) return;
                 event.preventDefault();
-                if (!event.repeat) press(key);
+                if (physicalKeys.press(key, event.repeat)) press(key);
             };
             control.onkeyup = event => {
-                if ([" ", "Enter"].includes(event.key)) release(key);
+                if ([" ", "Enter"].includes(event.key)) physicalKeys.release(key);
             };
             row.append(control);
         }
+        const feedback = element("div", undefined, "gripper-feedback");
+        const opening = document.createElement("meter");
+        opening.min = 0;
+        opening.max = 1;
+        opening.setAttribute("aria-label", `${arm} gripper opening`);
+        const value = element("output", "—");
+        value.setAttribute("aria-label", `${arm} gripper measured opening`);
+        feedback.title = "Measured opening · 0% closed · 100% open";
+        feedback.append(opening, value);
+        row.append(feedback);
+        readings.set(arm, {opening, value});
         panel.append(row);
     }
+    function feedback(state) {
+        for (const [arm, {opening, value}] of readings) {
+            const measured = state?.grippers?.[arm];
+            const known = Number.isFinite(measured);
+            opening.hidden = !known;
+            if (known) opening.value = Math.max(0, Math.min(1, measured));
+            const percent = Math.round(opening.value * 100);
+            opening.setAttribute("aria-valuetext", known ? `${percent}% open` : "Unknown");
+            value.textContent = known ? `${percent}%` : "—";
+        }
+    }
+    feedback(robot.state);
     function keydown(event) {
         const key = event.key.toLowerCase();
         if (key === "escape") { halt(); return; }
-        if (!keyboard || !bindings.has(key)) return;
+        if (!bindings.has(key)) return;
+        const fresh = physicalKeys.press(key, event.repeat);
+        if (!keyboard) return;
         if (editing() || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) {
             halt();
             return;
         }
         event.preventDefault();
-        if (!event.repeat) press(key);
+        if (fresh) press(key);
     }
-    const keyup = event => release(event.key.toLowerCase());
+    const keyup = event => physicalKeys.release(event.key.toLowerCase());
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
     window.addEventListener("blur", halt);
@@ -119,6 +146,7 @@ export function gripperControls(robot, send, stop, speed) {
     }, 50);
     return {
         element: panel,
+        feedback,
         gamepad(velocity) { gamepadVelocity = velocity; },
         update(enabled, keyboardEnabled, gamepad) {
             if ((allowed && !enabled) || keyboard !== keyboardEnabled) halt();
@@ -150,6 +178,7 @@ export function gripperControls(robot, send, stop, speed) {
         stop: halt,
         destroy() {
             halt();
+            physicalKeys.destroy();
             clearInterval(timer);
             window.removeEventListener("keydown", keydown);
             window.removeEventListener("keyup", keyup);

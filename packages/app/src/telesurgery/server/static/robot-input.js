@@ -5,6 +5,38 @@ import { element } from "./ui.js";
 
 export const motionValues = new Map();
 
+export function keyboardHolds(release) {
+    // Keep physical holds across input halts, so repeat pairs cannot rearm motion.
+    const down = new Set(), pending = new Map();
+    return {
+        press(key, repeat) {
+            clearTimeout(pending.get(key));
+            pending.delete(key);
+            const fresh = !down.has(key) && !repeat;
+            down.add(key);
+            return fresh;
+        },
+        release(key) {
+            if (!down.has(key)) return;
+            clearTimeout(pending.get(key));
+            // Some Linux keyboard paths report autorepeat as keyup/keydown
+            // pairs (repeat=false), observed up to 9 ms apart on the host.
+            // Coalesce those pairs; a real release stops within 20 ms. Focus
+            // loss, Escape and the input watchdog still stop immediately.
+            pending.set(key, setTimeout(() => {
+                pending.delete(key);
+                down.delete(key);
+                release(key);
+            }, 20));
+        },
+        destroy() {
+            for (const timer of pending.values()) clearTimeout(timer);
+            pending.clear();
+            down.clear();
+        },
+    };
+}
+
 export function jointStep(robot, stop) {
     const maximum =
         robot.controls.max_step_deg || robot.controls.step_deg || 0.2;

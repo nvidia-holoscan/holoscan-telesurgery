@@ -115,15 +115,27 @@ class SimRobot:
                     # joints so the next jog can retreat from the obstacle.
                     self.pose["joints"] = list(position)
                 self.cartesian = None
-        if self.trajectory is None or elapsed <= 0:
-            return
-        if now > self.deadline and self.mode == "jog":
+        if now > self.deadline and self.mode in {"jog", "home"} and "joints" in self.pose:
             self._stop()
-        self.pose["joints"] = self.trajectory.advance(elapsed)
-        if self.trajectory.finished:
-            self.trajectory = self.mode = None
+        if self.trajectory is not None and elapsed > 0:
+            self.pose["joints"] = self.trajectory.advance(elapsed)
+            if self.trajectory.finished:
+                self.trajectory = None
+                if self.mode != "home":
+                    self.mode = None
+        if (
+            "joints" in self.pose
+            and self.mode == "home"
+            and self.trajectory is None
+            and all(abs(position - 1.0) <= 0.01 for position in self._grippers().values())
+        ):
+            self.mode = None
 
     def _stop(self):
+        if "joints" in self.pose and self.mode == "home":
+            self._grip_targets(self._grippers())
+            if self.trajectory is None:
+                self.mode = None
         if self.mode == "mira-tool":
             for arm in self.pose:
                 measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
@@ -143,7 +155,8 @@ class SimRobot:
             **self.feedback,
             **(
                 {
-                    "control_active": self.trajectory is not None
+                    "control_active": self.mode == "home"
+                    or self.trajectory is not None
                     or self.cartesian is not None
                     or bool(self.grip.rates),
                     "home_active": self.mode == "home",
@@ -165,8 +178,9 @@ class SimRobot:
     def _target(self, goal, mode, speed):
         if self.cartesian is not None:
             raise ValueError("Release Cartesian input before joint motion or Home")
-        if self.trajectory is not None and (
-            self.mode not in {"step", "jog"} or mode not in {"step", "jog"}
+        if self.mode in {"home", "stopping"} or (
+            self.trajectory is not None
+            and (self.mode not in {"step", "jog"} or mode not in {"step", "jog"})
         ):
             raise ValueError(
                 "Franka is moving home; use Stop before manual control"
@@ -180,7 +194,7 @@ class SimRobot:
                 raise ValueError("Release input before changing Franka speed")
             self.trajectory.target(goal)
         self.mode, self.speed = mode, speed
-        self.deadline = self.updated + 0.2
+        self.deadline = self.updated + (self.trajectory.duration + 30 if mode == "home" else 0.2)
 
     def apply(self, request: dict):
         self.advance()
@@ -206,6 +220,8 @@ class SimRobot:
             self._target(
                 list(self.home), "home", speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
             )
+            self.grip.clear()
+            self._grip_targets({arm: 1.0 for arm in self.gripper_ranges})
         elif method == "set_home" and "left" in self.pose:
             if params:
                 raise ValueError("Home uses the configured pose")
@@ -226,7 +242,7 @@ class SimRobot:
             speed = speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
             if self.kinematics is None or time.monotonic() - self.kinematics[2] > 0.3:
                 raise ValueError("Cartesian physics feedback is unavailable or stale")
-            if self.trajectory is not None:
+            if self.trajectory is not None or self.mode == "home":
                 raise ValueError("Release joint input or Home before Cartesian motion")
             if self.cartesian is not None and self.cartesian.stopping:
                 # A command already in transit may arrive after the watchdog

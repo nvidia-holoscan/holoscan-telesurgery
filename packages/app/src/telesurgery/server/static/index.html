@@ -381,10 +381,6 @@ SPDX-License-Identifier: Apache-2.0
                                         </p>
                                         <h1 id="workspace-title">Live views</h1>
                                     </div>
-                                    <span
-                                        id="stream-count"
-                                        class="muted"
-                                    ></span>
                                 </div>
                                 <div id="view-toolbar" class="view-toolbar">
                                     <button
@@ -497,7 +493,7 @@ SPDX-License-Identifier: Apache-2.0
                                         >EXCLUSIVE ACCESS</span
                                     >
                                     <button
-                                        id="popout-controller"
+                                        id="native-controller"
                                         class="secondary small icon-button"
                                         data-icon="popout"
                                         hidden
@@ -513,32 +509,13 @@ SPDX-License-Identifier: Apache-2.0
                                     aria-label="Selected robot"
                                 ></select
                             ></label>
-                            <p id="controller-focus" class="field-hint" hidden>
-                                Keep this window focused for keyboard or gamepad
-                                control.
-                            </p>
-                            <div id="controller-away" hidden>
+                            <div id="native-controller-away" hidden>
                                 <p class="field-hint">
-                                    Controls are open in a separate window.
+                                    Robot controls are open in the native window.
                                 </p>
-                                <button
-                                    id="focus-controller"
-                                    class="secondary small"
-                                    type="button"
-                                >
-                                    Focus controls
-                                </button>
                             </div>
                             <div id="robots"></div>
                         </section>
-                        <p
-                            id="controller-unavailable"
-                            class="quiet-state"
-                            hidden
-                        >
-                            Robot controls are unavailable. Check access in the
-                            surgeon dashboard.
-                        </p>
                     </div>
                 </div>
             </main>

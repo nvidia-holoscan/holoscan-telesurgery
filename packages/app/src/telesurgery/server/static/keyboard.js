@@ -8,9 +8,10 @@ import {
     jogGroups,
     pairedArms,
     miraToolJog,
+    keyboardHolds,
 } from "./robot-input.js";
 
-const pairs = ["qa", "ws", "ed", "rf", "tg", "yh", "uj"];
+const pairs = ["qa", "ws", "ed", "rf", "tg", "yh", "uj", "ik"];
 const editing = () =>
     document.activeElement?.closest(
         "input, textarea, select, button, a, [contenteditable]:not([contenteditable=false])",
@@ -81,12 +82,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     let feedback = robot.state || {};
     let feedbackLabels = [];
     container.append(group, mapping);
-    if (!group.hidden && !toolControl)
+    if (!group.hidden && !toolControl && !miraTool)
         container.append(
             element("p", "[ / ] switch joint groups", "gamepad-hint"),
         );
     const keys = new Set();
     const heldKeys = new Set();
+    const physicalKeys = keyboardHolds(release);
     let repeatAt = 0,
         repeating = false,
         lastJogAt = 0;
@@ -319,6 +321,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     function release(key) {
         keys.delete(key);
         heldKeys.delete(key);
+        const cap = mapping.querySelector(`.key-cap[data-key="${key}"]`);
+        if (cap) cap.dataset.pressed = "false";
         if (!heldKeys.size) {
             if (repeating || continuousTool()) pause();
             repeating = false;
@@ -354,6 +358,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             });
     }
     function keydown(event) {
+        const key = event.key.toLowerCase();
+        const fresh = bindings.has(key) ? physicalKeys.press(key, event.repeat) : !event.repeat;
         if (
             !enabled ||
             !allowed ||
@@ -367,10 +373,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             halt();
             return;
         }
-        const key = event.key.toLowerCase();
         if (!["escape", "[", "]"].includes(key) && !bindings.has(key)) return;
         event.preventDefault();
-        if (event.repeat || keys.has(key)) return;
+        if (!fresh || keys.has(key)) return;
         if (key === "escape") {
             halt();
             return;
@@ -389,7 +394,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     }
     function keyup(event) {
         const key = event.key.toLowerCase();
-        release(key);
+        physicalKeys.release(key);
     }
     function poll() {
         if (disposed) return;
@@ -398,7 +403,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         lastTick = now;
         if (!enabled || !allowed || inputBlocked() || editing() || delayed)
             halt();
-        if (heldKeys.size && now >= repeatAt && !busy && !stopping) {
+        const nextJog = () => continuousTool() ? lastSentAt + 50 : repeatAt;
+        if (heldKeys.size && now >= nextJog() && !busy && !stopping) {
             repeating = true;
             repeatAt = now + 50;
             issue(heldKeys, true);
@@ -407,7 +413,11 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             cap.dataset.pressed = String(keys.has(cap.dataset.key));
             cap.disabled = !enabled || !allowed;
         }
-        timer = setTimeout(poll, 50);
+        // Timers may fire just before the requested deadline. Wait only the
+        // remainder so a held tool jog does not fall from 20 Hz to 10 Hz.
+        const delay = heldKeys.size && !busy && !stopping
+            ? Math.max(1, Math.min(50, nextJog() - performance.now())) : 50;
+        timer = setTimeout(poll, delay);
     }
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
@@ -439,6 +449,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         stop: halt,
         destroy() {
             disposed = true;
+            physicalKeys.destroy();
             clearTimeout(timer);
             window.removeEventListener("keydown", keydown);
             window.removeEventListener("keyup", keyup);

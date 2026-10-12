@@ -10,8 +10,74 @@ from playwright.async_api import async_playwright, expect
 from telesurgery_robots.adapters.base import controls
 from telesurgery_robots.adapters.simulation import MiraSimulation
 from telesurgery_robots.mira.adapter import MiraAdapter
+from test_franka_cartesian_ui import controller_page
 
 STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["versius-sim", "mira-sim"])
+@pytest.mark.parametrize("interruption", ["release", "blur", "stall", "escape"])
+async def test_gripper_keyboard_release_pairs_are_one_hold(kind, interruption):
+    async with controller_page() as page:
+        await page.evaluate(
+            """async kind => {
+            input.destroy();document.querySelector('main').replaceChildren();
+            const {gripperControls}=await import('/grippers.js');
+            moves=[];stops=0;
+            window.input=gripperControls({name:'Robot',kind,
+                controls:{grippers:kind==='mira-sim'?['left','right']:['hand']}},
+                async command=>moves.push({command,at:performance.now()}),
+                async()=>{stops++},()=>50);
+            document.querySelector('main').append(input.element);
+            input.update(true,true);input.element.focus();
+        }""",
+            kind,
+        )
+        button = page.get_by_role(
+            "button", name=f"Close {'left' if kind == 'mira-sim' else 'hand'} gripper", exact=True
+        )
+        await page.keyboard.down("z")
+        await page.clock.run_for(450)
+        for _ in range(60):
+            await page.keyboard.up("z")
+            await page.clock.run_for(9)
+            await page.keyboard.down("z")
+            await page.clock.run_for(24)
+            await expect(button).to_have_attribute("data-pressed", "true")
+        assert await page.evaluate("stops") == 0
+        moves = await page.evaluate("moves")
+        assert len(moves) >= 48
+        arm = "left" if kind == "mira-sim" else "hand"
+        assert all(move["command"]["velocity"][arm] == -0.5 for move in moves)
+        if interruption == "release":
+            await page.keyboard.up("z")
+            await page.clock.run_for(20)
+        elif interruption == "blur":
+            await page.evaluate("window.dispatchEvent(new Event('blur'))")
+        elif interruption == "escape":
+            await page.keyboard.press("Escape")
+        else:
+            await page.clock.fast_forward(250)
+        assert await page.evaluate("stops") == 1
+        count = await page.evaluate("moves.length")
+        if interruption != "release":
+            # Repeat=false cannot restart input following an interruption.
+            for _ in range(5):
+                await page.keyboard.up("z")
+                await page.clock.run_for(9)
+                await page.keyboard.down("z")
+                await page.clock.run_for(24)
+        await page.clock.run_for(100)
+        assert await page.evaluate("moves.length") == count
+        await expect(button).to_have_attribute("data-pressed", "false")
+        await page.keyboard.up("z")
+        await page.clock.run_for(20)
+        await page.keyboard.down("z")
+        await page.clock.run_for(100)
+        assert await page.evaluate("moves.length") > count
+        await page.keyboard.up("z")
+        await page.clock.run_for(20)
 
 
 @pytest.mark.asyncio

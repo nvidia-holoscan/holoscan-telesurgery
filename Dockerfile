@@ -87,7 +87,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
     PATH=/opt/telesurgery/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12-venv ca-certificates chrony docker.io libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
+    python3.12-venv python3-tk=3.12.3-0ubuntu1 libsdl2-2.0-0=2.30.0+dfsg-1ubuntu3.1 \
+    ca-certificates chrony docker.io \
+    libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
     libvulkan1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6 \
     libpoconet80t64 libpocofoundation80t64 libfmt9 libgomp1 libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*

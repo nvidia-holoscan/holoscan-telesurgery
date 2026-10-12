@@ -2,7 +2,7 @@
 
 The patient connects robots and grants surgeon access. A surgeon's first input takes the exclusive robot lock. **Stop / Esc** requests a hold and releases that lock. **Disconnect**, on the patient side, releases the controller connection without powering off the robot.
 
-The surgeon lists connected robots automatically. Use the panel's pop-out icon to place controls beside Holoviz; keep that window focused for keyboard or gamepad input. Dock or close it to return controls to the dashboard. **Pop out all**, beside Fullscreen, opens only selected live or stale streams in Holoviz and detaches the selected robot controls. Unselected streams stay untouched. **Dock all** returns H.264 views and controls to the dashboard and closes other native viewers.
+The surgeon lists connected robots automatically. Use the panel's pop-out icon to open the native controller beside Holoviz; keep that window focused for keyboard or gamepad input. The icon changes to **Dock robot controls**; click it or close the window to return controls and speed settings to the dashboard. **Pop out all**, beside Fullscreen, opens selected live or stale streams in Holoviz and opens the native robot controller. **Dock all** returns browser-compatible views and controls to the dashboard and closes the native windows. You can also launch controls with `./run.sh controller --server http://127.0.0.1:8002`. The window runs on the surgeon service's desktop, using its existing approved session; native setup installs Python Tk and SDL2 for keyboard and gamepad input.
 
 ## Keyboard and gamepad
 
@@ -87,7 +87,7 @@ robots:
 
 Click **Connect** on the patient dashboard. Physical tool jogging uses the configured end-effector Jacobian from libfranka in the native 1 kHz loop. Damped inverse kinematics feeds synchronized Ruckig joint velocity trajectories, with the same tool mapping and speed scale as simulation. The planner slows before joint limits and limits acceleration to 1 rad/s² and jerk to 10 rad/s³. Home and advanced joint moves keep their existing position trajectories. The native loop stops on missing input after 200 ms; release/Stop requests braking immediately. Desk collision thresholds, motor enable and fault recovery remain under the operator’s control. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
 
-**Home** uses the shared fixed reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. It leaves the gripper unchanged. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical sustained control, Home and soft Stop were operator-verified on the tested setup; per-installation home calibration remains on the [TODO list](TODO.md). Motor enable, fault recovery and gripper control are not exposed.
+**Home** uses the shared fixed reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. Simulated grippers, when advertised, return to their open starting position; Home waits for measured gripper completion. Physical Franka gripper control is not exposed. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical sustained control, Home and soft Stop were operator-verified on the tested setup; per-installation home calibration remains on the [TODO list](TODO.md). Motor enable and fault recovery are not exposed.
 
 ## MIRA
 

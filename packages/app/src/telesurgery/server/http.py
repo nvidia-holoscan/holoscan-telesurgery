@@ -154,6 +154,13 @@ def serve(
             raise RuntimeError("Another service is using this state directory") from exc
         context = dashboard_tls(directory, host, ssl_cert, ssl_key) if ssl else None
         service = Application(role, directory, endpoint_port)
+        # Use loopback for the local client URL; this does not bind a listener.
+        controller_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host  # nosec B104
+        if ":" in controller_host:
+            controller_host = f"[{controller_host}]"
+        service.controller_server = f"{'https' if ssl else 'http'}://{controller_host}:{port}"
+        if ssl:
+            service.controller_certificate = str(ssl_cert or directory / "https" / "endpoint.pem")
         web.run_app(
             create_app(service, host),
             host=host,

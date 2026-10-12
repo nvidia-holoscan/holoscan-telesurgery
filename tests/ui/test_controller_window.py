@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Detached controls transfer input ownership, and stop on focus loss or closure."""
+"""Native controls share settings and hand control back to the inline browser panel."""
 
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -32,37 +32,35 @@ window.RTCPeerConnection=class {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["franka", "mira"])
-async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
+async def test_native_controls_handoff_docking_and_startup_failure(kind):
     robot = {
-        "id": f"node:{kind}",
+        "id": kind,
         "name": kind.title(),
         "kind": kind,
         "status": "online",
-        "controls": (
-            controls(MiraSimulation({"uri": "unused"}), {"motion_enabled": True})
-            if kind == "mira"
-            else {
-                "inputs": ["keyboard", "gamepad"],
-                "groups": {"joints": 7},
-                "default_step_deg": 1,
-                "max_step_deg": 5,
-                "home_deg": {"joints": FRANKA_HOME},
-                "speed_deg_s": FRANKA_SPEED,
-            }
-        ),
+        "controls": controls(MiraSimulation({"uri": "unused"}), {"motion_enabled": True})
+        if kind == "mira"
+        else {
+            "inputs": ["keyboard", "gamepad"],
+            "groups": {"joints": 7},
+            "max_step_deg": 5,
+            "home_deg": {"joints": FRANKA_HOME},
+            "speed_deg_s": FRANKA_SPEED,
+        },
         "state": {"sequence": 1, "control_active": False},
     }
-    offline = {**robot, "id": "offline", "name": "Offline", "status": "disconnected"}
     state = {
         "role": "surgeon",
         "sdk": "5",
-        "selected": ["existing", "first", "second", "stopped"],
+        "selected": ["first", "second", "existing"],
         "native_views": {"existing": {"status": "running"}},
+        "native_controller": {"status": "closed"},
         "session": {
             "id": "operator",
+            "name": "Operator",
             "status": "approved",
             "robot": True,
-            "robots": [robot, offline],
+            "robots": [robot],
             "cameras": [
                 {
                     "id": key,
@@ -71,46 +69,47 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
                     "codec": codec,
                     "width": 1920,
                     "height": 1080,
-                    "status": status,
+                    "status": "live",
                 }
-                for key, codec, status in [
-                    ("existing", "bgr8", "live"),
-                    ("first", "h264", "live"),
-                    ("second", "h265", "live"),
-                    ("unselected", "h264", "live"),
-                    ("stopped", "h264", "stopped"),
-                ]
+                for key, codec in [("first", "h264"), ("second", "h265"), ("existing", "bgr8")]
             ],
         },
     }
     calls, errors = [], []
+    fail = False
 
     async def route(request):
         path = urlsplit(request.request.url).path
-        if path.startswith("/api/status"):
+        if path == "/api/status":
             await request.fulfill(json=state)
         elif path == "/api/action":
             call = request.request.post_data_json
             calls.append(call)
-            if call["action"] == "view.holoviz":
-                camera = call["params"]["camera"]
-                if kind == "mira" and camera == "first":
-                    await request.fulfill(status=409, json={"error": "Viewer unavailable"})
+            method, params = call["action"], call["params"]
+            if method == "controller.open":
+                if fail:
+                    await request.fulfill(status=409, json={"error": "No desktop display"})
                     return
-                state["native_views"][camera] = {"status": "running"}
-                if camera not in state["selected"]:
-                    state["selected"].append(camera)
-            elif call["action"] in {"view.browser", "view.close"}:
-                camera = call["params"]["camera"]
-                state["native_views"].pop(camera, None)
-                if call["action"] == "view.close" and camera in state["selected"]:
-                    state["selected"].remove(camera)
-            if call["action"] == "robot.move":
-                robot.update(owner="Operator", owner_id="operator")
-                robot["state"]["control_active"] = True
-            elif call["action"] == "robot.release":
+                state["native_controller"] = {
+                    "status": "running",
+                    "robot": params["id"],
+                    "preferences": params["preferences"],
+                    "generation": str(len(calls)),
+                }
+            elif method == "controller.close":
+                state["native_controller"]["status"] = "closed"
                 robot.update(owner=None, owner_id=None)
                 robot["state"]["control_active"] = False
+            elif method == "robot.move":
+                robot.update(owner="Operator", owner_id="operator")
+                robot["state"]["control_active"] = True
+            elif method == "robot.release":
+                robot.update(owner=None, owner_id=None)
+                robot["state"]["control_active"] = False
+            elif method == "view.holoviz":
+                state["native_views"][params["camera"]] = {"status": "running"}
+            elif method in {"view.browser", "view.close"}:
+                state["native_views"].pop(params["camera"], None)
             robot["state"]["sequence"] += 1
             await request.fulfill(json={"result": robot["state"]})
         elif path == "/api/offer":
@@ -120,165 +119,62 @@ async def test_detached_keyboard_gamepad_and_docking(tmp_path, kind):
                 path=STATIC / (path.removeprefix("/static/") if path != "/" else "index.html")
             )
 
-    def moves():
-        return [call for call in calls if call["action"] == "robot.move"]
-
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            args=["--window-size=1440,1000", "--screen-info={0,0 1920x1080}"]
-        )
+        browser = await p.chromium.launch()
         try:
-            context = await browser.new_context(no_viewport=True)
+            context = await browser.new_context()
             await context.clock.install(time=1000)
-            await context.route("http://localhost:8777/**", route)
             await context.add_init_script(INPUT)
-            context.on("page", lambda page: page.on("pageerror", lambda e: errors.append(str(e))))
+            await context.route("http://localhost:8777/**", route)
             page = await context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
             await page.goto("http://localhost:8777/")
-            await expect(page.locator("#robot-selector option")).to_have_count(1)
-            setting = "arm speed"
-            step_label = f"{robot['name']} {setting}"
-
-            async def change_speed(page, value):
-                control = page.get_by_label(step_label, exact=True)
-                await control.focus()
-                await control.evaluate(
-                    "(s,v) => {s.value=v;s.dispatchEvent(new Event('input'))}", value
-                )
-                await control.press("Enter")
-
-            first_speed, second_speed = "30", "40"
-            await change_speed(page, first_speed)
-            async with page.expect_popup() as event:
-                await page.get_by_role("button", name="Pop out all", exact=True).click()
-            popup = await event.value
-            await expect(popup.get_by_label(step_label, exact=True)).to_have_value(first_speed)
-            await expect(page.get_by_role("button", name="Pop out all", exact=True)).to_be_enabled()
+            speed = page.get_by_label(f"{robot['name']} arm speed", exact=True)
+            await speed.evaluate("s => {s.value=30;s.dispatchEvent(new Event('input'))}")
+            await page.locator(".keyboard-controls").focus()
+            await page.keyboard.down("q")
+            await context.clock.run_for(650)
+            assert any(c["action"] == "robot.move" for c in calls)
+            await page.get_by_role("button", name="Pop out robot controls", exact=True).click()
+            await expect(page.locator("#robots")).to_be_hidden()
+            await expect(page.locator("#native-controller-away")).to_be_visible()
+            assert len(context.pages) == 1
+            methods = [c["action"] for c in calls]
+            assert methods.index("robot.release") < methods.index("controller.open")
+            opened = next(c for c in calls if c["action"] == "controller.open")
+            assert opened["params"]["preferences"][f"{kind}:arm-speed"] == 30
+            # Observing the native window's ownership must never release/renew it.
+            robot.update(owner="Operator", owner_id="operator")
+            state["native_controller"]["preferences"][f"{kind}:arm-speed"] = 55
+            count = len([c for c in calls if c["action"].startswith("robot.")])
+            await context.clock.run_for(2500)
+            assert len([c for c in calls if c["action"].startswith("robot.")]) == count
+            await page.keyboard.up("q")
+            await page.get_by_role("button", name="Dock robot controls", exact=True).click()
+            await expect(speed).to_have_value("55")
+            await expect(page.locator("#robots")).to_be_visible()
+            await page.get_by_role("button", name="Pop out all", exact=True).click()
+            await expect(page.locator("#robots")).to_be_hidden()
             assert [c["params"]["camera"] for c in calls if c["action"] == "view.holoviz"] == [
                 "first",
                 "second",
             ]
-            if kind == "mira":
-                await expect(page.locator("#notice")).to_contain_text("first: Viewer unavailable")
-            await popup.wait_for_function("document.documentElement.scrollHeight <= innerHeight")
-            keyboard_height = await popup.evaluate("outerHeight")
-            await expect(page.locator("#robots")).to_be_hidden()
-            await expect(popup.locator("#camera-workspace")).to_be_hidden()
-            await expect(popup.get_by_role("button", name="Home", exact=True)).to_be_enabled()
-            # Both windows share this clock. Advance every input poll instead
-            # of making a loaded CI worker satisfy the 200 ms stall watchdog.
-            await context.clock.pause_at(10000)
-            await context.clock.run_for(50)
-            await popup.locator(".keyboard-controls").focus()
-            await popup.keyboard.down("q")
-            await context.clock.run_for(850)
-            assert len(moves()) >= 3
-            assert moves()[0]["params"]["mode"] == "step"
-            assert moves()[-1]["params"]["mode"] == "jog"
-            # Background dashboard polling and input cannot cancel or duplicate
-            # the child's motion, even when status says this surgeon owns it.
-            count = len(moves())
-            await page.evaluate(
-                "window.dispatchEvent(new Event('blur')); "
-                "window.dispatchEvent(new KeyboardEvent('keydown', {key:'q'}))"
-            )
-            await context.clock.run_for(1100)
-            assert len(moves()) > count
-            assert not [c for c in calls if c["action"] == "robot.release"]
-            # A genuinely missed polling deadline must still stop held input.
-            await context.clock.fast_forward(250)
-            await context.clock.run_for(150)
-            assert calls[-1]["action"] == "robot.release"
-            count = len(moves())
-            await context.clock.run_for(200)
-            assert len(moves()) == count
-            await popup.keyboard.up("q")
-            await popup.keyboard.down("q")
-            await context.clock.run_for(650)
-            assert len(moves()) > count
-            assert moves()[-1]["params"]["mode"] == "jog"
-            await popup.evaluate("inputFocus=false; window.dispatchEvent(new Event('blur'))")
-            await context.clock.run_for(150)
-            assert calls[-1]["action"] == "robot.release"
-            count = len(moves())
-            await context.clock.run_for(200)
-            assert len(moves()) == count
-            await popup.keyboard.up("q")
-            await popup.evaluate("inputFocus=true")
-            await popup.get_by_label(f"{robot['name']} input", exact=True).select_option("0")
-            await context.clock.run_for(50)
-            await expect(popup.locator(".gamepad-controls")).to_have_attribute(
-                "data-state", "ready"
-            )
-            await popup.evaluate("pad.buttons[4].pressed=true; pad.axes[0]=1")
-            await context.clock.run_for(250)
-            assert len(moves()) > count
-            await popup.evaluate("inputFocus=false; window.dispatchEvent(new Event('blur'))")
-            await context.clock.run_for(150)
-            assert calls[-1]["action"] == "robot.release"
-            count = len(moves())
-            await popup.evaluate("inputFocus=true")
-            await context.clock.run_for(200)
-            assert len(moves()) == count  # Held deadman cannot resume after refocus.
-            await popup.evaluate("pad.buttons[4].pressed=false; pad.axes.fill(0)")
-            await context.clock.run_for(50)
-            await context.clock.resume()
-            await expect(popup.locator(".gamepad-controls")).to_have_attribute(
-                "data-state", "ready"
-            )
-            if kind == "franka":
-                await popup.wait_for_function("height => outerHeight < height", arg=keyboard_height)
-            await popup.wait_for_function("document.documentElement.scrollHeight <= innerHeight")
-            await popup.screenshot(path=str(tmp_path / f"{kind}-controller-gamepad.png"))
-            await popup.get_by_label(f"{robot['name']} input", exact=True).select_option("keyboard")
-            await change_speed(popup, second_speed)
-            await popup.locator(".keyboard-controls").focus()
-            await popup.wait_for_function("document.documentElement.scrollHeight <= innerHeight")
-            await popup.screenshot(path=str(tmp_path / f"{kind}-controller-keyboard.png"))
-            await expect(page.get_by_role("button", name="Dock all", exact=True)).to_be_enabled()
             await page.get_by_role("button", name="Dock all", exact=True).click()
-            await expect(page.get_by_label(step_label, exact=True)).to_have_value(second_speed)
+            await expect(page.locator("#robots")).to_be_visible()
             await expect(page.get_by_role("button", name="Dock all", exact=True)).to_be_disabled()
             closed = [
                 (c["action"], c["params"]["camera"])
                 for c in calls
                 if c["action"] in {"view.browser", "view.close"}
             ]
-            assert ("view.close", "existing") in closed
+            assert ("view.browser", "first") in closed
             assert ("view.close", "second") in closed
-            assert (("view.browser", "first") in closed) == (kind == "franka")
-            assert popup.is_closed()
-            # Closing the native title bar during a held key also stops motion.
-            async with page.expect_popup() as event:
-                await page.get_by_role("button", name="Pop out robot controls", exact=True).click()
-            popup = await event.value
-            await expect(popup.get_by_label(step_label, exact=True)).to_have_value(second_speed)
-            await context.clock.pause_at(20000)
-            await context.clock.run_for(50)
-            await popup.locator(".keyboard-controls").focus()
-            await popup.keyboard.down("q")
-            await context.clock.run_for(650)
-            await popup.close()
-            await expect(page.get_by_label(step_label, exact=True)).to_be_visible()
-            await context.clock.run_for(200)
-            assert calls[-1]["action"] == "robot.release"
-            count = len(moves())
-            await context.clock.run_for(250)
-            assert len(moves()) == count
-            await context.clock.resume()
-            # Disconnection never silently selects a different robot.
-            robot["status"] = "disconnected"
-            offline["status"] = "online"
-            await expect(page.locator("#robot-selector")).to_have_value("")
-            await expect(page.locator("#robots")).to_contain_text("Select a robot")
-            await page.locator("#robot-selector").select_option("offline")
-            await expect(page.get_by_label(f"Offline {setting}", exact=True)).to_be_visible()
-            # A blocked popup leaves the original controls usable.
-            await page.evaluate("window.open = () => null")
+            assert ("view.close", "existing") in closed
+            fail = True
             await page.get_by_role("button", name="Pop out robot controls", exact=True).click()
-            await expect(page.locator("#notice")).to_contain_text("Allow pop-ups")
-            await expect(page.get_by_label(f"Offline {setting}", exact=True)).to_be_visible()
-            assert not errors
+            await expect(page.locator("#notice")).to_contain_text("No desktop display")
+            await expect(page.locator("#robots")).to_be_visible()
+            assert len(context.pages) == 1 and not errors
         finally:
             await browser.close()
 
@@ -366,13 +262,9 @@ async def test_popout_selection_and_robot_only(selected, has_robot, expected):
             if not expected and not has_robot:
                 await expect(control).to_be_disabled()
             else:
-                if has_robot:
-                    async with page.expect_popup() as event:
-                        await control.click()
-                    popup = await event.value
-                    await expect(popup.get_by_label("Franka input", exact=True)).to_be_visible()
-                else:
-                    await control.click()
+                await control.click()
+                assert len(context.pages) == 1
+                assert any(c["action"] == "controller.open" for c in calls) == has_robot
                 await expect(control).not_to_have_attribute("aria-busy", "true")
             assert [
                 c["params"]["camera"] for c in calls if c["action"] == "view.holoviz"

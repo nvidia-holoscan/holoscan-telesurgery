@@ -7,6 +7,8 @@ Reviewed 2026-10-12 against the implementation and operator confirmation. Hardwa
 - [x] **Franka motion:** sustained control, Ruckig Home and soft Stop verified on hardware.
 - [x] **MIRA controls:** Home, 1° jogs, tool roll and grippers verified on hardware, including tool homing.
 - [x] **Controller validation:** physical Xbox/PlayStation gamepads, hotplug, wireless/network loss, lease expiry and control handover verified on real robots.
+- [x] **Continuous keyboard controls:** shared key-repeat handling prevents control-panel flicker and interrupted holds across robots; operator verified the fix in Edge. Versius exposes all eight joints together and shows measured gripper opening.
+- [x] **Native robot controller:** Python desktop window with matching keyboard/gamepad controls, speed settings, feedback, Home and Stop. The pop-out icon switches to Dock; Pop out all and Dock all include the controller alongside Holoviz. Home restores each robot's configured starting pose and supported tools. Native mouse/keyboard Home verified in MIRA, Franka and Versius simulations; SDL virtual-gamepad control, interruption and disconnect checks passed.
 - [x] **Franka Cartesian controls:** bounded tool movement and robot-specific kinematics implemented for physical Franka and Isaac Sim, with keyboard, gamepad and on-screen controls. See [robot controls](robot-controls.md#keyboard-and-gamepad) and [Cartesian tests](../tests/robots/test_franka_cartesian.py).
 - [x] **Intel RealSense validation:** RGB/depth resolutions, FPS and codecs verified on both SDKs with Holoviz and WebRTC.
 - [x] **Different-city functional testing:** public-internet operation, recovery and simulated control verified.

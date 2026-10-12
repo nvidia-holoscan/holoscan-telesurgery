@@ -19,6 +19,15 @@ Third-party software is not copied into this source tree. Native setup and the c
 
 Corresponding source for GPL and LGPL components installed from Ubuntu 24.04 is available from the Ubuntu archive for that release. Corresponding source for other copyleft components is at the URLs below.
 
+SDL2 (https://github.com/libsdl-org/SDL)
+Copyright (C) 1997-2024 Sam Lantinga.
+Ubuntu package libsdl2-2.0-0 2.30.0+dfsg-1ubuntu3.1, used for native gamepad input.
+Licensed under Zlib (https://github.com/libsdl-org/SDL/blob/release-2.30.0/LICENSE.txt).
+
+Python Tkinter / Tcl/Tk (https://www.tcl.tk/)
+Ubuntu package python3-tk 3.12.3-0ubuntu1 and its Tcl/Tk 8.6 runtime.
+Python bindings are licensed under PSF-2.0; Tcl/Tk uses the Tcl license (https://github.com/tcltk/tk/blob/core-8-6-14/license.terms). Ubuntu packages retain the upstream copyright and license notices under /usr/share/doc.
+
 Holoscan SDK (https://github.com/nvidia-holoscan/holoscan-sdk)
 Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SDK 5: commit 163dac10195d6b603f9e6158a1d5dfb390732203 (v5.0.0-ea3), built from source.
