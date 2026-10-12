@@ -64,6 +64,14 @@ class Simulation:
             else next(p for p in Path(__file__).resolve().parents if (p / "uv.lock").exists())
         )
         workspace = Path(os.environ.get("TELESURGERY_WORKSPACE", root / "workspace"))
+        assets = []
+        asset_args = []
+        if self.environment == "versius":
+            source = workspace / "assets" / "versius"
+            if not (source / "BSU.urdf").is_file():
+                raise FileNotFoundError(f"Extract the supplied CMR Versius archive into {source}")
+            assets = ["-v", f"{source}:/workspace/versius-assets:ro"]
+            asset_args = ["--versius-assets", "/workspace/versius-assets"]
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             api_port = reservation.getsockname()[1]
@@ -108,6 +116,7 @@ class Simulation:
             "-v",
             f"{shader_cache}:/isaac-sim/kit/cache",
             *display,
+            *assets,
             "--entrypoint",
             "/isaac-sim/python.sh",
             "nvcr.io/nvidia/isaac-sim:6.0.1",
@@ -118,6 +127,7 @@ class Simulation:
             str(self.directory),
             "--api-port",
             str(api_port),
+            *asset_args,
             *(["--gui"] if self.gui else []),
         ]
         log_path = self.directory / "simulator.log"

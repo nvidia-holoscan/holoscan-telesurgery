@@ -49,24 +49,25 @@ flowchart LR
 
 Patient previews and Surgeon views use the same delivery paths. Each camera has a supervised process with a Holoscan graph and bounded local IPC. Remote video travels directly from its node to the surgeon. The patient coordinator receives frames only for its own previews. Old video frames are discarded; control messages have separate bounded queues.
 
-H.264 browser viewing forwards encoded packets into WebRTC without re-encoding. A native viewer is a separate Holoscan process: NVDEC or nvJPEG decodes to GPU pixels, then Holoviz renders them. Its video path bypasses HTTP and WebRTC. Camera-scoped, single-use tickets authorize connections to node video endpoints; hiding the feed, disconnecting or revoking access closes them.
+H.264 browser viewing forwards encoded packets into WebRTC without re-encoding. Surgical Neural Tokenizer streams carry packed tokens to the viewing machine, where one GPU worker per camera decodes and converts them to H.264 for browser preview. A native viewer is a separate Holoscan process: NVDEC, nvJPEG or TensorRT decodes to GPU pixels, then Holoviz renders them directly. Its video path bypasses HTTP and WebRTC. Camera-scoped, single-use tickets authorize connections to node video endpoints; hiding the feed, disconnecting or revoking access closes them.
 
-| Source / format | Processing                                                                                   |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| HSB IMX274      | GPU acquisition, optical-black correction, white balance, demosaic and sRGB transfer         |
-| USB             | V4L2 capture; CPU pixels uploaded for GPU encoding. MJPEG capture also requires decoding     |
-| Isaac Sim       | GPU rendering, then CPU RGB readback and local IPC before GPU encoding                       |
-| H.264 / H.265   | NVENC encoding; NVDEC in the native viewer                                                   |
-| nvJPEG          | GPU JPEG encoding and decoding                                                               |
-| BGR8            | No codec. Packing may download GPU pixels; the native viewer uploads and converts BGR to RGB |
+| Source / format | Processing |
+| --- | --- |
+| HSB IMX274 | GPU acquisition, optical-black correction, white balance, demosaic and sRGB transfer |
+| USB | V4L2 capture; CPU pixels uploaded for GPU encoding. MJPEG capture also requires decoding |
+| Isaac Sim | GPU rendering, then CPU RGB readback and local IPC before GPU encoding |
+| H.264 / H.265 | NVENC encoding; NVDEC in the native viewer |
+| nvJPEG | GPU JPEG encoding and decoding |
+| BGR8 | No codec. Packing may download GPU pixels; the native viewer uploads and converts BGR to RGB |
+| Surgical Neural Tokenizer (trial) | Public Cosmos-Tokenizer-Surg model, TensorRT encoding/decoding, packed uint16 tokens at 720p or 1080p |
 
 Same-host video still uses IPC/TLS, not shared memory. Frame ownership is preserved until CUDA work completes. SDK 4 uses an EventBasedScheduler; SDK 5 uses graph partitions and latest-message queues.
 
-Depth is optional for RealSense and simulation. Aligned float32 distances in metres travel with the color frame, compressed losslessly. Views offer depth, overlay and side-by-side modes with point readings in millimetres. Browser depth must match the displayed frame's RTP timestamp. These readings measure distance along the camera axis, not tool clearance.
+Depth is optional for RealSense and simulation. Aligned float32 distances in metres travel with the color frame, compressed losslessly. Views offer depth, overlay and side-by-side modes with point readings in millimetres. Browser depth views present color and depth with matching RTP timestamps together, retaining the last pair briefly while the next depth frame arrives. Pending frames are bounded; pairs older than 500 ms expire instead of providing stale readings. Color-only viewing remains live. These readings measure distance along the camera axis, not tool clearance.
 
 ### Camera configuration
 
-The patient selects capture format, resolution, FPS and codec; surgeon viewers follow those settings. Available modes come from the device. Simulation offers 640×480, 1280×720, 1920×1080, 2560×1440 and 3840×2160 with native render products. H.264 is the stream default; other codecs require Holoviz.
+The patient selects capture format, resolution, FPS and codec; surgeon viewers follow those settings. Encoding can change through Stream settings while capture continues; a replacement encoder prepares in the background before taking over. Capture format, resolution and FPS changes require stopping the stream. Available modes come from the device. Simulation offers 640×480, 1280×720, 1920×1080, 2560×1440 and 3840×2160 with native render products. H.264 is the stream default. Surgical Neural Tokenizer also supports browser viewing; H.265, nvJPEG and raw BGR8 use Holoviz.
 
 HSB discovery finds boards, not sensor models. It defaults to IMX274 sensor 0 and offers 1080p60 and 4K60. Configure another sensor in the node's `workspace/nodes/NAME/devices.yaml`:
 

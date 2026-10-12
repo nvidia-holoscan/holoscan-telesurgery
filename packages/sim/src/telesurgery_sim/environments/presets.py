@@ -8,6 +8,10 @@ from telesurgery_robots.franka.poses import FRANKA_HOME
 ASSETS = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac"
 HEALTHCARE = ASSETS + "/Healthcare/0.5.0/132c82d"
 PRESETS = {
+    "versius": {
+        "cameras": [("procedure", "Versius procedure camera"), ("room", "Versius room camera")],
+        "robot": "CMR Versius",
+    },
     "mira": {
         # Robot and built-in endoscope from i4h-workflows v0.7.0 telesurgery.
         "asset": HEALTHCARE + "/Robots/MIRA/mira-bipo-size-experiment-smoothing.usd",

@@ -862,6 +862,15 @@ body[data-role] .video-tile:fullscreen video,
 .depth-stage[data-depth="depth"] canvas {
     background: #151b15;
 }
+.depth-stage .depth-color {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    pointer-events: none;
+}
+.depth-stage[data-depth="side"] .depth-color {
+    width: 50%;
+}
 .depth-stage[data-depth="side"] {
     display: grid;
     grid-template-columns: 1fr 1fr;

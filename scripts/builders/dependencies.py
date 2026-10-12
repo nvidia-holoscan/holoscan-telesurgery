@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -61,6 +62,7 @@ def prepare(sdk, environment, *, dependencies_only=False):
     python = environment / "bin/python"
     if not python.exists():
         run("uv", "venv", "--python", "3.12", environment)
+    tegra = Path("/etc/nv_tegra_release").exists()
     run(
         "uv",
         "sync",
@@ -71,9 +73,35 @@ def prepare(sdk, environment, *, dependencies_only=False):
         "--no-dev",
         "--extra",
         "codecs-cu13",
+        *([] if tegra else ["--extra", "tokenizer-cu13"]),
         env={**os.environ, "UV_PROJECT_ENVIRONMENT": str(environment)},
         cwd=ROOT,
     )
+    if tegra:
+        # JetPack supplies ABI-matched TensorRT; PyPI rejects Tegra systems.
+        # Expose only these bindings, without adding every system Python package.
+        info = json.loads(
+            subprocess.check_output(
+                [
+                    "/usr/bin/python3",
+                    "-c",
+                    "import json,tensorrt; "
+                    "print(json.dumps([tensorrt.__version__,tensorrt.__path__[0]]))",
+                ],
+                text=True,
+            )
+        )
+        if info[0] != "10.13.3.9":
+            raise RuntimeError("This setup requires JetPack TensorRT 10.13.3.9")
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        target = site / "tensorrt"
+        if not target.exists():
+            target.symlink_to(info[1], target_is_directory=True)
     build_tools = (
         ["cmake>=4,<5", "patchelf", "nanobind==3.0.1", "cloudpickle", "pillow"]
         if sdk == "5"

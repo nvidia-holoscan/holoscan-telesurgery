@@ -286,3 +286,32 @@ def test_cartesian_adapter_enforces_capability_lease_sequence_and_command_age():
     controller.release("owner")
     with pytest.raises(PermissionError):
         controller.move("owner", 2, command, time.time(), speed_deg_s=4)
+
+
+@pytest.mark.parametrize("environment", ["franka", "versius"])
+def test_blocked_motion_holds_measured_pose_and_can_retreat(environment):
+    sim = SimRobot(environment)
+    position = np.array(sim.pose["joints"])
+    jacobian = np.eye(6, len(position))
+    sim.kinematics = position, jacobian, time.monotonic()
+    command = {"translation": [1, 0, 0], "rotation": [0, 0, 0], "speed_deg_s": 4}
+    sim.apply({"method": "set_cartesian_velocity", "params": command})
+    blocked = position.copy()
+    blocked[0] -= 5  # More than the bounded drive tracking allowance.
+    for _ in range(30):
+        now = sim.updated + 0.02
+        sim.kinematics = blocked, jacobian, now
+        sim.advance(now)
+        if sim.cartesian is None:
+            break
+    assert sim.cartesian is None
+    np.testing.assert_allclose(sim.pose["joints"], blocked)
+    sim.kinematics = blocked, jacobian, time.monotonic()
+    sim.apply(
+        {"method": "set_cartesian_velocity", "params": {**command, "translation": [-1, 0, 0]}}
+    )
+    now = sim.updated + 0.02
+    sim.kinematics = blocked, jacobian, now
+    sim.advance(now)
+    assert sim.cartesian is not None and not sim.cartesian.stopping
+    assert sim.pose["joints"][0] < blocked[0]

@@ -283,6 +283,7 @@ class Application:
                 "width": device["width"],
                 "height": device["height"],
                 "depth": device.get("depth", False),
+                "codec": device.get("codec", "h264"),
             }
         )
         if self.role == "surgeon" and self.remote_status.get("status") != "approved":
@@ -321,7 +322,11 @@ class Application:
             config = self.node_registry.configs.get(key, {})
             writer = connections.get(key)
             ip = config.get("ip", "")
-            if writer and (address := writer.get_extra_info("peername")):
+            if (
+                writer
+                and not writer.is_closing()
+                and (address := writer.get_extra_info("peername"))
+            ):
                 ip = address[0]
             nodes.append(
                 {
@@ -468,10 +473,12 @@ class Application:
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
         mode = params.get("mode", "jog")
-        if mode not in {"step", "jog", "home", "grip"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian"}:
             raise ValueError("Unknown robot motion mode")
         if mode == "home" and not robot["controls"].get("home_deg"):
             raise ValueError("Home is not supported by this robot")
+        if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
+            raise ValueError("MIRA Cartesian jogging is not supported by this robot")
         if mode == "grip" and not robot["controls"].get("grippers"):
             raise ValueError("Gripper control is not supported by this robot")
         if (
@@ -492,7 +499,7 @@ class Application:
                 **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
                 **(
                     {"mode": mode}
-                    if mode in {"home", "grip"} or robot["controls"].get("step_mode")
+                    if mode in {"home", "grip", "cartesian"} or robot["controls"].get("step_mode")
                     else {}
                 ),
             },
@@ -681,7 +688,7 @@ class Application:
             camera = next(
                 (c for c in inventory.get("cameras", []) if c["id"] == params["camera"]), {}
             )
-            if camera.get("codec", "h264") != "h264":
+            if camera.get("codec", "h264") not in {"h264", "surgical-tokenizer"}:
                 raise ValueError("Use Holoviz for this stream format")
             await self.native.close(params["camera"])
             await self._sync_streams()

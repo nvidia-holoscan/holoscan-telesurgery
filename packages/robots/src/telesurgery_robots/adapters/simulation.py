@@ -6,8 +6,10 @@
 from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_robots.adapters.base import cartesian_command, speed_value
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
+from telesurgery_robots.mira.cartesian import CARTESIAN
 from telesurgery_robots.mira.gripper import GRIP_SPEED
 from telesurgery_robots.mira.poses import MIRA_HOME
+from telesurgery_robots.versius import HOME as VERSIUS_HOME
 
 
 class SimulationAdapter:
@@ -43,6 +45,11 @@ class SimulationAdapter:
 
 
 class MiraSimulation(SimulationAdapter):
+    mira_cartesian = {**CARTESIAN, "frame": "MIRA simulation base"}
+
+    def jog_cartesian(self, command):
+        return self.request("jog_mira_cartesian", command)
+
     groups = {"left": 5, "right": 5}
     method = "set_mira_cartesian_delta"
     home_deg = {"left": MIRA_HOME, "right": MIRA_HOME}
@@ -96,3 +103,10 @@ class FrankaSimulation(SimulationAdapter):
 
     def grip(self, command):
         return self.request("jog_gripper", command)
+
+
+class VersiusSimulation(FrankaSimulation):
+    groups = {"joints": 8}
+    home_deg = {"joints": VERSIUS_HOME}
+    max_step_deg = 1.0
+    grippers = ("hand",)

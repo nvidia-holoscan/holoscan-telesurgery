@@ -138,7 +138,13 @@ class LocalNode:
             worker = self.workers.get(key)
             status, error = "stopped", ""
             if worker:
+                path = worker["settings"].with_suffix(".error")
+                try:
+                    worker["encoding_error"] = path.read_text()[:1200]
+                except FileNotFoundError:
+                    worker["encoding_error"] = ""
                 error = worker.get("error", "")
+                error = error or worker["encoding_error"]
                 status = (
                     "error"
                     if error
@@ -186,9 +192,20 @@ class LocalNode:
             camera = self.cameras[key]
             selected = select(camera, settings)
             if key in self.workers:
-                if not self.workers[key].get("error"):
-                    if any(selected[k] != camera.get(k, "") for k in selected):
-                        raise ValueError("Stop this stream before changing its settings")
+                if not (self.workers[key].get("error") or self.workers[key].get("encoding_error")):
+                    changed = {k for k in selected if selected[k] != camera.get(k, "")}
+                    if changed - {"codec", "qp", "jpeg_quality", "encoder_preset"}:
+                        raise ValueError("Stop this stream before changing its capture settings")
+                    if changed:
+                        path = self.workers[key]["settings"]
+                        document = json.loads(path.read_text())
+                        document["camera"].update(selected)
+                        temporary = path.with_suffix(".tmp")
+                        temporary.write_text(json.dumps(document))
+                        temporary.replace(path)
+                        self.settings[key] = selected
+                        save(self.settings_path, self.settings)
+                        camera.update(selected)
                     return
                 await self._stop(key)
             if camera.get("control_uri"):
@@ -247,7 +264,14 @@ class LocalNode:
             stream.setsockopt(zmq.LINGER, 0)
             stream.setsockopt(zmq.MAXMSGSIZE, MAX_FRAME)
             stream.connect(endpoint)
-            worker = {"process": process, "socket": stream, "updated": 0.0, "frames": 0}
+            worker = {
+                "process": process,
+                "socket": stream,
+                "updated": 0.0,
+                "frames": 0,
+                "settings": settings,
+                "started": time.monotonic(),
+            }
             self.workers[key] = worker
             worker["reader"] = asyncio.create_task(self._frames(key, worker))
             worker["watcher"] = asyncio.create_task(self._watch(key, worker, slug))
@@ -270,6 +294,13 @@ class LocalNode:
             try:
                 await asyncio.wait_for(process.wait(), 30)
             except TimeoutError:
+                # The first neural frame may need model download and engine building.
+                if (
+                    not worker["frames"]
+                    and self.cameras[key].get("codec") == "surgical-tokenizer"
+                    and time.monotonic() - worker.get("started", 0) < 600
+                ):
+                    continue
                 if time.monotonic() - worker["updated"] >= 30:
                     worker["error"] = (
                         "No camera frames received for 30 seconds. Check the camera logs."

@@ -4,6 +4,7 @@
 """Exercise depth pairing over real WebRTC/SCTP and Chromium frame callbacks."""
 
 import asyncio
+import importlib.util
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -22,15 +23,21 @@ from telesurgery_core.video.model import Frame
 
 @pytest.mark.gpu
 @pytest.mark.asyncio
-async def test_matched_depth_inspection_and_layout(tmp_path):
+@pytest.mark.parametrize("codec", ["h264", "surgical-tokenizer"])
+async def test_matched_depth_inspection_and_layout(tmp_path, codec):
+    if codec == "surgical-tokenizer":
+        pytest.importorskip(
+            "tensorrt" if importlib.util.find_spec("tensorrt") else "tensorrt_bindings"
+        )
+    width, height = (1280, 720) if codec == "surgical-tokenizer" else (320, 240)
     media = Media()
-    encoder = CodecWorker(Config(width=320, height=240), encode=True)
-    values = np.full((240, 320), 0.5, np.float32)
+    encoder = CodecWorker(Config(codec=codec, width=width, height=height), encode=True)
+    values = np.full((height, width), 0.5, np.float32)
     values[:40, :40] = 0
     header, payload = encoder.encode(
         Frame(
-            VideoHeader(0, time.time_ns(), 320, 240),
-            np.full((240, 320, 3), 128, np.uint8),
+            VideoHeader(0, time.time_ns(), width, height),
+            np.full((height, width, 3), 128, np.uint8),
             depth=values,
         )
     )
@@ -91,7 +98,7 @@ async def test_matched_depth_inspection_and_layout(tmp_path):
                 await expect(page.locator(".depth-reading")).to_contain_text(
                     "Measured depth", timeout=20000
                 )
-                canvas = page.locator("canvas")
+                canvas = page.locator("canvas:not(.depth-color)")
                 await canvas.click(position={"x": 320, "y": 240})
                 await expect(page.locator(".depth-reading")).to_contain_text("500.0 mm")
                 await page.screenshot(path=str(tmp_path / "depth-overlay.png"))

@@ -12,7 +12,7 @@ from playwright.async_api import async_playwright, expect
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["USB", "HSB"])
-@pytest.mark.parametrize("codec", ["h264", "h265", "nvjpeg", "raw-bgr8"])
+@pytest.mark.parametrize("codec", ["h264", "h265", "nvjpeg", "raw-bgr8", "surgical-tokenizer"])
 async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tmp_path):
     static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
     usb_modes = [
@@ -31,7 +31,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
         "fps": 30 if kind == "USB" else 60,
         "pixel_format": "YUYV" if kind == "USB" else "",
         "status": "stopped",
-        "codecs": ["raw-bgr8", "h264", "h265", "nvjpeg"],
+        "codecs": ["raw-bgr8", "h264", "h265", "nvjpeg", "surgical-tokenizer"],
         "modes": usb_modes
         if kind == "USB"
         else [
@@ -93,7 +93,17 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
             await page.get_by_text("Encoder settings", exact=True).click()
             await page.get_by_label("Quality (QP)", exact=True).fill("18")
             await page.get_by_label("Encoder speed", exact=True).select_option("P3")
+            if codec == "surgical-tokenizer":
+                await expect(
+                    page.locator('#stream-codec option[value="surgical-tokenizer"]')
+                ).to_have_attribute("disabled", "")
+                await page.get_by_label("Resolution", exact=True).select_option("1920x1080")
+                if kind == "USB":
+                    await page.get_by_label("Frame rate", exact=True).select_option("30")
             await page.get_by_label("Stream codec", exact=True).select_option(codec)
+            if codec == "surgical-tokenizer":
+                await expect(page.get_by_text("Encoder settings", exact=True)).not_to_be_visible()
+                await expect(page.locator("#stream-viewing")).to_contain_text("browser or Holoviz")
             if codec == "nvjpeg":
                 await expect(page.get_by_label("Quality (QP)", exact=True)).not_to_be_visible()
                 await page.get_by_label("JPEG quality", exact=True).fill("92")
@@ -106,7 +116,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
                     await expect(page.locator("#stream-viewing")).to_contain_text(
                         "Camera capture is still JPEG-compressed"
                     )
-            if codec != "h264":
+            if codec not in {"h264", "surgical-tokenizer"}:
                 await expect(page.locator("#stream-viewing")).to_contain_text("View in Holoviz")
             await page.screenshot(path=str(tmp_path / f"{kind}-settings.png"))
             await page.set_viewport_size({"width": 390, "height": 844})
@@ -121,14 +131,14 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
                 "params": {
                     "id": camera["id"],
                     "settings": {
-                        "width": 3840,
-                        "height": 2160,
+                        "width": 1920 if codec == "surgical-tokenizer" else 3840,
+                        "height": 1080 if codec == "surgical-tokenizer" else 2160,
                         "fps": 30 if kind == "USB" else 60,
                         "pixel_format": "MJPG" if kind == "USB" else "",
                         "codec": codec,
                         **(
                             {}
-                            if codec == "raw-bgr8"
+                            if codec in {"raw-bgr8", "surgical-tokenizer"}
                             else {"jpeg_quality": 92}
                             if codec == "nvjpeg"
                             else {"qp": 18, "encoder_preset": "P3"}
@@ -136,9 +146,20 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
                     },
                 },
             }
+            if codec == "surgical-tokenizer":
+                await page.get_by_role("button", name="Stream settings", exact=True).click()
+                await expect(page.get_by_label("Resolution", exact=True)).to_be_disabled()
+                await expect(page.get_by_label("Frame rate", exact=True)).to_be_disabled()
+                await page.get_by_label("Stream codec", exact=True).select_option("h264")
+                await page.get_by_role("button", name="Apply encoding", exact=True).click()
+                assert actions[-1]["action"] == "camera.start"
+                assert actions[-1]["params"]["settings"]["codec"] == "h264"
+                assert camera["status"] == "live"
             await page.get_by_role("button", name="Stop", exact=True).click()
             await page.get_by_role("button", name="Stream settings", exact=True).click()
-            await expect(page.get_by_label("Resolution", exact=True)).to_have_value("3840x2160")
+            await expect(page.get_by_label("Resolution", exact=True)).to_have_value(
+                "1920x1080" if codec == "surgical-tokenizer" else "3840x2160"
+            )
             assert not errors
         finally:
             await browser.close()

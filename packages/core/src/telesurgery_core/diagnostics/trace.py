@@ -21,6 +21,7 @@ STAGES = (
     "transport_ms",
     "receiver_queue_ms",
     "decode_ms",
+    "preview_encode_ms",
     "unpack_ms",
     "render_submit_ms",
     "browser_queue_ms",

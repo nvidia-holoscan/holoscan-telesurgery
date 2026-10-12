@@ -44,11 +44,13 @@ Open **[localhost:8002](http://localhost:8002)**. Enter the patient hostname, yo
 
 ### 3. Nodes
 
-In separate terminals, start simulation (`mira` or `franka`):
+In separate terminals, start simulation (`mira`, `franka` or `versius`):
 
 ```bash
 ./run.sh --docker node --patient 127.0.0.1 --sim mira
 ```
+
+For Versius, extract the supplied CMR URDF archive so that `workspace/assets/versius/BSU.urdf`, `needle_holder_platform.urdf`, `fenestrated_grasper_platform.urdf` and `meshes/` exist, then use `--sim versius`. The shared scene has three instrument arms and an endoscope arm, with independent controllers, a 1080p endoscope view and an additional 1080p room observer view. Two surgeons can each control an instrument arm to pick up a needle, hand it over and place it in the blue target on the suture pad. The procedure view follows the endoscope arm; the room view shows the full setup. The vendor assets stay in the local workspace.
 
 Or physical cameras and robots:
 
@@ -61,6 +63,8 @@ Or physical cameras and robots:
 Approve each node under **Nodes**, then start streams or connect robots. In Surgeon, select the feeds and robot to use.
 
 [Camera configuration](docs/architecture.md#camera-configuration) · [Robot controls](docs/robot-controls.md)
+
+For a neural encoding trial, use a **1280 × 720** or **1920 × 1080** stream and choose **Surgical Neural Tokenizer (trial)** in **Stream settings**. You can apply the encoding while streaming and switch back to H.264. Normal setup includes TensorRT; the pinned [Hugging Face model](https://huggingface.co/nvidia/Cosmos-Tokenizer-Surg) downloads automatically on first use, and GPU engines are built and cached under `workspace/cache`. Holoviz displays the decoded GPU image directly; browser viewing converts it to H.264 on the viewing machine. Use the existing stream metrics to compare performance.
 
 ## Physical devices
 

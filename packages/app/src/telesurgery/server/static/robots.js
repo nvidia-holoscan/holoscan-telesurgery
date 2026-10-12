@@ -378,7 +378,7 @@ export function robotControls(refresh, openMetrics) {
                 element_.append(actions);
             } else if (state.session?.robot && jogGroups(robot).length) {
                 const mira = robot.kind === "mira" || robot.kind === "mira-sim";
-                const franka = robot.kind === "franka" || robot.kind === "franka-sim";
+                const franka = robot.kind === "franka" || robot.kind === "franka-sim" || robot.kind === "versius-sim";
                 if (mira || franka) {
                     element_.classList.add("compact-controls", mira ? "mira-controls" : "franka-controls");
                     card.armSpeed = armSpeed(robot, () => stopInputs(card));
@@ -459,10 +459,10 @@ export function robotControls(refresh, openMetrics) {
                 }
                 card.keyboard = keyboardInput(
                     robot,
-                    (command, continuous) =>
+                    (command, continuous, motionMode) =>
                         continuous
-                            ? send(card.robot, command)
-                            : step(card.robot, command),
+                            ? send(card.robot, command, motionMode)
+                            : step(card.robot, command, motionMode),
                     () => endInput(robot.id),
                     increment,
                 );

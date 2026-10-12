@@ -71,7 +71,9 @@ def main(argv=None):
         help="workspace directory (default: ./workspace)",
     )
     node.add_argument("--port", type=port, default=0, help="direct video port (default: automatic)")
-    node.add_argument("--sim", choices=["mira", "franka"], help="start a simulation on this node")
+    node.add_argument(
+        "--sim", choices=["mira", "franka", "versius"], help="start a simulation on this node"
+    )
     node.add_argument("--sim-gui", action="store_true", help="open the Isaac Sim window for --sim")
     node.add_argument(
         "--profile",

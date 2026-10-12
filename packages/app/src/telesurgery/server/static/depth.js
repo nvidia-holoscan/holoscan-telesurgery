@@ -42,7 +42,9 @@ export function nativeDepthControls(camera, tile, display = {}) {
     tile.append(tools);
 }
 
-// Join depth to displayed color by RTP timestamp; never reuse an old depth map.
+// Present matching color/depth pairs together; late depth must not flash blank
+// or be drawn over a newer color frame. Retain compressed depth across video jitter;
+// decompress only matched pairs and keep at most three pending color snapshots.
 export function depthView(peer, video, stage, caption, camera) {
     if (!camera.depth) return { stop() {} };
     const channel = peer.createDataChannel("depth", {
@@ -51,9 +53,11 @@ export function depthView(peer, video, stage, caption, camera) {
     });
     channel.binaryType = "arraybuffer";
     const canvas = document.createElement("canvas"),
-        context = canvas.getContext("2d");
-    canvas.hidden = true;
-    stage.append(canvas);
+        context = canvas.getContext("2d"),
+        color = element("canvas", undefined, "depth-color"),
+        colorContext = color.getContext("2d");
+    canvas.hidden = color.hidden = true;
+    stage.append(color, canvas);
     const tools = element("div", undefined, "depth-tools");
     function select(label, choices) {
         const control = document.createElement("select");
@@ -90,29 +94,40 @@ export function depthView(peer, video, stage, caption, camera) {
     tools.append(mode, range, opacity, legend, reading);
     caption.append(tools);
     const chunks = new Map(),
-        frames = new Map();
+        frames = new Map(),
+        colors = new Map();
     let current,
         callback,
         point,
         lastPaint = 0,
+        sequence = 0,
+        displayed = 0,
+        generation = 0,
+        pending,
         stopped = false,
         inflating = false;
     const watching = () => !stopped && mode.value !== "color";
-    const bounded = (map, key, value) => {
+    const remove = (map, key) => {
+        map.get(key)?.image?.close();
+        map.delete(key);
+    };
+    const bounded = (map, key, value, limit = 3) => {
+        remove(map, key);
         map.set(key, value);
-        if (map.size > 3) map.delete(map.keys().next().value);
+        if (map.size > limit) remove(map, map.keys().next().value);
     };
     function unavailable() {
+        current = undefined;
+        color.hidden = true;
         context.clearRect(0, 0, canvas.width, canvas.height);
         reading.textContent = "Depth unavailable for this frame";
     }
     function paint() {
         if (!watching()) return;
-        const frame = frames.get(current);
-        if (!frame) return unavailable();
-        const { width, height, values } = frame;
-        canvas.width = width;
-        canvas.height = height;
+        if (!current || performance.now() - lastPaint > 500) return unavailable();
+        const { width, height, values } = current;
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
         const image = context.createImageData(width, height),
             limit = Number(range.value);
         const alpha =
@@ -130,7 +145,6 @@ export function depthView(peer, video, stage, caption, camera) {
             image.data[j + 3] = alpha;
         }
         context.putImageData(image, 0, 0);
-        lastPaint = performance.now();
         const label =
             camera.depth_source === "simulated"
                 ? "Simulated depth"
@@ -151,13 +165,43 @@ export function depthView(peer, video, stage, caption, camera) {
             context.stroke();
         }
     }
-    function presented(_now, metadata) {
-        if (!watching()) return;
-        current = metadata.rtpTimestamp;
-        paint();
-        callback = video.requestVideoFrameCallback(presented);
+    function match(rtp) {
+        const packet = frames.get(rtp), snapshot = colors.get(rtp);
+        if (!packet || !snapshot) return;
+        frames.delete(rtp);
+        colors.delete(rtp);
+        if (snapshot.sequence <= displayed || performance.now() - snapshot.at > 500 ||
+            (pending && snapshot.sequence <= pending.snapshot.sequence)) {
+            snapshot.image.close();
+            return;
+        }
+        packet.snapshot = snapshot;
+        if (inflating) {
+            pending?.snapshot.image.close();
+            pending = packet;
+        } else decompress(packet);
     }
-    async function inflate(packet) {
+    function presented(now, metadata) {
+        if (!watching()) return;
+        callback = video.requestVideoFrameCallback(presented);
+        if (video.readyState >= 2 && metadata.rtpTimestamp !== undefined) {
+            let image;
+            try {
+                image = new VideoFrame(video, { timestamp: metadata.mediaTime * 1e6 });
+            } catch (error) {
+                // A stream can replace its decoded frame during startup/reconfiguration.
+                if (error.name === "InvalidStateError") return;
+                throw error;
+            }
+            bounded(colors, metadata.rtpTimestamp, {
+                image,
+                at: now,
+                sequence: ++sequence,
+            });
+            match(metadata.rtpTimestamp);
+        }
+    }
+    async function inflate(packet, version) {
         const stream = new Blob(packet.parts)
             .stream()
             .pipeThrough(new DecompressionStream("deflate"));
@@ -178,13 +222,43 @@ export function depthView(peer, video, stage, caption, camera) {
         } finally {
             await reader.cancel();
         }
-        if (!watching()) return;
-        bounded(frames, packet.rtp, {
+        if (!watching() || version !== generation) return;
+        const snapshot = packet.snapshot;
+        if (snapshot.sequence <= displayed || performance.now() - snapshot.at > 500) return;
+        const frame = {
             width: packet.width,
             height: packet.height,
             values: new Float32Array(buffer.buffer),
-        });
-        if (current === packet.rtp) paint();
+        };
+        if (color.width !== frame.width) color.width = frame.width;
+        if (color.height !== frame.height) color.height = frame.height;
+        colorContext.drawImage(snapshot.image, 0, 0, frame.width, frame.height);
+        current = frame;
+        displayed = snapshot.sequence;
+        lastPaint = snapshot.at;
+        color.hidden = mode.value === "depth";
+        paint();
+        for (const [key, value] of colors) {
+            if (value.sequence <= displayed) {
+                remove(colors, key);
+                frames.delete(key);
+            }
+        }
+    }
+    function decompress(packet) {
+        const version = generation;
+        inflating = true;
+        inflate(packet, version)
+            .catch(() => {}) // A bad frame cannot invalidate another matched pair.
+            .finally(() => {
+                packet.snapshot.image.close();
+                inflating = false;
+                if (pending && watching()) {
+                    const next = pending;
+                    pending = undefined;
+                    decompress(next);
+                }
+            });
     }
     channel.onmessage = ({ data }) => {
         if (
@@ -232,15 +306,17 @@ export function depthView(peer, video, stage, caption, camera) {
         packet.received++;
         if (packet.received === count) {
             chunks.delete(rtp);
-            if (inflating) return;
-            inflating = true;
-            inflate(packet)
-                .catch(() => {
-                    if (current === rtp) unavailable();
-                })
-                .finally(() => {
-                    inflating = false;
-                });
+            packet.at = performance.now();
+            packet.bytes = packet.parts.reduce((n, part) => n + part.byteLength, 0);
+            bounded(frames, rtp, packet, 32);
+            let bytes = [...frames.values()].reduce((n, value) => n + value.bytes, 0);
+            for (const [key, value] of frames) {
+                if (packet.at - value.at > 500 || bytes > 16 * 1024 * 1024) {
+                    bytes -= value.bytes;
+                    frames.delete(key);
+                }
+            }
+            match(rtp);
         }
     };
     const send = () => {
@@ -248,14 +324,22 @@ export function depthView(peer, video, stage, caption, camera) {
             channel.send(JSON.stringify({ enabled: watching() }));
     };
     channel.onopen = send;
+    function clear() {
+        generation++;
+        pending?.snapshot.image.close();
+        pending = current = undefined;
+        frames.clear();
+        chunks.clear();
+        for (const key of colors.keys()) remove(colors, key);
+        color.hidden = true;
+    }
     function update() {
         if (callback !== undefined) video.cancelVideoFrameCallback(callback);
         stage.dataset.depth = mode.value;
         canvas.hidden = !watching();
         range.hidden = legend.hidden = reading.hidden = !watching();
         opacity.hidden = mode.value !== "overlay";
-        frames.clear();
-        chunks.clear();
+        clear();
         if (watching()) {
             unavailable();
             callback = video.requestVideoFrameCallback(presented);
@@ -273,8 +357,8 @@ export function depthView(peer, video, stage, caption, camera) {
         paint();
     };
     const timer = setInterval(() => {
-        if (watching() && performance.now() - lastPaint > 500) unavailable();
-    }, 500);
+        if (watching() && current && performance.now() - lastPaint > 500) unavailable();
+    }, 100);
     update();
     return {
         stop() {
@@ -282,8 +366,7 @@ export function depthView(peer, video, stage, caption, camera) {
             clearInterval(timer);
             if (callback !== undefined)
                 video.cancelVideoFrameCallback(callback);
-            frames.clear();
-            chunks.clear();
+            clear();
             send();
         },
     };

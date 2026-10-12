@@ -103,7 +103,7 @@ if $franka; then
     step "Building Franka support…" env UV_PROJECT_ENVIRONMENT="$environment" scripts/build_franka.sh
 fi
 step "Preparing simulation dependencies…" uv pip install --python "$python_bin" \
-    --target "$workspace/sim-deps" 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
+    --target "$workspace/sim-deps" 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4' 'trimesh==5.1.0'
 step "Checking GPU codecs…" "$python_bin" -m telesurgery doctor
 
 echo "Setup complete."

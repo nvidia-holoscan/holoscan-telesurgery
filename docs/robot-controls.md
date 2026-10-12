@@ -6,7 +6,7 @@ The surgeon lists connected robots automatically. Use the panel's pop-out icon t
 
 ## Keyboard and gamepad
 
-In joint mode, tap a key or click its on-screen button for a short move. Hold it to move continuously after 450 ms; the target advances without waiting for the previous move to finish. Franka tool mode starts continuous motion immediately. Releasing held input requests a smooth stop.
+In joint mode, tap a key or click its on-screen button for a short move. Hold it to move continuously after 450 ms; the target advances without waiting for the previous move to finish. Tool mode starts continuous motion immediately. Releasing held input requests a smooth stop.
 
 MIRA has independent **Arm speed**, **Roll speed**, and **Grip speed** sliders, shared by keyboard, gamepad and on-screen controls. Their defaults are **20%, 50%, and 40%**, respectively. Percentages are relative to the node's configured limits; they set the requested rate, not measured robot speed. Arm and roll increments account for elapsed input time and stay within the node's per-command limit. Changing a speed stops active input and requires a fresh enable/key press. The keyboard shows both arms side by side; gamepad joint positions stay visible in compact left/right rows below the controls.
 
@@ -39,7 +39,7 @@ In joint mode, keys increase/decrease the corresponding joint:
 | MIRA left   | Q / A | W / S | E / D | R / F | —     | —     | —     |
 | MIRA right  | U / J | I / K | O / L | P / ; | —     | —     | —     |
 
-Both MIRA arms accept input simultaneously. These are joint controls, not Cartesian tool movement. Typing in a field, opening a dialog, losing focus or losing access stops input. Release and press again to resume.
+Both MIRA arms accept input simultaneously. MIRA starts in joint mode; choose **Tool movement · X/Y/Z + elbow** to map the first four keys for each arm to X, Y, Z and elbow angle. Tool roll and gripper bindings stay the same. Gamepad tool mode uses LB/L1 for X/Y and LB/L1 + RB/R1 for Z/elbow, with the same enable and release behavior as joint mode. Typing in a field, opening a dialog, losing focus or losing access stops input. Release and press again to resume.
 
 MIRA tool roll uses **T / G** on the left and **Y / H** on the right. Tap to step or hold to rotate; the application limits roll to ±180°.
 
@@ -87,7 +87,7 @@ robots:
 
 Click **Connect** on the patient dashboard. Physical tool jogging uses the configured end-effector Jacobian from libfranka in the native 1 kHz loop. Damped inverse kinematics feeds synchronized Ruckig joint velocity trajectories, with the same tool mapping and speed scale as simulation. The planner slows before joint limits and limits acceleration to 1 rad/s² and jerk to 10 rad/s³. Home and advanced joint moves keep their existing position trajectories. The native loop stops on missing input after 200 ms; release/Stop requests braking immediately. Desk collision thresholds, motor enable and fault recovery remain under the operator’s control. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
 
-**Home** uses the configured reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. It leaves the gripper unchanged. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical Home and sustained motion still need supervised validation. Motor enable, fault recovery and gripper control are not exposed.
+**Home** uses the shared fixed reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. It leaves the gripper unchanged. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical sustained control, Home and soft Stop were operator-verified on the tested setup; per-installation home calibration remains on the [TODO list](TODO.md). Motor enable, fault recovery and gripper control are not exposed.
 
 ## MIRA
 
@@ -96,6 +96,8 @@ Click **Connect** on the patient dashboard. Physical tool jogging uses the confi
 With Keyboard selected, hold **Z / X** to close/open the left gripper, or **N / M** for the right. With a gamepad selected, the panel shows that controller's gripper bindings instead. The on-screen buttons work in either mode. Release to stop; **Grip speed** is independent of arm and roll speed. Both simulation and physical MIRA use these controls. Physical grippers require successful tool homing through the vendor controller; arm **Home** does not calibrate tools or bypass this requirement.
 
 Use the **Virtual Incision MIRA API** supplied by the vendor. Request the current Linux API and POD firmware documentation from [Virtual Incision](https://virtualincision.com/customer-support/); `mira-project.org` is unrelated middleware.
+
+Tool mode uses the vendor forward-kinematics and inverse-kinematics queries, followed by a bounded absolute joint target. It does not accumulate the vendor's persistent Cartesian delta target. Coordinates use the MIRA base frame: XYZ in millimeters, elbow and roll in degrees. Each command is limited to 0.5 mm translation and 1° elbow/roll, with at most 1° change per arm joint. Invalid, unreachable or discontinuous IK results are rejected. Release/Stop requests a measured-position hold; missing tool input expires after 200 ms. Isaac Sim derives its own Jacobian from the loaded asset and measured joints, using the asset's base frame with the same input units and bounds.
 
 Start with the MIRA profile:
 
@@ -141,7 +143,11 @@ robots:
 
 Install the executable and image first when configuring manually. Omit `controller` when managing the API externally. Remove the manual robot entry before selecting a profile with the same robot ID.
 
-Physical jogs use reported joint positions; tool roll uses the vendor's absolute roll command. Release requests the measured position as a hold target. The vendor API does not provide a verified stop acknowledgement or hardware feedback timestamp; Home, tool operation and network-loss behavior still need supervised hardware validation. Keep a physical stop available. Set `motion_enabled: false` for feedback only.
+Physical jogs use reported joint positions; tool roll uses the vendor's absolute roll command. Release requests the measured position as a hold target. Home, tool operation and network-loss behavior were operator-verified on the tested setup. Review of the supplied July 2025 API and its backend found that motion methods are notifications, position queries return the vendor's cached POD state without a hardware timestamp, and no acknowledged stop or POD-side command watchdog is exposed. A query reply establishes communication, not completion or freshness of physical motion. The adapter reports these limits explicitly and never replays a failed move. Precise arrival and an independent hardware stop/watchdog require vendor support. Keep a physical stop available. Set `motion_enabled: false` for feedback only.
+
+## Versius simulation
+
+Each simulated Versius arm is a separate robot with its own exclusive surgeon lock, feedback and Stop. The scene follows the four-bedside-unit layout in the [CMR user manual](https://cmrsurgical.com/wp-content/uploads/2022/11/U-00009v15-VersiusSurgicalSystem-UserManual-English-UK.pdf): three instrument arms and one endoscope arm share a suture pad and curved needle. The real system has one 3D HD endoscopic camera assembly; this simulation provides a 1080p procedure view with optional depth and an additional 1080p room observer view. The left and right needle holders support a two-surgeon pickup, handoff and placement demonstration; the assistant arm carries a grasper. The procedure camera moves with the endoscope arm, whose shaft is a simple simulation proxy because the supplied archive has no endoscope asset. Tool movement uses the live PhysX Jacobian and measured pose in each arm’s base frame, with the same keyboard/gamepad mapping as Franka; the opposing bases have opposing X/Y directions. Gripper controls open and close the needle-holder jaws. Closing near the training object attaches a proximity grasp constraint; the other arm can receive it when the first opens. This provides a repeatable handoff demonstration without modeling surgical contact forces. This is an asset-based simulation; no physical Versius protocol or private CMR kinematics library is required.
 
 ## Saved device profiles
 

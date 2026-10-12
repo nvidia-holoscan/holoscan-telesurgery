@@ -192,3 +192,17 @@ export function inputBlocked() {
         )
     );
 }
+
+// Convert the speed-scaled joint input into the bounded MIRA tool-jog contract.
+export function miraToolJog(robot, command) {
+    const config = robot.controls.mira_cartesian;
+    const maximum = robot.controls.max_step_deg || 1;
+    return Object.fromEntries(Object.entries(command).map(([arm, values]) => {
+        const result = values.map((v, i) => v / maximum *
+            (i < 3 ? config.linear_step_mm : config.angular_step_deg));
+        const length = Math.hypot(...result.slice(0, 3));
+        if (length > config.linear_step_mm)
+            for (let i = 0; i < 3; i++) result[i] *= config.linear_step_mm / length;
+        return [arm, result];
+    }));
+}

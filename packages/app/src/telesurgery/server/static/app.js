@@ -397,9 +397,9 @@ function cameraCard(camera) {
             "secondary small icon-button camera-settings",
             "settings",
         );
-        settings.disabled = active || stream.disabled;
+        settings.disabled = stream.disabled;
         settings.title = active
-            ? "Stop streaming to change settings"
+            ? "Change stream encoding"
             : "Stream settings";
         controls.append(settings);
         const heading = element("div", undefined, "camera-name");

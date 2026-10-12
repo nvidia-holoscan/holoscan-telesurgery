@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Isaac Sim runs in its own container with these small gateway dependencies.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps \
-    'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
+    'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4' 'trimesh==5.1.0'
 
 FROM native-build AS application
 COPY packages ./packages

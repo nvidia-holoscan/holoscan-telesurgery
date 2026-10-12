@@ -6,10 +6,12 @@
 import argparse
 import contextlib
 import json
+import logging
 import os
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from telesurgery_core.adapters.cameras import open_camera
@@ -55,17 +57,71 @@ class Capture:
 
 
 class Encode:
-    def __init__(self, config):
+    def __init__(self, config, settings_path=None):
         self.config = config
         self.codec = None
+        self.settings_path = settings_path
+        self.check_at, self.settings_stamp = 0, None
+        self.preparing = self.builder = None
+        self.requested = config
+        self.failed = None
+
+    def _error(self, message=""):
+        if self.settings_path:
+            path = self.settings_path.with_suffix(".error")
+            if message:
+                path.write_text(message)
+            else:
+                path.unlink(missing_ok=True)
 
     def start(self):
         self.codec = CodecWorker(self.config, encode=True)
+        self.builder = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prepare-codec")
+
+    def _refresh(self):
+        if self.settings_path and time.monotonic() >= self.check_at:
+            self.check_at = time.monotonic() + 0.25
+            stamp = self.settings_path.stat().st_mtime_ns
+            if stamp != self.settings_stamp:
+                self.requested = Config(**json.loads(self.settings_path.read_text())["camera"])
+                self.settings_stamp = stamp
+                self.failed = None
+                self._error()
+        if self.preparing and self.preparing[1].done():
+            config, future = self.preparing
+            self.preparing = None
+            try:
+                replacement = future.result()
+            except Exception as exc:
+                if config == self.requested:
+                    self.failed = config
+                    self._error(
+                        f"Could not prepare {config.codec}; continuing {self.config.codec}: {exc}"
+                    )
+                    logging.exception("Encoder change failed; retaining the active encoder")
+                return
+            if config == self.requested:
+                old, self.codec, self.config = self.codec, replacement, config
+                old.close()
+            else:
+                replacement.close()
+        if self.preparing is None and self.requested not in (self.config, self.failed):
+            self.preparing = (
+                self.requested,
+                self.builder.submit(CodecWorker, self.requested, encode=True),
+            )
 
     def compute(self, frame):
+        self._refresh()
         return self.codec.encode(frame)
 
     def stop(self):
+        if self.builder is not None:
+            self.builder.shutdown()
+        if self.preparing is not None:
+            future = self.preparing[1]
+            if future.exception() is None:
+                future.result().close()
         if self.codec is not None:
             self.codec.close()
 
@@ -106,7 +162,7 @@ def main():
     camera = None
     if config.source == "imx274" and require_sdk().__version__.startswith("4."):
         camera = backend("camera").Imx274Camera(config)
-    stages = [Capture(config, camera), Encode(config), Publish(settings["endpoint"])]
+    stages = [Capture(config, camera), Encode(config, args.config), Publish(settings["endpoint"])]
     graph = backend("pipeline").build(
         "camera", stages, config.fps if config.source == "synthetic" else 1000
     )

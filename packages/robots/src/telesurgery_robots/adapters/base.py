@@ -57,6 +57,11 @@ def controls(adapter: Adapter, spec: dict) -> dict:
         ),
         **({"speed_deg_s": adapter.speed_limits} if hasattr(adapter, "speed_limits") else {}),
         **({"cartesian": adapter.cartesian} if enabled and hasattr(adapter, "cartesian") else {}),
+        **(
+            {"mira_cartesian": adapter.mira_cartesian}
+            if enabled and hasattr(adapter, "mira_cartesian")
+            else {}
+        ),
         "reason": "State feedback only; motion is not supported"
         if not adapter.groups
         else ""

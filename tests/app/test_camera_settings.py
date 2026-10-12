@@ -137,6 +137,7 @@ def test_only_available_codecs_are_offered_and_probed_once(monkeypatch):
 
     capabilities.supported_codecs.cache_clear()
     monkeypatch.setattr(capabilities, "probe", probe)
+    monkeypatch.setattr(capabilities.importlib.util, "find_spec", lambda _: None)
     try:
         assert capabilities.supported_codecs() == ["h264", "nvjpeg", "raw-bgr8"]
         assert capabilities.supported_codecs() == ["h264", "nvjpeg", "raw-bgr8"]
@@ -282,7 +283,12 @@ async def test_camera_silence_stops_worker_and_reports_error(tmp_path, monkeypat
     monkeypatch.setattr(local.asyncio, "wait_for", short_deadlines)
     node = local.LocalNode(tmp_path, None)
     node.cameras["sensor"] = {"id": "sensor", "name": "Camera"}
-    worker = {"process": process, "updated": 0, "frames": frames}
+    worker = {
+        "process": process,
+        "updated": 0,
+        "frames": frames,
+        "settings": tmp_path / "camera.json",
+    }
     node.workers["sensor"] = worker
     try:
         await node._watch("sensor", worker, "sensor")

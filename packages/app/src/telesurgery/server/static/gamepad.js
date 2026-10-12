@@ -8,6 +8,7 @@ import {
     inputBlocked,
     jogGroups,
     pairedArms,
+    miraToolJog,
 } from "./robot-input.js";
 
 const axis = (value) => {
@@ -48,7 +49,7 @@ export function gamepadInput(
     const dual = pairedArms(robot);
     const franka = ["franka", "franka-sim"].includes(robot.kind) &&
         robot.controls.groups.joints === 7 && jogGroups(robot).length === 1;
-    const cartesian = franka && robot.controls.cartesian;
+    const cartesian = Boolean(robot.controls.cartesian);
     const shoulderGroups = dual || (franka && !cartesian);
     const roll = dual && robot.controls.groups.left === 5;
     const grippers = robot.controls.grippers || [];
@@ -77,7 +78,18 @@ export function gamepadInput(
             group.append(option);
         }
     }
-    group.hidden = cartesian || shoulderGroups || group.options.length < 2;
+    const miraTool = Boolean(robot.controls.mira_cartesian);
+    if (miraTool) {
+        group.replaceChildren();
+        group.setAttribute("aria-label", `${robot.name} gamepad mode`);
+        for (const [value, label] of [["joints", "Joint movement"], ["mira-tool", "Tool movement · X/Y/Z + elbow"]]) {
+            const option = element("option", label);
+            option.value = value;
+            group.append(option);
+        }
+    }
+    const miraCartesian = () => miraTool && group.value === "mira-tool";
+    group.hidden = !miraTool && (cartesian || shoulderGroups || group.options.length < 2);
     const status = element(
         "p",
         "Press a gamepad button to discover it.",
@@ -301,9 +313,9 @@ export function gamepadInput(
             : `Hold ${enable} for ${enabledTools}`;
         enableKey.textContent = enable;
         alternateKey.textContent = `${enable} + ${alternateButton}`;
-        enableHint.textContent = dual ? "Joints 1–2 · move sticks"
+        enableHint.textContent = dual ? miraCartesian() ? "X / Y · move sticks" : "Joints 1–2 · move sticks"
             : franka ? "Joints 1–4" : "Hold to move · release to stop";
-        alternateHint.textContent = franka ? "Joints 5–7" : "Joints 3–4 · move sticks";
+        alternateHint.textContent = franka ? "Joints 5–7" : miraCartesian() ? "Z / elbow · move sticks" : "Joints 3–4 · move sticks";
         rightRollKeys[0].textContent = rollUp;
         rightRollKeys[1].textContent = rollDown;
         for (const [keys, arm, buttons] of [
@@ -493,7 +505,8 @@ export function gamepadInput(
                     lastMode = mode;
                     lastSentAt = now;
                     active = busy = true;
-                    send(mode === "grip" ? { velocity } : command, mode)
+                    send(mode === "grip" ? { velocity } : miraCartesian() ? miraToolJog(robot, command) : command,
+                        mode === "jog" && miraCartesian() ? "cartesian" : mode)
                         .catch(halt)
                         .finally(() => {
                             busy = false;

@@ -233,3 +233,38 @@ async def test_direct_video_tickets_scope_expiry_and_revocation(tmp_path):
         for peer in peers:
             await peer.close()
         await endpoint.close()
+
+
+@pytest.mark.asyncio
+async def test_inventory_during_tls_disconnect_uses_saved_node_address(tmp_path):
+    from types import SimpleNamespace
+
+    from telesurgery.server.application import Application
+    from telesurgery_core.transport.tls import client_context, server_context
+
+    accepted = asyncio.get_running_loop().create_future()
+
+    def connected(reader, writer):
+        accepted.set_result(writer)
+
+    server = await asyncio.start_server(
+        connected, "127.0.0.1", 0, ssl=server_context(tmp_path / "tls")
+    )
+    _, client = await asyncio.open_connection(
+        "127.0.0.1", server.sockets[0].getsockname()[1], ssl=client_context()
+    )
+    writer = await accepted
+    try:
+        writer.close()
+        await writer.wait_closed()
+        patient = Application("patient", tmp_path / "patient")
+        patient.nodes["node"] = {"name": "Room"}
+        patient.node_registry.configs["node"] = {"ip": "192.0.2.10"}
+        patient.peers["peer"] = {"peer": SimpleNamespace(writer=writer)}
+        patient.peer_nodes["peer"] = "node"
+        assert patient.inventory()["nodes"][0]["ip"] == "192.0.2.10"
+    finally:
+        client.close()
+        await client.wait_closed()
+        server.close()
+        await server.wait_closed()

@@ -111,6 +111,7 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
             "pyzmq>=26,<28",
             "websockets>=14,<17",
             "ruckig==0.19.4",
+            "trimesh==5.1.0",
         ],
         ["python", "-m", "telesurgery", "doctor"],
     ]

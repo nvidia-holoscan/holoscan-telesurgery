@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
-from telesurgery_robots.franka.cartesian import CartesianTrajectory
+from telesurgery_robots.franka.cartesian import JOINT_LIMITS, CartesianTrajectory
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.franka.trajectory import JointTrajectory
+from telesurgery_robots.mira.cartesian import command as tool_command
 from telesurgery_robots.mira.gripper import GripperJog, clamp, gripper_rates
 from telesurgery_robots.mira.poses import MIRA_HOME, MIRA_HOME_GRIP, MIRA_HOME_ROLL, roll_target
 
@@ -24,8 +26,14 @@ class SimRobot:
             arm: [*MIRA_HOME, MIRA_HOME_ROLL, closed + MIRA_HOME_GRIP * (opened - closed)]
             for arm, (closed, opened) in self.gripper_ranges.items()
         }
-        if environment == "franka":
-            self.pose = {"joints": list(FRANKA_HOME)}
+        self.home = FRANKA_HOME
+        self.limits = JOINT_LIMITS
+        if environment == "versius":
+            from telesurgery_robots.versius import HOME, LIMITS
+
+            self.home, self.limits = HOME, np.asarray(LIMITS)
+        if environment in {"franka", "versius"}:
+            self.pose = {"joints": list(self.home)}
             self.gripper_ranges = {"hand": (0.0, 0.04)}
         self.finger_target = 0.04
         self.cartesian = None
@@ -41,7 +49,11 @@ class SimRobot:
     @property
     def joint_target_velocity(self):
         trajectory = self.cartesian or self.trajectory
-        return list(trajectory.input.current_velocity) if trajectory else [0.0] * 7
+        return (
+            list(trajectory.input.current_velocity)
+            if trajectory
+            else [0.0] * len(self.pose.get("joints", range(7)))
+        )
 
     def _grippers(self):
         if "joints" in self.pose:
@@ -90,12 +102,18 @@ class SimRobot:
             )
         ):
             self.mode = None
+        if self.mode == "mira-tool" and now >= self.deadline:
+            self._stop()
         if self.cartesian is not None and elapsed > 0:
             position, jacobian, sampled = self.kinematics or (self.pose["joints"], None, -1)
             if now - sampled > 0.3:
                 self.cartesian.stop("physics feedback stale")
             self.pose["joints"] = self.cartesian.advance(position, jacobian, elapsed, now)
             if self.cartesian.finished:
+                if self.cartesian.stop_reason == "joint tracking error":
+                    # Contact blocked the requested position. Hold measured
+                    # joints so the next jog can retreat from the obstacle.
+                    self.pose["joints"] = list(position)
                 self.cartesian = None
         if self.trajectory is None or elapsed <= 0:
             return
@@ -106,6 +124,11 @@ class SimRobot:
             self.trajectory = self.mode = None
 
     def _stop(self):
+        if self.mode == "mira-tool":
+            for arm in self.pose:
+                measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
+                self.pose[arm][:5] = measured[:5]
+            self.mode = None
         self._grip_targets(self.grip.stop(self._grippers()))
         if self.cartesian:
             self.cartesian.stop()
@@ -133,7 +156,7 @@ class SimRobot:
                 if "joints" in self.pose
                 else {
                     "grippers": self._grippers(),
-                    "control_active": self.mode == "home" or bool(self.grip.rates),
+                    "control_active": self.mode in {"home", "mira-tool"} or bool(self.grip.rates),
                     "home_active": self.mode == "home",
                 }
             ),
@@ -181,7 +204,7 @@ class SimRobot:
             if set(params) - {"speed_deg_s"}:
                 raise ValueError("Home uses the configured pose")
             self._target(
-                list(FRANKA_HOME), "home", speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
+                list(self.home), "home", speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
             )
         elif method == "set_home" and "left" in self.pose:
             if params:
@@ -214,21 +237,13 @@ class SimRobot:
                 # Preserve the held drive target: re-seeding from measured
                 # joints would accumulate load-induced position error on
                 # every enable/release cycle. IK still uses measured joints.
-                self.cartesian = CartesianTrajectory(self.pose["joints"], speed)
+                self.cartesian = CartesianTrajectory(self.pose["joints"], speed, self.limits)
             elif self.cartesian.speed != speed:
                 raise ValueError("Release input before changing Franka speed")
             self.cartesian.request(command, self.updated)
         elif method == "set_joint_delta" and "joints" in self.pose:
-            movement = values(params["joints"], 7, 5)
-            limits = [
-                (-166, 166),
-                (-101, 101),
-                (-166, 166),
-                (-176, -4),
-                (-166, 166),
-                (-1, 215),
-                (-166, 166),
-            ]
+            movement = values(params["joints"], len(self.home), 5)
+            limits = self.limits
             goal = [
                 max(lo, min(hi, old + change))
                 for old, change, (lo, hi) in zip(
@@ -245,6 +260,28 @@ class SimRobot:
                 "step" if params.get("step") else "jog",
                 speed_value(params.get("speed_deg_s"), FRANKA_SPEED),
             )
+        elif method == "jog_mira_cartesian" and "left" in self.pose:
+            movement = tool_command(params)
+            if self.kinematics is None or time.monotonic() - self.kinematics[1] > 0.3:
+                raise ValueError("MIRA Cartesian physics feedback is unavailable or stale")
+            targets = {arm: list(pose) for arm, pose in self.pose.items()}
+            for arm, delta in movement.items():
+                measured, _, jacobian, limits = self.kinematics[0][arm]
+                if any(delta[:4]):
+                    change = np.linalg.lstsq(jacobian, np.asarray(delta[:4]), rcond=1e-4)[0]
+                    if np.max(np.abs(jacobian @ change - delta[:4])) > 0.01:
+                        raise ValueError("MIRA tool direction is unavailable at this configuration")
+                    goal = measured[:4] + change
+                    if np.max(np.abs(change)) > 1 or any(
+                        not lo <= v <= hi for v, (lo, hi) in zip(goal, limits, strict=True)
+                    ):
+                        raise ValueError(
+                            "MIRA Cartesian target exceeds joint limits; reduce arm speed"
+                        )
+                    targets[arm][:4] = goal.tolist()
+                targets[arm][4] = roll_target(measured[4], delta[4])
+            self.pose = targets
+            self.mode, self.deadline = "mira-tool", time.monotonic() + 0.2
         elif method == "set_mira_cartesian_delta" and "left" in self.pose:
             arms = {arm: values(params[arm], 5, 5) for arm in self.pose}
             rolls = {

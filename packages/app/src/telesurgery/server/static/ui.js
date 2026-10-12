@@ -19,9 +19,10 @@ export const codecName = (codec) =>
         h265: "H.265",
         nvjpeg: "nvJPEG",
         "raw-bgr8": "Uncompressed",
+        "surgical-tokenizer": "Surgical Neural Tokenizer (trial)",
     })[codec || "h264"] || codec;
 export const browserCamera = (camera) =>
-    !camera.codec || camera.codec === "h264";
+    !camera.codec || ["h264", "surgical-tokenizer"].includes(camera.codec);
 let toast;
 export function element(tag, text, className = "") {
     const node = document.createElement(tag);

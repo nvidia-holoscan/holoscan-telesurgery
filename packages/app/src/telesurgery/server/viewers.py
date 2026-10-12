@@ -66,7 +66,9 @@ class NativeViews:
                 raise
             self.windows[camera] = {"process": process, "config": path, "temporary": temporary}
             try:
-                async with asyncio.timeout(20):
+                # First neural viewing can download and build a GPU-specific engine.
+                timeout = 600 if config.get("codec") == "surgical-tokenizer" else 20
+                async with asyncio.timeout(timeout):
                     while True:
                         status = self.status()[camera]
                         if status["status"] == "running":

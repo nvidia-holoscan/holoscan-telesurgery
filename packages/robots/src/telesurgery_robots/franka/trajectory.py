@@ -17,15 +17,16 @@ from ruckig import (
 
 class JointTrajectory:
     def __init__(self, position, goal, speed):
-        self.generator = Ruckig(7, 0.001)
-        self.input, self.output = InputParameter(7), OutputParameter(7)
+        count = len(position)
+        self.generator = Ruckig(count, 0.001)
+        self.input, self.output = InputParameter(count), OutputParameter(count)
         self.input.current_position = list(position)
-        self.input.current_velocity = self.input.current_acceleration = [0.0] * 7
+        self.input.current_velocity = self.input.current_acceleration = [0.0] * count
         self.input.target_position = list(goal)
-        self.input.target_velocity = self.input.target_acceleration = [0.0] * 7
-        self.input.max_velocity = [speed] * 7
-        self.input.max_acceleration = [math.degrees(0.2)] * 7
-        self.input.max_jerk = [math.degrees(2.0)] * 7
+        self.input.target_velocity = self.input.target_acceleration = [0.0] * count
+        self.input.max_velocity = [speed] * count
+        self.input.max_acceleration = [math.degrees(0.2)] * count
+        self.input.max_jerk = [math.degrees(2.0)] * count
         self.input.synchronization = Synchronization.Time
         self.generator.calculate(self.input, self.output.trajectory)
         self.duration = self.output.trajectory.duration
