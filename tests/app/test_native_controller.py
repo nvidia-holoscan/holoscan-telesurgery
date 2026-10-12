@@ -6,7 +6,7 @@
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import pytest
 from telesurgery.controller.client import Client, Control
@@ -30,10 +30,160 @@ def robot(kind):
     return {
         "id": kind,
         "name": kind.title(),
+        "kind": f"{kind}-sim",
         "status": "online",
         "controls": controls(adapter, {"motion_enabled": True}),
         "state": {"sequence": 1},
     }
+
+
+@pytest.mark.parametrize("scale", [1, 1.5, 2])
+@pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
+@pytest.mark.parametrize("gamepad", [None, "DualSense", "Xbox", "Nintendo Switch Pro Controller"])
+def test_native_layout_fits_rendered_text(monkeypatch, scale, kind, gamepad):
+    import tkinter as tk
+
+    from telesurgery.controller.window import Window
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Native layout check needs an X display")
+    window = None
+    try:
+        root.tk.call("tk", "scaling", scale * 96 / 72)
+        monkeypatch.setattr(root, "winfo_screenheight", lambda: 4000)
+        monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+        monkeypatch.setattr(Window, "tick", lambda self: None)
+        client = SimpleNamespace(action=Mock(side_effect=AssertionError("No robot commands")))
+        window = Window(root, client)
+        fixture = robot(kind)
+        fixture["state"]["joints_deg"] = {
+            group: [-123.45] * count for group, count in fixture["controls"]["groups"].items()
+        }
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "preview",
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [fixture],
+                },
+            },
+            time.monotonic(),
+        )
+        if gamepad:
+            window.device.configure(values=["Keyboard", gamepad])
+            window.device.current(1)
+            window.build_controls()
+        window.feedback()
+        root.update()
+        assert window.mode_choice.winfo_viewable()
+        assert "Tool movement" in " ".join(window.mode_choice.cget("values"))
+        assert window.body.winfo_width() >= window.body.winfo_reqwidth()
+        assert window.stop_button.winfo_width() >= window.stop_button.winfo_reqwidth()
+        for canvas in [window.home, window.stop_button, *window.keys.values(), *window.sliders]:
+            for item in canvas.find_all():
+                if canvas.type(item) == "text":
+                    left, top, right, bottom = canvas.bbox(item)
+                    assert left >= -2 and top >= 0
+                    assert right <= canvas.winfo_width() + 2
+                    assert bottom <= canvas.winfo_height()
+        for slider in window.sliders:
+            label = next(i for i in slider.find_all() if slider.type(i) == "text")
+            assert slider.bbox(label)[2] < slider.track_bounds()[0]
+        if gamepad and kind == "versius":
+            expected = {
+                "DualSense": ("□", "○"),
+                "Xbox": ("X", "B"),
+                "Nintendo Switch Pro Controller": ("Y", "A"),
+            }
+            assert (window.keys["z"].shortcut, window.keys["x"].shortcut) == expected[gamepad]
+        client.action.assert_not_called()
+    finally:
+        if window:
+            window.shutdown()
+        root.destroy()
+
+
+def test_sdl_uses_positional_buttons_before_initializing_controllers(monkeypatch):
+    from telesurgery.controller.gamepad import Gamepads
+
+    sdl = Mock()
+    sdl.SDL_InitSubSystem.return_value = 0
+    monkeypatch.setattr("telesurgery.controller.gamepad.find_library", lambda _: "SDL2")
+    monkeypatch.setattr("telesurgery.controller.gamepad.c.CDLL", lambda _: sdl)
+    gamepads = Gamepads()
+    setting = call.SDL_SetHintWithPriority(b"SDL_GAMECONTROLLER_USE_BUTTON_LABELS", b"0", 2)
+    assert sdl.mock_calls.index(setting) < sdl.mock_calls.index(call.SDL_InitSubSystem(0x2000))
+    gamepads.close()
+
+
+@pytest.mark.parametrize(
+    "names,label",
+    [
+        (("PS5 Controller", "DualSense Wireless Controller"), "Sony DualSense"),
+        (("Xbox Wireless Controller", "X-Box One Controller"), "Xbox controller"),
+        (
+            ("Nintendo Switch Pro Controller", "Nintendo Switch Pro Controller"),
+            "Nintendo controller",
+        ),
+    ],
+)
+def test_native_duplicate_gamepads_preserve_selection_on_hotplug(names, label):
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.gamepads = Mock(selected=42)
+    window.device = MagicMock()
+    window.device_ids, window.last_devices = [None], 0
+    window.restore_input = None
+    window.select_device = Mock()
+    window.gamepads.devices.return_value = {41: (0, names[0]), 42: (1, names[1])}
+    window.poll_devices(1)
+    window.device.__setitem__.assert_called_with(
+        "values", ["Keyboard", f"{label} · 1", f"{label} · 2"]
+    )
+    assert window.device_ids == [None, 41, 42]
+    window.device.current.assert_called_with(2)
+    # Removing another pad changes its index, but not the selected SDL identity.
+    window.gamepads.devices.return_value = {42: (0, names[1])}
+    window.poll_devices(2)
+    window.device.__setitem__.assert_called_with("values", ["Keyboard", label])
+    assert window.device_ids == [None, 42]
+    window.device.current.assert_called_with(1)
+    window.select_device.assert_not_called()
+    # Losing the selected pad returns to keyboard rather than the other pad.
+    window.gamepads.devices.return_value = {41: (0, names[0])}
+    window.poll_devices(3)
+    window.device.current.assert_called_with(0)
+    window.select_device.assert_called_once_with()
+
+
+@pytest.mark.parametrize("available,expected", [(2, 43), (1, None), (0, None)])
+def test_native_restores_handoff_without_substituting_a_missing_duplicate(available, expected):
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.gamepads = Mock(selected=None)
+    window.gamepads.devices.return_value = {42 + i: (i, "PS5 Controller") for i in range(available)}
+    window.device, window.root = MagicMock(), Mock()
+    current = [0]
+
+    def selection(index=None):
+        if index is not None:
+            current[0] = index
+        return current[0]
+
+    window.device.current.side_effect = selection
+    window.device_ids, window.last_devices = [None], 0
+    window.restore_input = {"name": "Sony DualSense", "ordinal": 1, "count": 2}
+    window.stop, window.build_controls, window.publish = Mock(), Mock(), Mock()
+    window.poll_devices(1)
+    window.gamepads.select.assert_called_once_with(expected)
+    window.stop.assert_called_once_with()
+    assert window.restore_input is None
 
 
 @pytest.mark.parametrize("hold", [False, True])
@@ -170,8 +320,8 @@ def test_gamepad_rearm_home_hold_and_grip(kind):
     assert inputs.from_gamepad(neutral, {16}, state, 5.1) is None
 
 
-def test_grip_and_cartesian_keepalive_alternate_and_stop_zero_axis():
-    inputs = Inputs(robot("versius"))
+def test_franka_grip_toggle_and_cartesian_keepalive_alternate_and_stop_zero_axis():
+    inputs = Inputs(robot("franka"))
     inputs.from_gamepad([0] * 4, set(), {"grippers": {"hand": 1}}, 0)
     requests = [
         inputs.from_gamepad([0, -1, 0, 0], {2}, {"grippers": {"hand": 0.8}}, (i + 1) * 0.05)
@@ -181,6 +331,37 @@ def test_grip_and_cartesian_keepalive_alternate_and_stop_zero_axis():
     assert inputs.from_gamepad([0] * 4, set(), {"grippers": {"hand": 0.8}}, 0.45)[0] == "grip"
     mode, value = inputs.from_gamepad([0] * 4, set(), {"grippers": {"hand": 0.8}}, 0.5)
     assert mode == "jog" and not any(value["translation"])
+
+
+@pytest.mark.parametrize("button,sign", [(2, -1), (1, 1)])
+def test_versius_grip_holds_a_direction_and_releases_without_feedback(button, sign):
+    inputs = Inputs(robot("versius"))
+    axes = [0] * 4
+    assert inputs.from_gamepad(axes, set(), {}, 0) is None
+    for now in (0.1, 0.2, 0.3):
+        assert inputs.from_gamepad(axes, {button}, {}, now) == (
+            "grip",
+            {"hand": sign * inputs.grip_speed},
+        )
+    assert inputs.from_gamepad(axes, set(), {}, 0.4) == ("release", {})
+    assert inputs.from_gamepad(axes, set(), {}, 0.5) is None
+    assert inputs.from_gamepad(axes, {button}, {}, 0.6)[1]["hand"] * sign > 0
+    assert inputs.from_gamepad(axes, {1, 2}, {}, 0.7) == ("release", {})
+    assert inputs.from_gamepad(axes, {1, 2}, {}, 0.8) is None
+    inputs.halt()
+    assert inputs.from_gamepad(axes, {button}, {}, 0.9) is None
+    inputs.from_gamepad(axes, set(), {}, 1)
+    assert inputs.from_gamepad(axes, {button}, {}, 1.1)[1]["hand"] * sign > 0
+
+
+def test_versius_grip_release_stops_only_the_gripper_while_stick_is_held():
+    inputs = Inputs(robot("versius"))
+    inputs.from_gamepad([0] * 4, set(), {}, 0)
+    assert inputs.from_gamepad([0, -1, 0, 0], {2}, {}, 0.1)[0] == "grip"
+    assert inputs.from_gamepad([0, -1, 0, 0], {2}, {}, 0.2)[0] == "jog"
+    assert inputs.from_gamepad([0, -1, 0, 0], set(), {}, 0.3) == ("grip", {"hand": 0})
+    assert inputs.from_gamepad([0, -1, 0, 0], set(), {}, 0.4)[0] == "jog"
+    assert inputs.from_gamepad([0] * 4, set(), {}, 0.5) == ("release", {})
 
 
 def test_slow_reply_cannot_queue_motion_and_release_follows_inflight():
@@ -245,7 +426,9 @@ async def test_native_launch_requires_approved_robot_access():
         await Application.action(service, "controller.open", {})
     service.remote_status.update(robot=True, robots=[{"id": "robot"}])
     await Application.action(service, "controller.open", {"id": "robot"})
-    service.controller.open.assert_awaited_once_with("http://127.0.0.1:8002", "robot", None, None)
+    service.controller.open.assert_awaited_once_with(
+        "http://127.0.0.1:8002", "robot", None, None, None
+    )
     with pytest.raises(ValueError):
         await Application.action(service, "controller.open", {"id": "missing"})
 

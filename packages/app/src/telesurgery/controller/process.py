@@ -27,7 +27,7 @@ class NativeController:
             state["status"] = "closed"
         return state
 
-    async def open(self, server, robot=None, certificate=None, preferences=None):
+    async def open(self, server, robot=None, certificate=None, preferences=None, input_device=None):
         preferences = preferences or {}
         if (
             not isinstance(preferences, dict)
@@ -42,6 +42,16 @@ class NativeController:
             )
         ):
             raise ValueError("Controller speeds must be percentages from 1 to 100")
+        if input_device is not None and (
+            not isinstance(input_device, dict)
+            or set(input_device) != {"name", "ordinal", "count"}
+            or not isinstance(input_device["name"], str)
+            or not 1 <= len(input_device["name"]) <= 80
+            or type(input_device["ordinal"]) is not int
+            or type(input_device["count"]) is not int
+            or not 0 <= input_device["ordinal"] < input_device["count"] <= 32
+        ):
+            raise ValueError("Invalid controller selection")
         if not os.environ.get("DISPLAY"):
             raise RuntimeError("Native controls need a desktop display on this service's machine")
         async with self.lock:
@@ -59,6 +69,7 @@ class NativeController:
                         "certificate": certificate,
                         "status_path": str(self.path),
                         "generation": self.temporary.name,
+                        "input": input_device,
                         "preferences": {**self.finished.get("preferences", {}), **preferences},
                     }
                 )

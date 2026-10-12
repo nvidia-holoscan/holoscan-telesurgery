@@ -62,6 +62,7 @@ class Keyboard:
 class Inputs:
     def __init__(self, robot):
         self.controls = robot["controls"]
+        self.hold_grip = robot.get("kind") == "versius-sim"
         self.groups = self.controls.get("groups", {})
         self.dual = set(self.groups) == {"left", "right"}
         self.mode = "cartesian" if self.controls.get("cartesian") else "joints"
@@ -208,7 +209,7 @@ class Inputs:
         grip = {}
         grip_pressed = False
         for group in self.controls.get("grippers", []):
-            if group == "hand" and cartesian:
+            if group == "hand" and cartesian and not self.hold_grip:
                 grip_pressed = bool(down(2))
             else:
                 close, opened = (14, 15) if group == "left" else (2, 1)
@@ -256,7 +257,7 @@ class Inputs:
             return None
         if cartesian:
             position = state.get("grippers", {}).get("hand")
-            if grip_pressed and self.toggle_ready and position is not None:
+            if not self.hold_grip and grip_pressed and self.toggle_ready and position is not None:
                 self.grip_target = (
                     0
                     if (self.grip_target if self.grip_target is not None else position) > 0.5

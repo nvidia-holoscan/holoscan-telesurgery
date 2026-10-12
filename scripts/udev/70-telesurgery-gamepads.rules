@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Enable ordinary HID reports without detaching the kernel's gamepad driver.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="057e", ATTR{idProduct}=="2069", RUN+="/usr/bin/python3 /usr/local/libexec/telesurgery-gamepads --device $env{DEVNAME}"

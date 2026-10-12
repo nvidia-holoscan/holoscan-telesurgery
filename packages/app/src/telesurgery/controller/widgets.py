@@ -11,25 +11,43 @@ INK, MUTED, BORDER, GREEN = "#18211d", "#69756f", "#e1e5e4", "#659c13"
 FONT = "Inter"
 
 
+class Scale:
+    """Match custom pixel dimensions to the desktop's rendered font size.
+
+    Xft can scale fonts independently of Tk's reported DPI (notably on XWayland).
+    The 96-DPI layout uses a 19-pixel line for its 10-point body font.
+    """
+
+    def __init__(self, widget):
+        reference = font.Font(widget, family=FONT, size=10)
+        self.factor = max(1.0, reference.metrics("linespace") / 19)
+
+    def __call__(self, *values):
+        result = tuple(round(value * self.factor) for value in values)
+        return result[0] if len(result) == 1 else result
+
+
 def dropdown_style(root):
     """Keep native dropdown behavior, with the dashboard's rounded field and chevron."""
+    px = Scale(root)
     style = ttk.Style(root)
     style.theme_use("clam")
 
     def field(border, fill="white"):
-        image = tk.PhotoImage(master=root, width=24, height=24)
-        for y in range(24):
-            for x in range(24):
-                distance = math.hypot(max(6 - x, 0, x - 17), max(6 - y, 0, y - 17))
+        image = tk.PhotoImage(master=root, width=px(24), height=px(24))
+        for y in range(px(24)):
+            for x in range(px(24)):
+                dx, dy = x / px.factor, y / px.factor
+                distance = math.hypot(max(6 - dx, 0, dx - 17), max(6 - dy, 0, dy - 17))
                 if distance <= 6:
                     image.put(border if distance > 5 else fill, (x, y))
         return image
 
     def arrow(color):
-        image = tk.PhotoImage(master=root, width=28, height=20)
-        for x in range(9):
-            y = 7 + min(x, 8 - x)
-            image.put(color, to=(9 + x, y, 10 + x, y + 2))
+        image = tk.PhotoImage(master=root, width=px(28), height=px(20))
+        for x in range(px(9)):
+            y = px(7) + min(x, px(9) - 1 - x)
+            image.put(color, to=(px(9) + x, y, px(9) + x + 1, y + px(2)))
         return image
 
     normal, focused = field("#d5ded2"), field(GREEN)
@@ -41,7 +59,7 @@ def dropdown_style(root):
         normal,
         ("disabled", disabled),
         ("focus", focused),
-        border=8,
+        border=px(8),
         padding=0,
         sticky="nsew",
     )
@@ -74,7 +92,7 @@ def dropdown_style(root):
             ),
         ],
     )
-    style.configure("TCombobox", padding=(10, 8, 0, 8), foreground=INK, background="white")
+    style.configure("TCombobox", padding=px(10, 8, 0, 8), foreground=INK, background="white")
     style.configure("Control.TCombobox", background="#f6f8f7")
     style.map(
         "TCombobox",
@@ -99,6 +117,7 @@ def dropdown_style(root):
 class Tooltip:
     def __init__(self, widget, text):
         self.widget, self.text = widget, text
+        self.px = Scale(widget)
         widget.tooltip = self
         self.timer = self.window = None
         widget.bind("<Enter>", self.enter, add=True)
@@ -114,7 +133,7 @@ class Tooltip:
         self.window = tk.Toplevel(self.widget)
         self.window.overrideredirect(True)
         x = self.widget.winfo_rootx()
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + self.px(4)
         self.window.geometry(f"+{x}+{y}")
         tk.Label(
             self.window,
@@ -122,12 +141,12 @@ class Tooltip:
             font=(FONT, 9),
             fg=INK,
             bg="#fffde8",
-            padx=6,
-            pady=4,
-            wraplength=260,
+            padx=self.px(6),
+            pady=self.px(4),
+            wraplength=self.px(260),
             justify="left",
             relief="solid",
-            borderwidth=1,
+            borderwidth=self.px(1),
         ).pack()
 
     def hide(self, _=None):
@@ -139,28 +158,28 @@ class Tooltip:
             self.window = None
 
 
-def rounded(canvas, x, y, width, height, radius=5, **options):
+def rounded(canvas, x, y, box_width, box_height, radius=5, **options):
     return canvas.create_polygon(
         x + radius,
         y,
-        x + width - radius,
+        x + box_width - radius,
         y,
-        x + width,
+        x + box_width,
         y,
-        x + width,
+        x + box_width,
         y + radius,
-        x + width,
-        y + height - radius,
-        x + width,
-        y + height,
-        x + width - radius,
-        y + height,
+        x + box_width,
+        y + box_height - radius,
+        x + box_width,
+        y + box_height,
+        x + box_width - radius,
+        y + box_height,
         x + radius,
-        y + height,
+        y + box_height,
         x,
-        y + height,
+        y + box_height,
         x,
-        y + height - radius,
+        y + box_height - radius,
         x,
         y + radius,
         x,
@@ -168,6 +187,100 @@ def rounded(canvas, x, y, width, height, radius=5, **options):
         smooth=True,
         **options,
     )
+
+
+def symbol(canvas, text, x, y, size, color, text_font):
+    """Draw controller symbols with the same strong strokes as the web icons."""
+    half, stroke = size / 2, max(1, size / 8)
+    if text == "□":
+        canvas.create_rectangle(x - half, y - half, x + half, y + half, outline=color, width=stroke)
+    elif text == "○":
+        canvas.create_oval(x - half, y - half, x + half, y + half, outline=color, width=stroke)
+    elif text == "△":
+        canvas.create_polygon(
+            x,
+            y - half,
+            x + half,
+            y + half,
+            x - half,
+            y + half,
+            fill="",
+            outline=color,
+            width=stroke,
+        )
+    elif text in {"←", "→", "↑", "↓"}:
+        # Match the dashboard's 24-unit SVG paths and 2.5-unit stroke.
+        head, shaft = {
+            "←": ((10, 5, 3, 12, 10, 19), (3, 12, 21, 12)),
+            "→": ((14, 5, 21, 12, 14, 19), (3, 12, 21, 12)),
+            "↑": ((5, 10, 12, 3, 19, 10), (12, 3, 12, 21)),
+            "↓": ((5, 14, 12, 21, 19, 14), (12, 3, 12, 21)),
+        }[text]
+        for points in (head, shaft):
+            canvas.create_line(
+                *[(x if i % 2 == 0 else y) + (v - 12) * size / 24 for i, v in enumerate(points)],
+                fill=color,
+                width=size * 2.5 / 24,
+                capstyle="round",
+                joinstyle="round",
+            )
+    else:
+        canvas.create_text(x, y, text=text, font=text_font, fill=color)
+
+
+class Badge(tk.Canvas):
+    """Noninteractive gamepad binding, highlighted only while that input is active."""
+
+    def __init__(self, parent, text):
+        self.px = Scale(parent)
+        # Use 16px direction glyphs; bold fallback fonts fill in their arrowheads.
+        direction = text in {"↔", "↕"}
+        self.text_font = font.Font(
+            parent,
+            family=FONT,
+            size=12 if direction else 9,
+            weight="normal" if direction else "bold",
+        )
+        self.text, self.active = text, False
+        super().__init__(
+            parent,
+            width=max(self.px(28), self.text_font.measure(text) + self.px(12)),
+            height=self.px(27),
+            bg="#f6f8f7",
+            highlightthickness=0,
+            takefocus=False,
+        )
+        self.bind("<Configure>", lambda _: self.draw())
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        width, height = max(self.winfo_width(), int(self.cget("width"))), self.px(27)
+        rounded(
+            self,
+            self.px(1),
+            self.px(1),
+            width - self.px(3),
+            height - self.px(3),
+            radius=self.px(4),
+            width=self.px(1),
+            fill="#eaf3df" if self.active else "white",
+            outline="#76a443" if self.active else BORDER,
+        )
+        symbol(
+            self,
+            self.text,
+            width / 2,
+            height / 2,
+            self.px(14 if self.text in {"←", "→", "↑", "↓"} else 13),
+            "#365809" if self.active else INK,
+            self.text_font,
+        )
+
+    def update_state(self, active):
+        if self.active != active:
+            self.active = active
+            self.draw()
 
 
 class Button(tk.Canvas):
@@ -183,10 +296,20 @@ class Button(tk.Canvas):
         icon=None,
         shortcut=None,
     ):
+        self.px = Scale(parent)
+        self.text_font = font.Font(parent, family=FONT, size=10, weight="bold")
+        self.label_font = (
+            font.Font(parent, family=FONT, size=9, weight="bold") if shortcut else None
+        )
+        text_width = (
+            self.label_font.measure(text) + self.px(23)
+            if shortcut
+            else self.text_font.measure(text)
+        )
         super().__init__(
             parent,
-            width=width,
-            height=34,
+            width=max(self.px(width), text_width + self.px(12)) if not icon else self.px(width),
+            height=self.px(34),
             bg="white",
             highlightthickness=0,
             takefocus=True,
@@ -195,7 +318,6 @@ class Button(tk.Canvas):
         self.text, self.command, self.color, self.hold = text, command, color, hold
         self.icon = icon
         self.shortcut = shortcut
-        self.label_font = font.Font(self, family=FONT, size=9) if shortcut else None
         self.enabled, self.pressed = True, False
         self.down = False
         self.space_down, self.space_timer = False, None
@@ -232,13 +354,16 @@ class Button(tk.Canvas):
 
     def draw(self):
         self.delete("all")
+        px = self.px
         width = max(self.winfo_width(), int(self.cget("width")))
         rounded(
             self,
-            1,
-            1,
-            width - 3,
-            31,
+            px(1),
+            px(1),
+            width - px(3),
+            px(31),
+            radius=px(5),
+            width=px(1),
             fill="#e4f1cf" if self.pressed else "white",
             outline="#76b900" if self.pressed else "#cdd6cc",
         )
@@ -273,27 +398,43 @@ class Button(tk.Canvas):
             )
             self.create_line(
                 *[
-                    width / 2 - 10 + value * 5 / 6 if index % 2 == 0 else 7 + value * 5 / 6
+                    width / 2 + px(-10 + value * 5 / 6) if index % 2 == 0 else px(7 + value * 5 / 6)
                     for index, value in enumerate(points)
                 ],
                 fill=color,
-                width=1.5,
+                width=1.5 * px.factor,
                 capstyle="round",
                 joinstyle="round",
             )
         elif self.shortcut:
-            left = (width - self.label_font.measure(self.text) - 23) / 2
-            self.create_rectangle(left, 8, left + 17, 25, fill="#f6f8f7", outline="#d7dfd3")
-            self.create_text(left + 8.5, 17, text=self.shortcut, font=(FONT, 9, "bold"), fill=color)
+            left = (width - self.label_font.measure(self.text) - px(23)) / 2
+            self.create_rectangle(
+                left,
+                px(8),
+                left + px(17),
+                px(25),
+                fill="#f6f8f7",
+                outline="#d7dfd3",
+                width=px(1),
+            )
+            symbol(
+                self,
+                self.shortcut,
+                left + px(8.5),
+                px(17),
+                px(14 if self.shortcut in {"←", "→", "↑", "↓"} else 11),
+                color,
+                (FONT, 9, "bold"),
+            )
             self.create_text(
-                left + 23, 17, text=self.text, anchor="w", font=self.label_font, fill=color
+                left + px(23), px(17), text=self.text, anchor="w", font=self.label_font, fill=color
             )
         else:
             self.create_text(
                 width / 2,
-                17,
+                px(17),
                 text=self.text,
-                font=(FONT, 10, "bold"),
+                font=self.text_font,
                 fill=color,
             )
 
@@ -332,11 +473,18 @@ class Button(tk.Canvas):
 
 class Slider(tk.Canvas):
     def __init__(self, parent, text, value, changed, minimum=1):
+        self.px = Scale(parent)
         super().__init__(
-            parent, width=365, height=32, bg="white", highlightthickness=0, takefocus=True
+            parent,
+            width=self.px(365),
+            height=self.px(32),
+            bg="white",
+            highlightthickness=0,
+            takefocus=True,
         )
         self.text, self.value, self.changed, self.minimum = text, value, changed, minimum
         self.value_font = font.Font(self, family=FONT, size=9)
+        self.label_font = font.Font(self, family=FONT, size=9, weight="bold")
         self.enabled = True
         self.bind("<Configure>", lambda _: self.draw())
         self.bind("<Button-1>", self.move)
@@ -359,22 +507,50 @@ class Slider(tk.Canvas):
         )
 
     def label_left(self):
-        return self.winfo_width() - self.value_font.measure("100%") - 1
+        return self.winfo_width() - self.value_font.measure("100%") - self.px(1)
 
     def track_bounds(self):
-        return 96, max(97, self.label_left() - 12)
+        start = max(self.px(96), self.label_font.measure(self.text) + self.px(18))
+        return start, max(start + self.px(1), self.label_left() - self.px(12))
 
     def draw(self):
         self.delete("all")
+        px = self.px
         color = GREEN if self.enabled else "#a8b0ab"
         start, end = self.track_bounds()
         position = start + (end - start) * (self.value - self.minimum) / max(1, 100 - self.minimum)
-        self.create_text(0, 16, anchor="w", text=self.text, font=(FONT, 10), fill=INK)
-        self.create_line(90, 16, end + 6, 16, fill="#d7dfd3", width=4, capstyle="round")
-        self.create_line(90, 16, position, 16, fill=color, width=4, capstyle="round")
-        self.create_oval(position - 6, 10, position + 6, 22, fill=color, outline="white", width=2)
+        self.create_text(0, px(16), anchor="w", text=self.text, font=self.label_font, fill=INK)
+        self.create_line(
+            start - px(6),
+            px(16),
+            end + px(6),
+            px(16),
+            fill="#d7dfd3",
+            width=px(4),
+            capstyle="round",
+        )
+        self.create_line(
+            start - px(6), px(16), position, px(16), fill=color, width=px(4), capstyle="round"
+        )
+        self.create_oval(
+            position - px(6),
+            px(10),
+            position + px(6),
+            px(22),
+            fill=color,
+            outline="white",
+            width=px(2),
+        )
+        self.create_oval(
+            position - px(7), px(9), position + px(7), px(23), outline=color, width=px(1)
+        )
         self.create_text(
-            self.label_left(), 16, anchor="w", text=f"{self.value}%", font=self.value_font, fill=INK
+            self.label_left(),
+            px(16),
+            anchor="w",
+            text=f"{self.value}%",
+            font=self.value_font,
+            fill=INK,
         )
 
     def update_state(self, enabled):

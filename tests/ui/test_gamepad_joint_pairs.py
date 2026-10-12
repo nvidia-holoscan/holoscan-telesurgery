@@ -62,11 +62,21 @@ async def controller_page(name="DualSense", kind="mira-sim"):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mira-sim", "franka-sim"])
-@pytest.mark.parametrize("name", ["DualSense", "Xbox Wireless Controller"])
+@pytest.mark.parametrize(
+    "name", ["DualSense", "Xbox Wireless Controller", "Nintendo Switch Pro Controller"]
+)
 @pytest.mark.parametrize("order", [(4, 5), (5, 4), (4, 5, "together")])
 async def test_either_shoulder_order_selects_same_joints(name, order, kind):
     async with controller_page(name, kind) as page:
         franka = kind == "franka-sim"
+        if not franka:
+            await expect(page.locator(".gamepad-roll-arm").nth(1).locator("kbd")).to_have_text(
+                {
+                    "DualSense": ["△", "✕"],
+                    "Xbox Wireless Controller": ["Y", "A"],
+                    "Nintendo Switch Pro Controller": ["X", "B"],
+                }[name]
+            )
         if len(order) == 3:
             await page.evaluate("pad.buttons[4].pressed=pad.buttons[5].pressed=true")
             await page.clock.run_for(50)
@@ -77,7 +87,13 @@ async def test_either_shoulder_order_selects_same_joints(name, order, kind):
         assert await page.evaluate("moves") == []
         assert await page.evaluate("stops") == 0
         await expect(page.locator('.gamepad-instructions kbd[data-active="true"]')).to_have_text(
-            ["L1 + R1" if name == "DualSense" else "LB + RB"]
+            [
+                {
+                    "DualSense": "L1 + R1",
+                    "Xbox Wireless Controller": "LB + RB",
+                    "Nintendo Switch Pro Controller": "L + R",
+                }[name]
+            ]
         )
         await page.evaluate("pad.axes=[1,-1,-1,1]")
         await page.clock.run_for(50)
@@ -99,7 +115,13 @@ async def test_either_shoulder_order_selects_same_joints(name, order, kind):
         await page.evaluate("pad.buttons[5].pressed=false")
         await page.clock.run_for(50)
         await expect(page.locator('.gamepad-instructions kbd[data-active="true"]')).to_have_text(
-            ["L1" if name == "DualSense" else "LB"]
+            [
+                {
+                    "DualSense": "L1",
+                    "Xbox Wireless Controller": "LB",
+                    "Nintendo Switch Pro Controller": "L",
+                }[name]
+            ]
         )
         await page.evaluate("pad.axes=[1,-1,-1,1]")
         await page.clock.run_for(50)

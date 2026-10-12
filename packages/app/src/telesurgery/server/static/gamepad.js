@@ -3,6 +3,7 @@
 
 import { element } from "./ui.js";
 import { icon } from "./icons.js";
+import { normalizeGamepad } from "./gamepad-mapping.js";
 import {
     emptyJog,
     inputBlocked,
@@ -18,27 +19,30 @@ const axis = (value) => {
 };
 
 function controllerName(id) {
-    if (/dualsense/i.test(id) || /054c.*0ce6/i.test(id)) return "Sony DualSense";
-    if (/dualshock|054c.*(05c4|09cc)/i.test(id)) return "Sony DualShock 4";
-    if (/xbox|x-box/i.test(id)) return "Xbox controller";
+    if (/dualsense|ps5\b|054c.*0ce6/i.test(id)) return "Sony DualSense";
+    if (/dualshock|ps4\b|054c.*(05c4|09cc)/i.test(id)) return "Sony DualShock 4";
+    if (/playstation|ps3\b|054c/i.test(id)) return "PlayStation controller";
+    if (/nintendo|switch.*pro|joy.?con|057e/i.test(id)) return "Nintendo controller";
+    if (/xbox|x-box|xinput/i.test(id)) return "Xbox controller";
     const name = id.replace(/\s*\([^)]*\)\s*/g, " ").trim();
     return name.length > 26 ? `${name.slice(0, 25)}…` : name || "Gamepad";
 }
 
 function controllerBindings(id) {
-    const playstation = /dualsense|dualshock|054c|playstation/i.test(id);
-    const xbox = /xbox|x-box/i.test(id);
+    const playstation = /dualsense|dualshock|054c|playstation|ps[345]\b/i.test(id);
+    const nintendo = /nintendo|switch.*pro|joy.?con|057e/i.test(id);
+    const xbox = /xbox|x-box|xinput/i.test(id);
     return {
-        enable: playstation ? "L1" : xbox ? "LB" : "LB/L1",
-        alternate: playstation ? "R1" : xbox ? "RB" : "RB/R1",
-        rollUp: playstation ? "△" : xbox ? "Y" : "North",
-        rollDown: playstation ? "✕" : xbox ? "A" : "South",
-        home: playstation ? "PS button" : xbox ? "Xbox button" : "Guide button",
-        homeFallback: playstation ? "Options" : xbox ? "Menu ☰" : "Start / Menu",
+        enable: playstation ? "L1" : nintendo ? "L" : xbox ? "LB" : "LB/L1",
+        alternate: playstation ? "R1" : nintendo ? "R" : xbox ? "RB" : "RB/R1",
+        rollUp: playstation ? "△" : nintendo ? "X" : xbox ? "Y" : "North",
+        rollDown: playstation ? "✕" : nintendo ? "B" : xbox ? "A" : "South",
+        home: playstation ? "PS button" : nintendo ? "Home button" : xbox ? "Xbox button" : "Guide button",
+        homeFallback: playstation ? "Options" : nintendo ? "+" : xbox ? "Menu ☰" : "Start / Menu",
         z: "←",
         x: "→",
-        n: playstation ? "□" : xbox ? "X" : "West",
-        m: playstation ? "○" : xbox ? "B" : "East",
+        n: playstation ? "□" : nintendo ? "Y" : xbox ? "X" : "West",
+        m: playstation ? "○" : nintendo ? "A" : xbox ? "B" : "East",
     };
 }
 
@@ -49,10 +53,14 @@ export function gamepadInput(
     const dual = pairedArms(robot);
     const franka = ["franka", "franka-sim"].includes(robot.kind) &&
         robot.controls.groups.joints === 7 && jogGroups(robot).length === 1;
-    const cartesian = Boolean(robot.controls.cartesian);
-    const shoulderGroups = dual || (franka && !cartesian);
+    const toolControl = Boolean(robot.controls.cartesian);
+    const jointCount = robot.controls.groups.joints;
+    const bankedJoints = franka || (toolControl && jogGroups(robot).length === 1 && jointCount <= 8);
+    let cartesian = toolControl;
+    const shoulderGroups = dual || bankedJoints;
     const roll = dual && robot.controls.groups.left === 5;
     const grippers = robot.controls.grippers || [];
+    const holdGrip = robot.kind === "versius-sim";
     const enabledTools = roll && grippers.length ? "arms, roll & grip"
         : roll ? "arms & roll" : grippers.length ? "arms & grip" : "movement";
     const container = element("div", undefined, "gamepad-controls");
@@ -79,7 +87,18 @@ export function gamepadInput(
         }
     }
     const miraTool = Boolean(robot.controls.mira_cartesian);
-    if (miraTool) {
+    if (toolControl) {
+        group.setAttribute("aria-label", `${robot.name} gamepad mode`);
+        if (bankedJoints) {
+            const option = element("option", "Individual joints (advanced)");
+            option.value = "joints:0";
+            group.replaceChildren(option);
+        }
+        const option = element("option", "Tool movement");
+        option.value = "cartesian";
+        group.prepend(option);
+        group.value = "cartesian";
+    } else if (miraTool) {
         group.replaceChildren();
         group.setAttribute("aria-label", `${robot.name} gamepad mode`);
         for (const [value, label] of [["joints", "Joint movement"], ["mira-tool", "Tool movement · X/Y/Z + elbow"]]) {
@@ -89,7 +108,7 @@ export function gamepadInput(
         }
     }
     const miraCartesian = () => miraTool && group.value === "mira-tool";
-    group.hidden = !miraTool && (cartesian || shoulderGroups || group.options.length < 2);
+    group.hidden = !toolControl && !miraTool && (shoulderGroups || group.options.length < 2);
     const status = element(
         "p",
         "Press a gamepad button to discover it.",
@@ -110,72 +129,79 @@ export function gamepadInput(
     rollControls.hidden = !roll;
     const enableKey = element("kbd"), alternateKey = element("kbd");
     const enableHint = element("span"), alternateHint = element("span", "Joints 3–4 · move sticks");
-    instructions.append(enableKey, enableHint);
-    if (shoulderGroups) instructions.append(alternateKey, alternateHint);
     const stickJoints = [];
     const positionHeadings = [];
     const cartesianKeys = [];
     let handPosition = robot.state?.grippers?.hand ?? null, gripTarget = null, handToggleReady = false;
-    if (cartesian) {
-        instructions.className = "cartesian-mapping";
-        instructions.replaceChildren();
-        for (const [title, bindings] of [
-            ["Left stick", [["↔", "Left / right", 0], ["↕", "Forward / back", 1]]],
-            ["Right stick", [["↕", "Up / down", 3], ["↔", "Turn", 2]]],
-            ["D-pad · tilt", [["↔", "Side to side", 4], ["↕", "Forward / back", 5]]],
-        ]) {
-            const section = element("div", undefined, "cartesian-directions");
-            section.append(element("span", title, "cartesian-label"));
-            for (const [symbol, label, index] of bindings) {
-                const row = element("div", undefined, "cartesian-direction");
-                const key = element("kbd", symbol);
-                key.setAttribute("aria-label", `${title}: ${label}`);
-                row.append(key, element("span", label));
-                section.append(row);
-                cartesianKeys.push({key, index});
-            }
-            instructions.append(section);
-        }
-        const frame = element("span", "Robot axes", "cartesian-frame");
-        frame.title = "Directions follow the robot base, independent of the camera view";
-        instructions.append(frame);
-    } else if (franka) {
-        instructions.className = "franka-gamepad";
-        instructions.replaceChildren();
-        for (const [bank, key, hint] of [[0, enableKey, enableHint], [1, alternateKey, alternateHint]]) {
-            const section = element("div", undefined, "franka-joint-group");
-            const heading = element("div", undefined, "gamepad-instructions");
-            heading.append(key, hint);
-            const sticks = element("div", undefined, "franka-sticks");
-            for (let stick = 0; stick < 2; stick++) {
-                const column = element("div", undefined, "keyboard-rows");
-                if (bank === 0) {
-                    const label = element("div", undefined, "franka-stick-heading");
-                    const unit = element("span", "°");
-                    positionHeadings.push(unit);
-                    label.append(element("span", stick === 0 ? "Left stick" : "Right stick"), unit);
-                    column.append(label);
+    let feedback = robot.state || {};
+    function renderMapping() {
+        stickJoints.length = positionHeadings.length = cartesianKeys.length = 0;
+        instructions.className = "gamepad-instructions";
+        instructions.replaceChildren(enableKey, enableHint);
+        if (shoulderGroups) instructions.append(alternateKey, alternateHint);
+        if (cartesian) {
+            instructions.className = "cartesian-mapping";
+            instructions.replaceChildren();
+            for (const [title, bindings] of [
+                ["Left stick", [["↔", "Left / right", 0], ["↕", "Forward / back", 1]]],
+                ["Right stick", [["↕", "Up / down", 3], ["↔", "Turn", 2]]],
+                ["D-pad · tilt", [["↔", "Side to side", 4], ["↕", "Forward / back", 5]]],
+            ]) {
+                const section = element("div", undefined, "cartesian-directions");
+                section.append(element("span", title, "cartesian-label"));
+                for (const [symbol, label, index] of bindings) {
+                    const row = element("div", undefined, "cartesian-direction");
+                    const key = element("kbd", symbol);
+                    key.setAttribute("aria-label", `${title}: ${label}`);
+                    row.append(key, element("span", label));
+                    section.append(row);
+                    cartesianKeys.push({key, index});
                 }
-                for (let direction = 0; direction < 2; direction++) {
-                    const axis = stick * 2 + direction, index = bank * 4 + axis;
-                    if (index >= 7) continue;
-                    const row = element("div", undefined, "franka-stick-joint");
-                    row.dataset.joint = String(index);
-                    const value = element("output", "—", "gamepad-joint-position");
-                    const cap = element("kbd", direction ? "↕" : "↔");
-                    cap.title = `${stick === 0 ? "Left" : "Right"} stick · ${direction ? "up increases, down decreases" : "right increases, left decreases"} J${index + 1}`;
-                    cap.setAttribute("aria-label", cap.title);
-                    row.append(element("span", `J${index + 1}`), value, cap);
-                    column.append(row);
-                    stickJoints.push({index, bank, axis, value, cap});
-                }
-                sticks.append(column);
+                instructions.append(section);
             }
-            section.append(heading, sticks);
-            instructions.append(section);
+            const frame = element("span", "Arm-base directions", "cartesian-frame");
+            frame.title = "Relative to this arm’s fixed base: forward +X, left +Y, up +Z. Camera and tool rotation do not change these directions.";
+            instructions.append(frame);
+        } else if (bankedJoints) {
+            instructions.className = "franka-gamepad";
+            instructions.replaceChildren();
+            for (const [bank, key, hint] of [[0, enableKey, enableHint], [1, alternateKey, alternateHint]]) {
+                const section = element("div", undefined, "franka-joint-group");
+                const heading = element("div", undefined, "gamepad-instructions");
+                heading.append(key, hint);
+                const sticks = element("div", undefined, "franka-sticks");
+                for (let stick = 0; stick < 2; stick++) {
+                    const column = element("div", undefined, "keyboard-rows");
+                    if (bank === 0) {
+                        const label = element("div", undefined, "franka-stick-heading");
+                        const unit = element("span", "°");
+                        positionHeadings.push(unit);
+                        label.append(element("span", stick === 0 ? "Left stick" : "Right stick"), unit);
+                        column.append(label);
+                    }
+                    for (let direction = 0; direction < 2; direction++) {
+                        const axis = stick * 2 + direction, index = bank * 4 + axis;
+                        if (index >= jointCount) continue;
+                        const row = element("div", undefined, "franka-stick-joint");
+                        row.dataset.joint = String(index);
+                        const value = element("output", "—", "gamepad-joint-position");
+                        const cap = element("kbd", direction ? "↕" : "↔");
+                        cap.title = `${stick === 0 ? "Left" : "Right"} stick · ${direction ? "up increases, down decreases" : "right increases, left decreases"} J${index + 1}`;
+                        cap.setAttribute("aria-label", cap.title);
+                        row.append(element("span", `J${index + 1}`), value, cap);
+                        column.append(row);
+                        stickJoints.push({index, bank, axis, value, cap});
+                    }
+                    sticks.append(column);
+                }
+                section.append(heading, sticks);
+                instructions.append(section);
+            }
         }
+        showFeedback(feedback);
     }
     function showFeedback(state = {}) {
+        feedback = state;
         handPosition = Number.isFinite(state?.grippers?.hand) ? state.grippers.hand : null;
         const measured = Boolean(state?.joints_deg);
         const values = (state?.joints_deg || state?.targets_deg)?.joints;
@@ -191,7 +217,7 @@ export function gamepadInput(
             joint.value.title = state?.feedback_source || label;
         }
     }
-    showFeedback(robot.state);
+    renderMapping();
     const leftRollKeys = ["up", "down"].map(direction => {
         const key = element("kbd");
         key.append(icon(direction));
@@ -207,16 +233,18 @@ export function gamepadInput(
             rollInstructions.append(arm);
         }
     }
-    const badges = [enableKey, alternateKey, ...leftRollKeys, ...rightRollKeys, ...stickJoints.map(j => j.cap), ...cartesianKeys.map(b => b.key)];
+    const badges = () => [enableKey, alternateKey, ...leftRollKeys, ...rightRollKeys, ...stickJoints.map(j => j.cap), ...cartesianKeys.map(b => b.key)];
     container.append(group, status, arms, rollControls);
     let allowed = false,
         enabled = false,
         disposed = false,
         armed = false;
     let signature = "",
+        restoreSelection = null,
         selectedId = "",
         active = false,
         busy = false,
+        stopping = false,
         alternate = false,
         lastMode = "",
         jointActive = false,
@@ -238,24 +266,29 @@ export function gamepadInput(
         gripTarget = null;
         handToggleReady = false;
         gripFeedback({});
-        for (const badge of badges) badge.dataset.active = "false";
+        for (const badge of badges()) badge.dataset.active = "false";
         if (active) {
             active = false;
-            stop();
+            stopping = true;
+            Promise.resolve(stop()).finally(() => { stopping = false; });
         }
     };
     device.addEventListener("change", () => {
         selectedId = "";
         halt();
     });
-    group.onchange = halt;
+    group.onchange = () => {
+        halt();
+        cartesian = toolControl && group.value === "cartesian";
+        renderMapping();
+    };
     function poll() {
         if (disposed) return;
-        for (const badge of badges) badge.dataset.active = "false";
+        for (const badge of badges()) badge.dataset.active = "false";
         gripFeedback({});
         let pads;
         try {
-            pads = Array.from(navigator.getGamepads?.() || []).filter(
+            pads = Array.from(navigator.getGamepads?.() || []).map(normalizeGamepad).filter(
                 (p) => p?.connected,
             );
         } catch {
@@ -306,6 +339,17 @@ export function gamepadInput(
                 device.dispatchEvent(new Event("change"));
             }
         }
+        if (restoreSelection) {
+            const previous = restoreSelection;
+            restoreSelection = null;
+            const matching = pads.filter(p => p.mapping === "standard" &&
+                controllerName(p.id) === previous.name);
+            const match = "id" in previous
+                ? pads.find(p => p.index === previous.index && p.id === previous.id && p.mapping === "standard")
+                : matching.length === previous.count ? matching[previous.ordinal] : null;
+            device.value = match ? String(match.index) : "keyboard";
+            device.dispatchEvent(new Event("change"));
+        }
         const pad = pads.find((p) => String(p.index) === device.value);
         device.title = pad?.id || "To use a gamepad, connect it and press a button, then select it here.";
         const { enable, alternate: alternateButton, rollUp, rollDown, home: logoButton, homeFallback } = controllerBindings(pad?.id || "");
@@ -314,8 +358,8 @@ export function gamepadInput(
         enableKey.textContent = enable;
         alternateKey.textContent = `${enable} + ${alternateButton}`;
         enableHint.textContent = dual ? miraCartesian() ? "X / Y · move sticks" : "Joints 1–2 · move sticks"
-            : franka ? "Joints 1–4" : "Hold to move · release to stop";
-        alternateHint.textContent = franka ? "Joints 5–7" : miraCartesian() ? "Z / elbow · move sticks" : "Joints 3–4 · move sticks";
+            : bankedJoints ? "Joints 1–4" : "Hold to move · release to stop";
+        alternateHint.textContent = bankedJoints ? `Joints 5–${jointCount}` : miraCartesian() ? "Z / elbow · move sticks" : "Joints 3–4 · move sticks";
         rightRollKeys[0].textContent = rollUp;
         rightRollKeys[1].textContent = rollDown;
         for (const [keys, arm, buttons] of [
@@ -328,7 +372,7 @@ export function gamepadInput(
         const now = performance.now(),
             delayed = lastTick && now - lastTick > 200;
         lastTick = now;
-        const blocked = !enabled || !allowed || inputBlocked();
+        const blocked = !enabled || !allowed || stopping || inputBlocked();
         if (
             blocked ||
             !pad ||
@@ -355,7 +399,7 @@ export function gamepadInput(
                 left: Number(down(12)) - Number(down(13)),
                 right: Number(down(3)) - Number(down(0)),
             };
-            const gripButtons = { left: [14, 15], right: [2, 1] };
+            const gripButtons = { left: [14, 15], right: [2, 1], hand: holdGrip || !cartesian ? [2, 1] : [] };
             const velocity = {};
             let gripPressed = false;
             for (const arm of grippers) {
@@ -365,7 +409,7 @@ export function gamepadInput(
                 gripPressed ||= closing || opening;
                 velocity[arm] = (Number(opening) - Number(closing)) * gripSpeed() / 100;
             }
-            if (cartesian) {
+            if (cartesian && !holdGrip) {
                 gripPressed = grippers.includes("hand") && down(2);
                 if (!gripPressed) handToggleReady = true;
             }
@@ -374,7 +418,7 @@ export function gamepadInput(
             const pressed = cartesian
                 ? axes.some(v => v !== 0) || rollPressed || gripPressed || gripTarget !== null
                 : Boolean(pad.buttons[4]?.pressed);
-            const nextAlternate = shoulderGroups && down(5);
+            const nextAlternate = !cartesian && shoulderGroups && down(5);
             if (nextAlternate !== alternate) {
                 // Either shoulder can be pressed first while input is already
                 // armed and idle. Never remap moving or interrupted input.
@@ -435,7 +479,7 @@ export function gamepadInput(
                     keys[1].dataset.active = String(roll && direction < 0);
                 }
                 if (cartesian) {
-                    if (gripPressed && handToggleReady && handPosition !== null) {
+                    if (!holdGrip && gripPressed && handToggleReady && handPosition !== null) {
                         gripTarget = (gripTarget ?? handPosition) > 0.5 ? 0 : 1;
                         handToggleReady = false;
                     }
@@ -471,7 +515,7 @@ export function gamepadInput(
                     }
                 } else {
                     const [key, start] = group.value.split(":"),
-                        offset = franka ? (alternate ? 4 : 0) : Number(start);
+                        offset = bankedJoints ? (alternate ? 4 : 0) : Number(start);
                     axes.forEach((v, i) => {
                         if (offset + i < command[key].length)
                             command[key][offset + i] = v * stepSize(key, offset + i, seconds);
@@ -533,11 +577,26 @@ export function gamepadInput(
     return {
         select: device,
         discovery,
-        bindings: () => controllerBindings(device.selectedOptions[0]?.title || ""),
+        bindings: () => ({
+            ...controllerBindings(device.selectedOptions[0]?.title || ""),
+            toggleGrip: cartesian && !holdGrip,
+            enableRequired: !cartesian,
+        }),
+        selection: () => device.value === "keyboard" ? null : {
+            index: Number(device.value), id: device.selectedOptions[0]?.title,
+        },
+        handoff() {
+            if (device.value === "keyboard") return null;
+            const name = controllerName(device.selectedOptions[0].title);
+            const matching = [...device.options].filter(option => option.value !== "keyboard" &&
+                !option.disabled && controllerName(option.title) === name);
+            return {name, ordinal: matching.indexOf(device.selectedOptions[0]), count: matching.length};
+        },
+        restore(selection) { restoreSelection = selection; },
         element: container,
         arms,
         roll: rollControls,
-        inlineFeedback: franka && !cartesian,
+        get inlineFeedback() { return bankedJoints && !cartesian; },
         feedback: showFeedback,
         update(on, available) {
             if ((enabled && !on) || (allowed && !available)) halt();

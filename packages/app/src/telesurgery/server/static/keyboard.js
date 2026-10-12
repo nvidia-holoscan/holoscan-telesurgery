@@ -149,8 +149,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                 armRows.append(section);
             }
             const hint = element("div", undefined, "cartesian-keyboard-hint");
-            const frame = element("span", "Robot axes");
-            frame.title = "Directions follow the robot base, independent of the camera view";
+            const frame = element("span", "Arm-base directions");
+            frame.title = "Relative to this arm’s fixed base: forward +X, left +Y, up +Z. Camera and tool rotation do not change these directions.";
             hint.append(element("span", "Hold to move · release to stop"), frame);
             armRows.append(hint);
             return;

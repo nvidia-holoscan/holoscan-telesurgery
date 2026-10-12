@@ -40,7 +40,7 @@ with Path(os.environ["SETUP_CALLS"]).open("a") as log:
 if os.environ.get("SETUP_FAIL") in command:
     sys.exit("Setup fixture failure")
 if command[0] == "dpkg-query":
-    if command[-1] == "libegl1":
+    if command[-1] in os.environ.get("SETUP_MISSING_PACKAGES", "libegl1").split():
         sys.exit(1)
     print("installed")
 elif command[0] == "nvcc":
@@ -82,6 +82,7 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     assert commands == [
         ["nvcc", "--version"],
         ["python3", "scripts/clock_sync.py"],
+        ["python3", "scripts/setup_gamepads.py"],
         ["apt-get", "update"],
         ["apt-get", "install", "-y", "--no-remove", "--no-install-recommends", "libegl1"],
         *([["c++", "-std=c++20", "-x", "c++", "-fsyntax-only", "-"]] if sdk == "5" else []),
@@ -118,12 +119,37 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     assert "Setup complete." in result.stdout
 
 
+@pytest.mark.parametrize("sdk", ["4", "5"])
+def test_missing_controller_libraries_use_distribution_versions(setup, monkeypatch, sdk):
+    _, invoke = setup
+    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk")
+    result, records = invoke("--sdk", sdk)
+    assert result.returncode == 0, result.stderr
+    installs = [
+        item["command"] for item in records if item["command"][:2] == ["apt-get", "install"]
+    ]
+    assert installs == [
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "--no-remove",
+            "--no-install-recommends",
+            "libsdl2-2.0-0",
+            "python3-tk",
+        ]
+    ]
+
+
 @pytest.mark.parametrize("options", [(), ("--profile", "franka")])
-def test_docker_setup_only_prepares_clock(setup, options):
+def test_docker_setup_prepares_clock_and_gamepad_hotplug(setup, options):
     _, invoke = setup
     result, records = invoke("--docker", *options)
     assert result.returncode == 0, result.stderr
-    assert records == [{"command": ["python3", "scripts/clock_sync.py"], "sdk": "5"}]
+    assert records == [
+        {"command": ["python3", "scripts/clock_sync.py"], "sdk": "5"},
+        {"command": ["python3", "scripts/setup_gamepads.py"], "sdk": "5"},
+    ]
 
 
 @pytest.mark.parametrize("sdk", ["4", "5"])

@@ -18,7 +18,8 @@ window.inputFocus = true;
 document.hasFocus = () => window.inputFocus;
 window.pad = {id: 'Test gamepad', index: 0, mapping: 'standard', connected: true,
  axes: [0,0,0,0], buttons: Array.from({length:17}, () => ({pressed:false,value:0}))};
-navigator.getGamepads = () => [window.pad];
+window.other = {...structuredClone(window.pad), index: 1};
+navigator.getGamepads = () => [window.pad, window.other].filter(p => p.connected);
 window.RTCPeerConnection=class {
  constructor(){this.iceGatheringState='complete'}
  addTransceiver(){return {setCodecPreferences(){}}}
@@ -32,7 +33,8 @@ window.RTCPeerConnection=class {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["franka", "mira"])
-async def test_native_controls_handoff_docking_and_startup_failure(kind):
+@pytest.mark.parametrize("selected", ["keyboard", "0", "1"])
+async def test_native_controls_handoff_docking_and_startup_failure(kind, selected):
     robot = {
         "id": kind,
         "name": kind.title(),
@@ -94,6 +96,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind):
                     "status": "running",
                     "robot": params["id"],
                     "preferences": params["preferences"],
+                    "input": params["input"],
                     "generation": str(len(calls)),
                 }
             elif method == "controller.close":
@@ -135,6 +138,11 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind):
             await page.keyboard.down("q")
             await context.clock.run_for(650)
             assert any(c["action"] == "robot.move" for c in calls)
+            await page.keyboard.up("q")
+            selector = page.get_by_label(f"{robot['name']} input", exact=True)
+            if selected != "keyboard":
+                await selector.select_option(selected)
+                await context.clock.run_for(100)
             await page.get_by_role("button", name="Pop out robot controls", exact=True).click()
             await expect(page.locator("#robots")).to_be_hidden()
             await expect(page.locator("#native-controller-away")).to_be_visible()
@@ -143,6 +151,11 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind):
             assert methods.index("robot.release") < methods.index("controller.open")
             opened = next(c for c in calls if c["action"] == "controller.open")
             assert opened["params"]["preferences"][f"{kind}:arm-speed"] == 30
+            assert opened["params"]["input"] == (
+                None
+                if selected == "keyboard"
+                else {"name": "Test gamepad", "ordinal": int(selected), "count": 2}
+            )
             # Observing the native window's ownership must never release/renew it.
             robot.update(owner="Operator", owner_id="operator")
             state["native_controller"]["preferences"][f"{kind}:arm-speed"] = 55
@@ -150,9 +163,22 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind):
             await context.clock.run_for(2500)
             assert len([c for c in calls if c["action"].startswith("robot.")]) == count
             await page.keyboard.up("q")
+            if selected != "keyboard":
+                await page.evaluate(
+                    "i => {const p=i===0?pad:other;p.buttons[4].pressed=true;p.axes[0]=1}",
+                    int(selected),
+                )
+            moves = len([c for c in calls if c["action"] == "robot.move"])
             await page.get_by_role("button", name="Dock robot controls", exact=True).click()
             await expect(speed).to_have_value("55")
             await expect(page.locator("#robots")).to_be_visible()
+            await expect(selector).to_have_value(selected)
+            await context.clock.run_for(250)
+            assert len([c for c in calls if c["action"] == "robot.move"]) == moves
+            await page.evaluate(
+                "for (const p of [pad,other]) {p.buttons[4].pressed=false;p.axes.fill(0)}"
+            )
+            await context.clock.run_for(100)
             await page.get_by_role("button", name="Pop out all", exact=True).click()
             await expect(page.locator("#robots")).to_be_hidden()
             assert [c["params"]["camera"] for c in calls if c["action"] == "view.holoviz"] == [
@@ -161,6 +187,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind):
             ]
             await page.get_by_role("button", name="Dock all", exact=True).click()
             await expect(page.locator("#robots")).to_be_visible()
+            await expect(selector).to_have_value(selected)
             await expect(page.get_by_role("button", name="Dock all", exact=True)).to_be_disabled()
             closed = [
                 (c["action"], c["params"]["camera"])

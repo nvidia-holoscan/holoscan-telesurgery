@@ -707,6 +707,7 @@ class Application:
                 selected,
                 self.controller_certificate,
                 params.get("preferences"),
+                params.get("input"),
             )
         if method == "view.depth":
             return await self.native.display(**params)

@@ -260,7 +260,18 @@ async def test_release_during_slow_command_never_queues_or_replays_motion(ending
 
 
 @pytest.mark.asyncio
-async def test_input_dropdown_lists_devices_and_does_not_switch_motion_on_hotplug():
+@pytest.mark.parametrize(
+    "names,label",
+    [
+        (("PS5 Controller", "DualSense Wireless Controller"), "Sony DualSense"),
+        (("Xbox Wireless Controller", "X-Box One Controller"), "Xbox controller"),
+        (
+            ("Nintendo Switch Pro Controller", "Nintendo Switch Pro Controller"),
+            "Nintendo controller",
+        ),
+    ],
+)
+async def test_input_dropdown_lists_devices_and_does_not_switch_motion_on_hotplug(names, label):
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         try:
@@ -276,22 +287,34 @@ async def test_input_dropdown_lists_devices_and_does_not_switch_motion_on_hotplu
 
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
-            await page.evaluate("""async () => {
+            await page.evaluate(
+                """async names => {
                 const {gamepadInput}=await import('/gamepad.js');
-                window.other={...structuredClone(pad),index:1,id:'DualSense'};
+                pad.id=names[0];
+                window.other={...structuredClone(pad),index:1,id:names[1]};
                 navigator.getGamepads=()=>[pad,other].filter(p=>p.connected);
                 window.sent=0;window.stopped=0;
-                const input=gamepadInput({name:'MIRA',controls:{groups:{left:4,right:4}}},
+                window.input=gamepadInput({name:'MIRA',controls:{groups:{left:4,right:4}}},
                     async()=>{sent++},async()=>{stopped++});
                 document.querySelector('main').append(input.select,input.element);
                 input.update(true,true);
-            }""")
+            }""",
+                names,
+            )
             selector = page.get_by_label("MIRA input", exact=True)
             await expect(selector.locator("option")).to_have_text(
-                ["Keyboard", "Test standard gamepad", "Sony DualSense"]
+                ["Keyboard", f"{label} · 1", f"{label} · 2"]
             )
             await selector.select_option("1")
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
+            await page.evaluate("pad.connected=false")
+            await expect(selector.locator("option")).to_have_text(["Keyboard", label])
+            await expect(selector).to_have_value("1")
+            await page.evaluate("pad.connected=true")
+            await expect(selector.locator("option")).to_have_text(
+                ["Keyboard", f"{label} · 1", f"{label} · 2"]
+            )
+            await expect(selector).to_have_value("1")
             await page.evaluate("other.buttons[4].pressed=true;other.axes[0]=1")
             await page.wait_for_function("sent>0")
             # A different controller reusing the same browser index must not inherit control.
@@ -302,8 +325,19 @@ async def test_input_dropdown_lists_devices_and_does_not_switch_motion_on_hotplu
             await page.wait_for_timeout(150)
             assert await page.evaluate("sent") == count
             await expect(selector.locator("option")).to_have_text(
-                ["Keyboard", "Test standard gamepad", "Replacement controller"]
+                ["Keyboard", label, "Replacement controller"]
             )
+            # A missing duplicate must not restore a different pad or auto-select on reconnect.
+            await page.evaluate(
+                "selection=>input.restore(selection)", {"name": label, "ordinal": 1, "count": 2}
+            )
+            await page.wait_for_timeout(100)
+            await expect(selector).to_have_value("keyboard")
+            await page.evaluate("other.id=pad.id")
+            await expect(selector.locator("option")).to_have_text(
+                ["Keyboard", f"{label} · 1", f"{label} · 2"]
+            )
+            await expect(selector).to_have_value("keyboard")
         finally:
             await browser.close()
 
@@ -359,10 +393,12 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
                     break
                 await page.wait_for_timeout(50)
             await page.locator("#robot-selector").select_option("Second")
-            await expect(page.get_by_label("Second input", exact=True)).to_have_value("keyboard")
+            await expect(page.get_by_label("Second input", exact=True)).to_have_value("0")
             assert actions[-1]["action"] == "robot.release"
+            count = len([a for a in actions if a["action"] == "robot.move"])
+            await page.wait_for_timeout(150)
+            assert len([a for a in actions if a["action"] == "robot.move"]) == count
             await page.evaluate("pad.buttons[4].pressed=false;pad.axes.fill(0)")
-            await page.get_by_label("Second input", exact=True).select_option("0")
             actions.clear()
             await expect(page.locator(".gamepad-controls:visible")).to_have_attribute(
                 "data-state", "ready"
@@ -382,6 +418,9 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
             assert actions[-1]["action"] == "robot.release"
+            await page.get_by_label("Second input", exact=True).select_option("keyboard")
+            await page.locator("#robot-selector").select_option("First")
+            await expect(page.get_by_label("First input", exact=True)).to_have_value("keyboard")
         finally:
             await browser.close()
 

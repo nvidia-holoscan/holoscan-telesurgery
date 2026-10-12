@@ -123,8 +123,10 @@ export function robotControls(refresh, openMetrics) {
     let state,
         visible = [],
         signature,
+        selectedInput = null,
         current = null;
     const cards = new Map(),
+        restoredInputs = new Map(),
         acknowledgements = new Map(),
         stepping = new Map(),
         releasing = new Map(),
@@ -505,7 +507,15 @@ export function robotControls(refresh, openMetrics) {
                     if (card.rollSpeed) input.roll.prepend(card.rollSpeed.element);
                     if (card.grippers) input.element.append(card.grippers.element);
                 };
+                card.gamepad.element.addEventListener("change", () => {
+                    const available = permitted(card.robot) &&
+                        !motionState(card.robot).home_active && !motionState(card.robot).stopping;
+                    card.grippers?.update(available, mode.value === "keyboard", card.gamepad.bindings());
+                    renderFeedback(card.pose, card.robot);
+                    if (card.gamepad.inlineFeedback) card.pose.hidden = true;
+                });
                 mode.onchange = async () => {
+                    selectedInput = card.gamepad.selection();
                     await releaseAll();
                     const available = permitted(card.robot) &&
                         !motionState(card.robot).home_active && !motionState(card.robot).stopping;
@@ -536,6 +546,9 @@ export function robotControls(refresh, openMetrics) {
                     card.grippers.element.prepend(card.gripSpeed.element);
                 }
                 placeControls();
+                card.gamepad.restore(restoredInputs.has(robot.id)
+                    ? restoredInputs.get(robot.id) : selectedInput);
+                restoredInputs.delete(robot.id);
                 element_.append(pose);
             } else
                 element_.append(
@@ -581,6 +594,8 @@ export function robotControls(refresh, openMetrics) {
         }
     }, 500);
     return {
+        inputSelection(id) { return cards.get(id)?.gamepad?.handoff() ?? null; },
+        restoreInput(id, input) { restoredInputs.set(id, input); selectedInput = input; },
         rebuild() { signature = null; },
         patientActions(robot) {
             const actions = element(
@@ -764,9 +779,9 @@ export function robotControls(refresh, openMetrics) {
                     if (card.mode?.value !== "keyboard") {
                         const bindings = card.gamepad.bindings();
                         homeHint += ` · Hold ${bindings.home} or ${bindings.homeFallback} for 1s`;
-                        homeHint += robot.controls.cartesian
-                            ? " with controls centered"
-                            : ` with ${bindings.enable} released`;
+                        homeHint += bindings.enableRequired
+                            ? ` with ${bindings.enable} released`
+                            : " with controls centered";
                     }
                     card.home.title = robot.state?.home_active
                         ? "Going home · Stop or Esc interrupts motion"

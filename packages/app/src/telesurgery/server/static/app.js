@@ -102,7 +102,9 @@ $("#native-controller").onclick = async () => {
     try {
         await robots.releaseAll();
         await action(nativeControllerOpen()
-            ? "controller.close" : "controller.open", {id: robotId, preferences: controllerPreferences()});
+            ? "controller.close" : "controller.open", {
+                id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
+            });
         await refresh();
     } catch (error) {
         notice(error);
@@ -725,6 +727,7 @@ function renderCurrent() {
             motionValues.set(key, value);
         if (native.robot && state.session?.robots?.some(r => r.id === native.robot))
             robotId = preferredRobot = native.robot;
+        if ("input" in native) robots.restoreInput(native.robot, native.input);
         robots.rebuild();
     }
     const isPatient = state.role === "patient",
@@ -1066,7 +1069,9 @@ async function changeWorkspace(native) {
         const failures = [];
         try {
             if (native && currentRobotControl())
-                await action("controller.open", {id: robotId, preferences: controllerPreferences()});
+                await action("controller.open", {
+                    id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
+                });
             else if (!native && nativeControllerOpen())
                 await action("controller.close");
         } catch (error) {

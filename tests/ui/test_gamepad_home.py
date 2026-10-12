@@ -13,7 +13,7 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 
 @asynccontextmanager
-async def controller_page(*, initially_held=None, button_count=17):
+async def controller_page(*, initially_held=None, button_count=17, controller="DualSense"):
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         try:
@@ -31,9 +31,9 @@ async def controller_page(*, initially_held=None, button_count=17):
             await page.clock.install(time=1000)
             await page.clock.pause_at(1000)
             await page.evaluate(
-                """async ({initiallyHeld, buttonCount}) => {
+                """async ({initiallyHeld, buttonCount, controller}) => {
                 document.hasFocus=()=>true;
-                window.pad={id:'DualSense',index:0,mapping:'standard',connected:true,
+                window.pad={id:controller,index:0,mapping:'standard',connected:true,
                     axes:[0,0,0,0],buttons:Array.from({length:buttonCount},
                         (_,i)=>({pressed:i===initiallyHeld}))};
                 navigator.getGamepads=()=>[pad];window.homes=0;window.canHome=true;
@@ -44,7 +44,11 @@ async def controller_page(*, initially_held=None, button_count=17):
                 document.querySelector('main').append(input.select,input.element);
                 input.update(true,true);
             }""",
-                {"initiallyHeld": initially_held, "buttonCount": button_count},
+                {
+                    "initiallyHeld": initially_held,
+                    "buttonCount": button_count,
+                    "controller": controller,
+                },
             )
             await page.clock.run_for(50)
             selector = page.get_by_label("MIRA input", exact=True)
@@ -147,8 +151,14 @@ async def test_home_shortcuts_cannot_share_hold_time_or_retrigger(change):
 
 
 @pytest.mark.asyncio
-async def test_options_fallback_without_exposed_logo_button():
-    async with controller_page(button_count=16) as page:
+@pytest.mark.parametrize(
+    "controller,label",
+    [("DualSense", "Options"), ("Xbox", "Menu ☰"), ("Nintendo Switch Pro Controller", "+")],
+)
+async def test_menu_fallback_without_exposed_logo_button(controller, label):
+    async with controller_page(button_count=16, controller=controller) as page:
         await page.evaluate("pad.buttons[9].pressed=true")
-        await page.clock.run_for(1050)
+        await page.clock.run_for(100)
+        await expect(page.locator(".gamepad-status")).to_contain_text(f"Hold {label}")
+        await page.clock.run_for(950)
         assert await page.evaluate("homes") == 1
