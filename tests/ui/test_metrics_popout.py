@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from playwright.async_api import async_playwright, expect
+from playwright.async_api import Error, async_playwright, expect
 from telesurgery.server.security import security_headers
 
 
@@ -152,7 +152,14 @@ async def test_metrics_popout_dock_close_and_blocked_popup(role, tmp_path):
             await popup.get_by_role("button", name="Reset metrics", exact=True).click()
             assert actions[-1] == {"action": "metrics.reset", "params": {"device": camera["id"]}}
             await page.evaluate("delete document.hidden")
-            await popup.get_by_role("button", name="Dock", exact=True).click()
+            async with popup.expect_event("close"):
+                try:
+                    await popup.get_by_role("button", name="Dock", exact=True).click()
+                except Error:
+                    # Dock moves the button to the opener and can close the popup
+                    # before Playwright receives the click acknowledgement.
+                    if not popup.is_closed():
+                        raise
             await expect(page.locator("#metrics-page")).to_be_visible()
             assert await page.locator("#report-interval").input_value() == "1000"
             assert await page.get_by_label("Latency history window").input_value() == "60"
