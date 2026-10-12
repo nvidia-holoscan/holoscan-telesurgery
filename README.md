@@ -123,6 +123,7 @@ See [Versius controls](docs/robot-controls.md#versius-simulation) for the two-su
 
 - Dashboard ports are **8000** and **8002** (`--port`). The patient endpoint is **7447** (`--endpoint-port`).
 - Dashboards bind to `127.0.0.1`. Add `--host 0.0.0.0 --ssl` for HTTPS from another machine. There is no login.
+- Custom HTTPS certificates must cover a local hostname or IP address for native controls.
 
 ### Workspace
 

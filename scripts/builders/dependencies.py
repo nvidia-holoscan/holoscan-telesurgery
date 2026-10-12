@@ -8,6 +8,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -80,6 +81,18 @@ def prepare(sdk, environment, *, dependencies_only=False):
     if tegra:
         # JetPack supplies ABI-matched TensorRT; PyPI rejects Tegra systems.
         # Expose only these bindings, without adding every system Python package.
+        expose_tensorrt(python)
+    build_tools = (
+        ["cmake>=4,<5", "patchelf", "nanobind==3.0.1", "cloudpickle", "pillow"]
+        if sdk == "5"
+        else ["cmake>=3.30,<4", "cuda-python>=13,<14"]
+    )
+    run("uv", "pip", "install", "--python", python, "ninja", *build_tools)
+
+
+def expose_tensorrt(python):
+    """Optional tokenizer support must not block the rest of a Tegra installation."""
+    try:
         info = json.loads(
             subprocess.check_output(
                 [
@@ -89,10 +102,13 @@ def prepare(sdk, environment, *, dependencies_only=False):
                     "print(json.dumps([tensorrt.__version__,tensorrt.__path__[0]]))",
                 ],
                 text=True,
+                stderr=subprocess.PIPE,
             )
         )
         if info[0] != "10.13.3.9":
-            raise RuntimeError("This setup requires JetPack TensorRT 10.13.3.9")
+            raise ValueError("Tokenizer support requires JetPack TensorRT 10.13.3.9")
+        if not Path(info[1]).is_dir():
+            raise ValueError("JetPack TensorRT bindings are unavailable")
         site = Path(
             subprocess.check_output(
                 [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
@@ -101,13 +117,11 @@ def prepare(sdk, environment, *, dependencies_only=False):
         )
         target = site / "tensorrt"
         if not target.exists():
+            if target.is_symlink():
+                target.unlink()
             target.symlink_to(info[1], target_is_directory=True)
-    build_tools = (
-        ["cmake>=4,<5", "patchelf", "nanobind==3.0.1", "cloudpickle", "pillow"]
-        if sdk == "5"
-        else ["cmake>=3.30,<4", "cuda-python>=13,<14"]
-    )
-    run("uv", "pip", "install", "--python", python, "ninja", *build_tools)
+    except (OSError, subprocess.CalledProcessError, ValueError, IndexError, TypeError) as exc:
+        logging.warning("Skipping optional TensorRT bindings: %s", exc)
 
 
 def checkout(name, spec, work):

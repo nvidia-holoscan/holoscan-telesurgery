@@ -3,6 +3,7 @@
 
 """Native input shares browser mappings, release normalization and bounded requests."""
 
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -411,6 +412,31 @@ def test_native_does_not_claim_observed_same_session_ownership():
         assert not calls
     finally:
         control.close()
+
+
+def test_native_null_feedback_and_newer_command_reply():
+    control = Control(Mock())
+    try:
+        assert control.feedback({"id": "robot", "state": None}) == {}
+        control.reply["robot"] = {"sequence": 3}
+        assert control.feedback({"id": "robot", "state": None}) == {"sequence": 3}
+        assert control.feedback({"id": "robot", "state": {"sequence": 4}}) == {"sequence": 4}
+    finally:
+        control.close()
+
+
+def test_native_always_shuts_down_after_gamepad_enumeration_failure(tmp_path, monkeypatch):
+    from telesurgery.controller import window
+
+    native = Mock()
+    native.window_state.side_effect = RuntimeError("SDL enumeration failed")
+    monkeypatch.setattr(window.tk, "Tk", Mock())
+    monkeypatch.setattr(window, "Window", Mock(return_value=native))
+    monkeypatch.setattr(window.signal, "signal", Mock())
+    path = tmp_path / "status.json"
+    window.run({"server": "http://127.0.0.1:8002", "status_path": str(path)})
+    native.shutdown.assert_called_once_with()
+    assert json.loads(path.read_text())["status"] == "closed"
 
 
 @pytest.mark.asyncio

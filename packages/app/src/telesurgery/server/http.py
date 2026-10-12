@@ -10,7 +10,12 @@ from pathlib import Path
 
 from aiohttp import web
 from telesurgery.server.application import Application
-from telesurgery.server.security import dashboard_requests, dashboard_tls, security_headers
+from telesurgery.server.security import (
+    dashboard_client_host,
+    dashboard_requests,
+    dashboard_tls,
+    security_headers,
+)
 
 
 def create_app(service, host="127.0.0.1"):
@@ -154,8 +159,7 @@ def serve(
             raise RuntimeError("Another service is using this state directory") from exc
         context = dashboard_tls(directory, host, ssl_cert, ssl_key) if ssl else None
         service = Application(role, directory, endpoint_port)
-        # Use loopback for the local client URL; this does not bind a listener.
-        controller_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host  # nosec B104
+        controller_host = dashboard_client_host(host, ssl_cert if ssl else None)
         if ":" in controller_host:
             controller_host = f"[{controller_host}]"
         service.controller_server = f"{'https' if ssl else 'http'}://{controller_host}:{port}"

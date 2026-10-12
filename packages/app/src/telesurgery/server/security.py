@@ -7,10 +7,51 @@ import ipaddress
 import logging
 import socket
 import ssl
+from pathlib import Path
 
 import ifaddr
 from aiohttp import web
+from cryptography import x509
 from telesurgery_core.transport.tls import server_context
+
+
+def dashboard_client_host(host, certificate=None):
+    """Choose a local certificate identity when the dashboard binds every interface."""
+    # Select a client address; this does not create a listener.
+    if host not in {"0.0.0.0", "::"}:  # nosec B104
+        return host
+    loopback = "::1" if host == "::" else "127.0.0.1"
+    if not certificate:
+        return loopback
+    parsed = x509.load_pem_x509_certificate(Path(certificate).read_bytes())
+    try:
+        names = parsed.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return loopback  # The client reports the missing certificate identity.
+    ips = names.get_values_for_type(x509.IPAddress)
+    if ipaddress.ip_address(loopback) in ips:
+        return loopback
+    local = {"127.0.0.1", "::1"}
+    for adapter in ifaddr.get_adapters():
+        local.update(ip.ip if isinstance(ip.ip, str) else ip.ip[0] for ip in adapter.ips)
+    version = 6 if host == "::" else 4
+    for address in ips:
+        if address.version == version and str(address) in local:
+            return str(address)
+    for name in names.get_values_for_type(x509.DNSName):
+        if "*" in name:
+            continue
+        try:
+            addresses = {item[4][0] for item in socket.getaddrinfo(name, None)}
+        except socket.gaierror:
+            continue
+        if (
+            addresses
+            and addresses <= local
+            and any(ipaddress.ip_address(address).version == version for address in addresses)
+        ):
+            return name
+    return loopback
 
 
 def dashboard_requests(host):

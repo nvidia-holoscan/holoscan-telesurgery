@@ -7,7 +7,7 @@ import json
 import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -43,6 +43,14 @@ class Client:
             except (ValueError, AttributeError):
                 message = str(exc)
             raise RuntimeError(message) from exc
+        except URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise RuntimeError(
+                    "Cannot verify the dashboard certificate for "
+                    f"{urlsplit(self.server).hostname}. "
+                    "Use a trusted certificate that includes this local address or hostname."
+                ) from exc
+            raise
 
     def status(self):
         return self.request("/api/status")
@@ -127,7 +135,7 @@ class Control:
             self._send("robot.renew", {"id": self.owned})
 
     def feedback(self, robot):
-        state = robot.get("state", {})
+        state = robot.get("state") or {}
         reply = self.reply.get(robot["id"], {})
         return reply if reply.get("sequence", -1) > state.get("sequence", -1) else state
 

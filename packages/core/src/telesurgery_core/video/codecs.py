@@ -306,12 +306,13 @@ class GpuCodec:
 
 def describe(config, *, encoding=True):
     if config.codec == "surgical-tokenizer":
+        from telesurgery_core.video.tokenizer import runtime
         from telesurgery_core.video.tokenizer_model import PROFILE
 
         return {
             "name": config.codec,
             "library": "tensorrt-cu13",
-            "version": importlib.metadata.version("tensorrt-cu13"),
+            "version": runtime().__version__,
             "profile": PROFILE,
             "gpu": config.codec_gpu,
             "independent_frames": True,

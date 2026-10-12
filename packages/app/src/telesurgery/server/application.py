@@ -365,6 +365,7 @@ class Application:
                             "kind",
                             "status",
                             "error",
+                            "encoding_error",
                             "frames",
                             "width",
                             "height",

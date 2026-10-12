@@ -523,6 +523,8 @@ function cameraCard(camera) {
         card.append(element("p", state.native_views[camera.id].error));
     card.append(controls);
     if (camera.error) card.append(element("p", camera.error));
+    if (camera.encoding_error)
+        card.append(element("p", camera.encoding_error, "encoding-warning"));
     if (state.role === "surgeon")
         card.hidden = !camera.name
             .toLowerCase()

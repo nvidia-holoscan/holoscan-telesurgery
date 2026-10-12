@@ -532,6 +532,9 @@ body[data-role="surgeon"] #content {
     margin-top: 6px;
     overflow-wrap: anywhere;
 }
+.encoding-warning {
+    color: #765519;
+}
 .camera-name {
     display: flex;
     align-items: center;

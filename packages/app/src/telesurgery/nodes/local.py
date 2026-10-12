@@ -144,7 +144,6 @@ class LocalNode:
                 except FileNotFoundError:
                     worker["encoding_error"] = ""
                 error = worker.get("error", "")
-                error = error or worker["encoding_error"]
                 status = (
                     "error"
                     if error
@@ -161,6 +160,12 @@ class LocalNode:
                     **camera,
                     "status": status,
                     "error": error,
+                    "encoding_error": worker["encoding_error"] if worker else "",
+                    **(
+                        {"codec": worker["active_codec"]}
+                        if worker and "active_codec" in worker
+                        else {}
+                    ),
                     "frames": worker["frames"] if worker else 0,
                 }
             )
@@ -192,11 +197,11 @@ class LocalNode:
             camera = self.cameras[key]
             selected = select(camera, settings)
             if key in self.workers:
-                if not (self.workers[key].get("error") or self.workers[key].get("encoding_error")):
+                if not self.workers[key].get("error"):
                     changed = {k for k in selected if selected[k] != camera.get(k, "")}
                     if changed - {"codec", "qp", "jpeg_quality", "encoder_preset"}:
                         raise ValueError("Stop this stream before changing its capture settings")
-                    if changed:
+                    if changed or self.workers[key].get("encoding_error"):
                         path = self.workers[key]["settings"]
                         document = json.loads(path.read_text())
                         document["camera"].update(selected)
@@ -237,6 +242,7 @@ class LocalNode:
             slug = hashlib.sha256(key.encode()).hexdigest()[:12]
             endpoint = f"ipc://{self.temp.name}/{slug}.sock"
             settings = Path(self.temp.name) / f"{slug}.json"
+            settings.with_suffix(".error").unlink(missing_ok=True)
             settings.write_text(
                 json.dumps(
                     {
@@ -284,6 +290,7 @@ class LocalNode:
             while True:
                 header, payload = decode_video(await worker["socket"].recv_multipart())
                 worker["updated"], worker["frames"] = time.monotonic(), worker["frames"] + 1
+                worker["active_codec"] = header.codec
                 await self.publish(key, asdict(header), payload)
         except (ValueError, zmq.ZMQError) as exc:
             worker["error"] = str(exc)
@@ -329,6 +336,7 @@ class LocalNode:
                     )
                 finally:
                     worker["socket"].close()
+                    worker["settings"].with_suffix(".error").unlink(missing_ok=True)
 
         # Cancellation during node disconnect must not orphan a camera/socket;
         # an open socket would also block context termination indefinitely.

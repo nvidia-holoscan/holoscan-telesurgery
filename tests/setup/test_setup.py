@@ -112,6 +112,16 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
             "pyzmq>=26,<28",
             "websockets>=14,<17",
             "ruckig==0.19.4",
+        ],
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            python,
+            "--target",
+            str(root / "workspace/sim-deps"),
+            "--no-deps",
             "trimesh==5.1.0",
         ],
         ["python", "-m", "telesurgery", "doctor"],
@@ -168,8 +178,8 @@ def test_setup_places_simulation_packages_in_custom_workspace(setup, tmp_path):
     result, records = invoke("--workspace", str(workspace))
     assert result.returncode == 0, result.stderr
     targets = [item["command"] for item in records if "--target" in item["command"]]
-    assert len(targets) == 1
-    assert str(workspace / "sim-deps") in targets[0]
+    assert len(targets) == 2
+    assert all(str(workspace / "sim-deps") in command for command in targets)
 
 
 def test_old_compiler_reports_docker_before_downloading_sdk(setup, monkeypatch):

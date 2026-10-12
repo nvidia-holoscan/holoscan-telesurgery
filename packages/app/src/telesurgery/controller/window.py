@@ -1042,8 +1042,12 @@ def run(config):
         raise
     finally:
         if window:
-            final_state = window.window_state("closed")
-            window.shutdown()
+            try:
+                final_state = window.window_state("closed")
+            except Exception:
+                final_state = {"status": "closed"}
+            finally:
+                window.shutdown()
     report(final_state)
 
 

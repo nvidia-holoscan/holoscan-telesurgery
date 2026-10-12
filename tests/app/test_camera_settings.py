@@ -5,8 +5,11 @@
 
 import asyncio
 import errno
+import hashlib
+import json
 import struct
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -190,6 +193,7 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
         "fps": 60,
         "hololink": "192.168.0.2",
         "receivers": ["fusa", "linux"],
+        "encoding_error": "Could not prepare tokenizer; continuing h264",
     }
     camera["modes"] = modes(camera)
     camera.update(select(camera))
@@ -200,7 +204,62 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
     assert public["encoder_preset"] == "P1"
     assert public["receiver"] == "fusa"
     assert public["receivers"] == ["fusa", "linux"]
+    assert public["encoding_error"] == camera["encoding_error"]
     assert "source" not in public and "hololink" not in public
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_codec", ["surgical-tokenizer", "nvjpeg"])
+async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restart(
+    tmp_path, monkeypatch, failed_codec
+):
+    from telesurgery.nodes import local
+
+    create_process = asyncio.create_subprocess_exec
+
+    async def worker(*args, **kwargs):
+        return await create_process(sys.executable, "-c", "import time; time.sleep(60)", **kwargs)
+
+    monkeypatch.setattr(local.asyncio, "create_subprocess_exec", worker)
+    node = local.LocalNode(tmp_path, None)
+    node.cameras["sensor"] = {
+        "id": "sensor",
+        "name": "Camera",
+        "source": "synthetic",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "codecs": ["h264", "surgical-tokenizer", "nvjpeg"],
+    }
+    slug = hashlib.sha256(b"sensor").hexdigest()[:12]
+    error = local.Path(node.temp.name) / f"{slug}.error"
+    error.write_text("Old startup error")
+    try:
+        await node.start_camera("sensor")
+        assert not error.exists()
+        active = node.workers["sensor"]
+        active.update(updated=time.monotonic(), frames=1, active_codec="h264")
+        await node.start_camera("sensor", {"codec": failed_codec})
+        assert node.inventory()["cameras"][0]["codec"] == "h264"
+        error.write_text(f"Could not prepare {failed_codec}; continuing h264")
+        camera = node.inventory()["cameras"][0]
+        assert camera["status"] == "live" and camera["error"] == ""
+        assert camera["encoding_error"] == error.read_text()
+        assert camera["codec"] == "h264"  # A failed native-only codec must not hide browser video.
+        # Retry identical settings must notify the encoder without restarting capture.
+        stamp = active["settings"].stat().st_mtime_ns
+        await node.start_camera("sensor", {"codec": failed_codec})
+        assert active["settings"].stat().st_mtime_ns != stamp
+        await node.start_camera("sensor", {"codec": "h264"})
+        assert node.workers["sensor"] is active
+        assert active["process"].returncode is None
+        assert json.loads(active["settings"].read_text())["camera"]["codec"] == "h264"
+        await node.stop_camera("sensor")
+        assert not error.exists()
+        await node.start_camera("sensor")
+        assert node.inventory()["cameras"][0]["encoding_error"] == ""
+    finally:
+        await node.close()
 
 
 @pytest.mark.asyncio

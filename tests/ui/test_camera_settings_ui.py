@@ -163,3 +163,74 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
             assert not errors
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["patient", "surgeon"])
+async def test_encoding_warning_keeps_live_view_and_controls(role):
+    static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
+    camera = {
+        "id": "host:camera",
+        "node": "host",
+        "name": "Camera",
+        "kind": "USB",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "codec": "h264",
+        "status": "live",
+        "codecs": ["h264", "surgical-tokenizer"],
+    }
+    state = {
+        "role": role,
+        "sdk": "5",
+        "selected": [camera["id"]],
+        "nodes": [{"id": "host", "name": "Workstation", "status": "online"}],
+        "cameras": [camera],
+        "robots": [],
+        "surgeons": [],
+        "session": {"id": "operator", "status": "approved", "cameras": [camera]},
+    }
+
+    async def route(request):
+        path = request.request.url.removeprefix("http://localhost:8777/")
+        if path == "api/status":
+            await request.fulfill(json=state)
+        elif path == "api/offer":
+            await request.fulfill(json={"sdp": "test", "type": "answer"})
+        else:
+            await request.fulfill(path=static / (path.removeprefix("static/") or "index.html"))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.add_init_script("""
+                window.RTCPeerConnection=class {
+                    constructor(){this.iceGatheringState='complete'}
+                    addTransceiver(){return {setCodecPreferences(){}}}
+                    createDataChannel(){return {readyState:'connecting',send(){}}}
+                    async createOffer(){return {type:'offer',sdp:'test'}}
+                    async setLocalDescription(d){this.localDescription=d}
+                    async setRemoteDescription(){} close(){} async getStats(){return new Map()}
+                };
+            """)
+            await page.route("http://localhost:8777/**", route)
+            await page.goto("http://localhost:8777/" + ("#node/host" if role == "patient" else ""))
+            if role == "patient":
+                await page.get_by_role("button", name="Preview", exact=True).click()
+            await expect(page.locator(".video-tile")).to_have_count(1)
+            tile = await page.locator(".video-tile").element_handle()
+            camera["encoding_error"] = "Could not prepare surgical-tokenizer; continuing h264"
+            await expect(page.locator(".encoding-warning")).to_contain_text("continuing h264")
+            assert await tile.evaluate("tile => tile.isConnected")
+            if role == "patient":
+                await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
+                await page.get_by_role("button", name="Stream settings", exact=True).click()
+                await expect(
+                    page.get_by_role("button", name="Apply encoding", exact=True)
+                ).to_be_visible()
+            camera["encoding_error"] = ""
+            await expect(page.locator(".encoding-warning")).to_have_count(0)
+        finally:
+            await browser.close()

@@ -4,6 +4,7 @@
 """The neural wire format is fixed, bounded and independent of GPU libraries."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -42,3 +43,14 @@ def test_capture_rejects_unsupported_tokenizer_resolution():
     camera = {"codecs": [CODEC], "width": 640, "height": 480}
     with pytest.raises(ValueError, match="1280x720"):
         select(camera, {"codec": CODEC})
+
+
+def test_tokenizer_description_uses_the_installed_runtime(monkeypatch):
+    from telesurgery_core.video import codecs, tokenizer
+    from telesurgery_core.video.config import Config
+
+    monkeypatch.setattr(tokenizer, "runtime", lambda: SimpleNamespace(__version__="10.13.3.9"))
+    monkeypatch.setattr(
+        codecs.importlib.metadata, "version", lambda _: pytest.fail("No metapackage is installed")
+    )
+    assert codecs.describe(Config(codec=CODEC))["version"] == "10.13.3.9"

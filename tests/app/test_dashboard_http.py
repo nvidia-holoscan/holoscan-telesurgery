@@ -3,6 +3,7 @@
 
 """Dashboard binding must preserve same-origin request checks."""
 
+import asyncio
 import ssl
 import stat
 from types import SimpleNamespace
@@ -11,7 +12,8 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from telesurgery.server.http import create_app
-from telesurgery.server.security import dashboard_tls
+from telesurgery.server.security import dashboard_client_host, dashboard_tls
+from telesurgery_core.transport.tls import server_context
 
 
 @pytest.mark.asyncio
@@ -109,3 +111,41 @@ async def test_dashboard_https_generated_and_supplied_certificates(tmp_path):
             assert response.status == 403
     dashboard_tls(tmp_path, "127.0.0.1")
     assert cert.read_bytes() == original
+
+
+@pytest.mark.asyncio
+async def test_native_https_uses_custom_certificate_local_name_and_verifies_identity(tmp_path):
+    from telesurgery.controller.client import Client
+
+    context = server_context(tmp_path, hosts=["localhost"])
+    certificate = tmp_path / "endpoint.pem"
+    host = dashboard_client_host("0.0.0.0", certificate)
+    assert host == "localhost"
+    app = create_app(SimpleNamespace(action=AsyncMock(return_value=True)))
+    app.cleanup_ctx.clear()
+    server = TestServer(app)
+    await server.start_server(ssl=context)
+    try:
+        client = Client(f"https://{host}:{server.port}", str(certificate))
+        assert await asyncio.to_thread(client.action, "test", {}) is True
+        wrong_name = Client(f"https://127.0.0.1:{server.port}", str(certificate))
+        with pytest.raises(RuntimeError, match="certificate for 127.0.0.1"):
+            await asyncio.to_thread(wrong_name.action, "test", {})
+    finally:
+        await server.close()
+
+
+@pytest.mark.parametrize("bind,expected", [("0.0.0.0", "127.0.0.1"), ("::", "::1")])
+def test_native_wildcard_url_uses_matching_loopback_family(bind, expected):
+    assert dashboard_client_host(bind) == expected
+
+
+def test_native_custom_certificate_does_not_redirect_to_a_remote_host(tmp_path, monkeypatch):
+    from telesurgery.server import security
+
+    server_context(tmp_path, hosts=["external.example"])
+    monkeypatch.setattr(security.ifaddr, "get_adapters", lambda: [])
+    monkeypatch.setattr(
+        security.socket, "getaddrinfo", lambda *args: [(2, 1, 6, "", ("192.0.2.1", 0))]
+    )
+    assert dashboard_client_host("0.0.0.0", tmp_path / "endpoint.pem") == "127.0.0.1"

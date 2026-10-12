@@ -3,6 +3,7 @@
 
 """Native controls share settings and hand control back to the inline browser panel."""
 
+import asyncio
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -110,6 +111,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
                 robot.update(owner=None, owner_id=None)
                 robot["state"]["control_active"] = False
             elif method == "view.holoviz":
+                await asyncio.sleep(0.05)  # Controller visibility precedes camera startup.
                 state["native_views"][params["camera"]] = {"status": "running"}
             elif method in {"view.browser", "view.close"}:
                 state["native_views"].pop(params["camera"], None)
@@ -181,6 +183,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
             await context.clock.run_for(100)
             await page.get_by_role("button", name="Pop out all", exact=True).click()
             await expect(page.locator("#robots")).to_be_hidden()
+            await expect(page.locator("#dock-all")).to_be_enabled()
             assert [c["params"]["camera"] for c in calls if c["action"] == "view.holoviz"] == [
                 "first",
                 "second",

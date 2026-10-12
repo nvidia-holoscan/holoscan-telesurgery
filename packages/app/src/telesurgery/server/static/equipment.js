@@ -76,7 +76,7 @@ export function equipmentTable(changed, cameraCard, robotActions) {
                 const status =
                     item.type === "Robot" ? robotStatus(item) : label;
                 cell("Status", element("span", status, `status ${tone}`));
-                cell(
+                const details = cell(
                     "Details",
                     element(
                         "span",
@@ -89,6 +89,8 @@ export function equipmentTable(changed, cameraCard, robotActions) {
                                 : `Physical · ${Object.keys(item.controls?.groups || {}).length ? "Motion enabled" : "Motion disabled"}`,
                     ),
                 );
+                if (item.encoding_error)
+                    details.append(element("p", item.encoding_error, "encoding-warning"));
                 const actions =
                     item.type === "Camera"
                         ? cameraCard(item).querySelector(".actions")

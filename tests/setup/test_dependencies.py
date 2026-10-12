@@ -4,6 +4,7 @@
 """Dependency changes must not reuse the wrong source or touch installed providers."""
 
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 
@@ -98,3 +99,48 @@ def test_invalid_provider_fails_before_install(tmp_path):
     config.write_text('[holoscan]\nprovider="packagez"\n[hololink]\nprovider="installed"\n')
     with pytest.raises(ValueError, match="provider must be"):
         deps.load(config)
+
+
+@pytest.mark.parametrize("version", [None, "10.0", "10.13.3.9"])
+def test_optional_tegra_bindings_allow_setup_without_tokenizer(
+    tmp_path, monkeypatch, caplog, version
+):
+    environment = tmp_path / "venv"
+    python = environment / "bin/python"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    site = environment / "site-packages"
+    site.mkdir()
+    bindings = tmp_path / "system-tensorrt"
+    bindings.mkdir()
+    target = site / "tensorrt"
+    target.symlink_to(tmp_path / "missing-bindings")
+    tegra = tmp_path / "nv_tegra_release"
+    tegra.touch()
+    monkeypatch.setattr(
+        deps, "Path", lambda path: tegra if path == "/etc/nv_tegra_release" else Path(path)
+    )
+    commands = []
+    monkeypatch.setattr(deps, "run", lambda *args, **kwargs: commands.append(args))
+
+    def output(args, **kwargs):
+        if args[0] == "/usr/bin/python3":
+            if version is None:
+                raise subprocess.CalledProcessError(1, args)
+            return json.dumps([version, str(bindings)])
+        return str(site)
+
+    monkeypatch.setattr(deps.subprocess, "check_output", output)
+    deps.prepare("5", environment)
+    assert commands[-1][-5:] == (
+        "cmake>=4,<5",
+        "patchelf",
+        "nanobind==3.0.1",
+        "cloudpickle",
+        "pillow",
+    )
+    if version == "10.13.3.9":
+        assert target.resolve() == bindings
+        assert not caplog.records
+    else:
+        assert "Skipping optional TensorRT" in caplog.text
