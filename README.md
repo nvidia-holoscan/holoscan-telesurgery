@@ -2,9 +2,9 @@
 
 A distributed telesurgery demo built with **NVIDIA Holoscan and Holoscan Sensor Bridge**. Device nodes bring cameras and robots into a patient room. The patient approves nodes and surgeons; surgeons view live feeds and control permitted robots from their own dashboard.
 
-Use physical devices or **MIRA and Franka simulations**, with browser or native Holoviz viewing and per-stream latency metrics.
+Use physical devices or **MIRA, Franka and Versius simulations**, with browser or native Holoviz viewing and per-stream latency metrics.
 
-![Surgeon workspace: live MIRA feeds and controls for both arms and grippers](docs/images/surgeon-walkthrough.gif)
+![Surgeon walkthrough: live MIRA and Franka streams, keyboard and gamepad tool controls, depth views and metrics](docs/images/surgeon-walkthrough.gif)
 
 [Patient dashboard](docs/images/patient-walkthrough.gif) · [Architecture](docs/architecture.md) · [Benchmarks](BENCHMARK.md)
 

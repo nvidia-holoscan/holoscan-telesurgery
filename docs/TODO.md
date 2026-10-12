@@ -18,6 +18,8 @@ Reviewed 2026-10-12 against the implementation and operator confirmation. Hardwa
 
 - [x] **CMR Versius simulation:** four independently controlled arms (three instruments and one endoscope), 1080p procedure/room streams and a shared suture pad. Two surgeon sessions verified pickup, handoff and target placement through live WebRTC; endoscope motion updates the procedure view.
 
+- [x] **EA3 benchmarks:** reran all 48 SDK 5 configurations (74 camera results) on public `5.0.0a3`, with 30-second warmup and 60-second measurements. Updated raw records, tables, charts and the [SDK comparison](BENCHMARK_COMPARISON.md); SDK 4 remains the historical baseline.
+
 ## Remaining
 
 - [ ] **Franka home calibration:** support a calibrated home pose per installation. Physical and simulated Franka currently share a fixed [reset pose](../packages/robots/src/telesurgery_robots/franka/poses.py).
@@ -26,4 +28,3 @@ Reviewed 2026-10-12 against the implementation and operator confirmation. Hardwa
 - [ ] **Physical CMR Versius:** integrate the vendor hardware control interface; the Isaac Sim adapter is implemented.
 - [ ] **Robot metrics:** measure command-to-measured-feedback latency at P50/P95/P99/P99.9.
 - [ ] **Validation measurements:** record RealSense depth overhead and different-city latency percentiles, bandwidth, jitter, loss and clock uncertainty. Functional checks are complete; collect any measurements not captured during those tests.
-- [ ] **EA3 benchmarks:** rerun the recorded SDK 5 matrix on public EA3 before publishing an updated SDK comparison. The runtime already uses EA3; the [published measurements](BENCHMARK_COMPARISON.md) predate it.
