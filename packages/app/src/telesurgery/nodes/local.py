@@ -201,8 +201,8 @@ class LocalNode:
                     changed = {k for k in selected if selected[k] != camera.get(k, "")}
                     if changed - {"codec", "qp", "jpeg_quality", "encoder_preset"}:
                         raise ValueError("Stop this stream before changing its capture settings")
-                    if changed or self.workers[key].get("encoding_error"):
-                        path = self.workers[key]["settings"]
+                    path = self.workers[key]["settings"]
+                    if changed or path.with_suffix(".error").exists():
                         document = json.loads(path.read_text())
                         document["camera"].update(selected)
                         temporary = path.with_suffix(".tmp")

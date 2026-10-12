@@ -242,6 +242,10 @@ async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restar
         await node.start_camera("sensor", {"codec": failed_codec})
         assert node.inventory()["cameras"][0]["codec"] == "h264"
         error.write_text(f"Could not prepare {failed_codec}; continuing h264")
+        # A direct API retry must not depend on inventory having observed the error.
+        stamp = active["settings"].stat().st_mtime_ns
+        await node.start_camera("sensor", {"codec": failed_codec})
+        assert active["settings"].stat().st_mtime_ns != stamp
         camera = node.inventory()["cameras"][0]
         assert camera["status"] == "live" and camera["error"] == ""
         assert camera["encoding_error"] == error.read_text()
