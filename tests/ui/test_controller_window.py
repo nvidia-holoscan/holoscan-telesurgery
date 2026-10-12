@@ -294,8 +294,8 @@ async def test_popout_selection_and_robot_only(selected, has_robot, expected):
             else:
                 await control.click()
                 assert len(context.pages) == 1
-                assert any(c["action"] == "controller.open" for c in calls) == has_robot
                 await expect(control).not_to_have_attribute("aria-busy", "true")
+                assert any(c["action"] == "controller.open" for c in calls) == has_robot
             assert [
                 c["params"]["camera"] for c in calls if c["action"] == "view.holoviz"
             ] == expected
