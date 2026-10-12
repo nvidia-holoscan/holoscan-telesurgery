@@ -21,12 +21,16 @@ async def test_cancelling_camera_stop_finishes_cleanup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(local, "_terminate", terminate)
     socket = node.context.socket(zmq.SUB)
+    settings = tmp_path / "camera.json"
+    error = settings.with_suffix(".error")
+    error.write_text("Previous encoding failure")
     tasks = [asyncio.create_task(asyncio.Event().wait()) for _ in range(2)]
     node.workers["camera"] = {
         "process": object(),
         "socket": socket,
         "reader": tasks[0],
         "watcher": tasks[1],
+        "settings": settings,
     }
     stopping = asyncio.create_task(node.stop_camera("camera"))
     await entered.wait()
@@ -37,4 +41,5 @@ async def test_cancelling_camera_stop_finishes_cleanup(tmp_path, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(stopping, 1)
     assert socket.closed and all(task.done() for task in tasks)
+    assert not error.exists()
     await asyncio.wait_for(node.close(), 1)

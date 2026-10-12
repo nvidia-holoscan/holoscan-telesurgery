@@ -25,6 +25,7 @@ jobs:
         with:
           version: "0.12.21"
           python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk
       - run: uv sync --locked --all-packages --extra franka
       - run: uv run --no-sync python -c 'import pinocchio'
       - run: uv run --no-sync playwright install --with-deps chromium

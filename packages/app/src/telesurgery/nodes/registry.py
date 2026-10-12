@@ -33,7 +33,7 @@ class NodeRegistry:
             raise ValueError("Invalid node credential")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
             raise ValueError("Node name must be between 1 and 80 characters")
-        if params.get("environment") not in {None, "mira", "franka"}:
+        if params.get("environment") not in {None, "mira", "franka", "versius"}:
             raise ValueError("Unknown node environment")
         key = next(
             (

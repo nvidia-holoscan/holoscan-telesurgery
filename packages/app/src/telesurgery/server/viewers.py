@@ -65,18 +65,25 @@ class NativeViews:
                 temporary.cleanup()
                 raise
             self.windows[camera] = {"process": process, "config": path, "temporary": temporary}
-            try:
-                async with asyncio.timeout(20):
-                    while True:
-                        status = self.status()[camera]
-                        if status["status"] == "running":
-                            return True
-                        if status["status"] in {"error", "closed"}:
-                            raise RuntimeError(status.get("error", "Holoviz closed during startup"))
-                        await asyncio.sleep(0.1)
-            except BaseException:
-                await self._close(camera)
-                raise
+            window = self.windows[camera]
+        try:
+            # First neural viewing can download and build a GPU-specific engine.
+            timeout = 600 if config.get("codec") == "surgical-tokenizer" else 20
+            async with asyncio.timeout(timeout):
+                while True:
+                    if self.windows.get(camera) is not window:
+                        raise RuntimeError("Holoviz was closed during startup")
+                    status = self.status()[camera]
+                    if status["status"] == "running":
+                        return True
+                    if status["status"] in {"error", "closed"}:
+                        raise RuntimeError(status.get("error", "Holoviz closed during startup"))
+                    await asyncio.sleep(0.1)
+        except BaseException:
+            async with self.lock:
+                if self.windows.get(camera) is window:
+                    await self._close(camera)
+            raise
 
     async def _close(self, camera):
         window = self.windows.pop(camera, None)

@@ -1058,18 +1058,6 @@
       "requested_fps": 60
     }
   ],
-  "source_hash_scope": "Reviewed repository source: sorted Python/JavaScript under packages and C++ sources/headers under native; UTF-8 relative path, NUL, bytes, NUL.",
-  "reviewed_application_source_sha256": "8608cd13107aa055239fa6f86bbd3e34d69dcae12ff62f2e32d79fea2ab90a5a",
-  "changes_during_collection": [
-    {
-      "before": "all SDK4 measurements",
-      "change": "Aligned HSB buffer boundary and GPU demosaic with SDK5; fixed HSB shutdown."
-    },
-    {
-      "after": "sdk4-mira-spark-3840x2160-h265-holoviz",
-      "change": "Serialized surgeon admission with old connection cleanup. Video path unchanged."
-    }
-  ],
   "display": {
     "native_window_maximum": [
       1280,
@@ -1083,7 +1071,38 @@
     "note": "Stream and decoded frame resolution remain as requested; views scale to the window or tile."
   },
   "seconds_per_configuration": 60,
-  "collection_change": "User requested 60-second runs after the first 14 measured configurations. Those completed 10000-sample runs are retained with their actual durations and sample counts. Both MIRA cameras continue simultaneously.",
   "resolutions_change": "User removed 640x480 and 1280x720. Retain 1920x1080, 2560x1440, 3840x2160; IMX274 uses only its native 1080p and 4K modes.",
-  "codec_scope": "H.265 is benchmarked only at 3840x2160, as requested. Other codec/viewer paths retain all selected native resolutions."
+  "codec_scope": "H.265 is benchmarked only at 3840x2160, as requested. Other codec/viewer paths retain all selected native resolutions.",
+  "sdk4_baseline": {
+    "holoscan_version": "4.6.0",
+    "measured_date_utc": "2026-10-02",
+    "source_hash_scope": "Reviewed repository source: sorted Python/JavaScript under packages and C++ sources/headers under native; UTF-8 relative path, NUL, bytes, NUL.",
+    "reviewed_application_source_sha256": "8608cd13107aa055239fa6f86bbd3e34d69dcae12ff62f2e32d79fea2ab90a5a",
+    "changes_during_collection": [
+      {
+        "before": "all SDK4 measurements",
+        "change": "Aligned HSB buffer boundary and GPU demosaic with SDK5; fixed HSB shutdown."
+      },
+      {
+        "after": "sdk4-mira-spark-3840x2160-h265-holoviz",
+        "change": "Serialized surgeon admission with old connection cleanup. Video path unchanged."
+      }
+    ],
+    "collection_change": "The SDK 4 records retain their original durations, including 6 early configurations collected to 10000 samples. The earlier SDK 5 records were replaced by the EA3 refresh."
+  },
+  "sdk5_ea3": {
+    "holoscan_version": "5.0.0a3",
+    "holoscan_revision": "163dac10195d6b603f9e6158a1d5dfb390732203",
+    "measured_date_utc": "2026-10-12",
+    "application_commit": "d0bac10ec2587c2eea6297258651fa538a42422d",
+    "source_hash_scope": "Sorted Python/JavaScript under packages and C/C++/CUDA sources/headers under native; UTF-8 relative path, NUL, bytes, NUL. Verified identical on workstation, Spark and Thor.",
+    "application_source_sha256": "a03e811994706d2c641b7595508b573f4a873b8d65ff4d545814a118b9d7626e",
+    "hardware": "hardware-ea3.json",
+    "warmup_seconds": 30,
+    "seconds_per_configuration": 60,
+    "configurations": 48,
+    "camera_results": 74,
+    "changes_during_collection": [],
+    "conditions": "One configuration at a time; unrelated telesurgery streams and simulations stopped. Power and clocks observed, not fixed. SDK 4 remains a historical baseline; application code and scenes also changed between collections."
+  }
 }

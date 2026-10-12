@@ -45,6 +45,7 @@ class ReceiveDecode:
 
     def start(self):
         self.decoder, self.codec = None, None
+        self.decoder_key = None
 
     def compute(self):
         packet = self.pending.compute()
@@ -54,12 +55,16 @@ class ReceiveDecode:
         header, data, received, trace = packet
         trace = mark(trace, "receiver_queue_ms")
         self.benchmark.add("receiver_queue_ms", (time.monotonic_ns() - received) / 1e6)
-        if self.codec != header.codec:
+        key = header.codec, header.codec_profile, header.width, header.height
+        if getattr(self, "decoder_key", None) != key:
             if self.decoder:
                 self.decoder.close()
             self.decoder = None
-            self.decoder = CodecWorker(Config(codec=header.codec), encode=False)
+            self.decoder = CodecWorker(
+                Config(codec=header.codec, width=header.width, height=header.height), encode=False
+            )
             self.codec = header.codec
+            self.decoder_key = key
         frame = self.decoder.decode_device(header, data)
         stage = "unpack_ms" if header.codec == "raw-bgr8" else "decode_ms"
         self.trace = mark(trace, stage)

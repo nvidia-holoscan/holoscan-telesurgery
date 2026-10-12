@@ -11,6 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
+from telesurgery.controller.process import NativeController
 from telesurgery.nodes.address import endpoint
 from telesurgery.nodes.registry import NodeRegistry
 from telesurgery.server.media import Media
@@ -36,6 +37,9 @@ class Application:
         self.media = Media(self._media_changed)
         self.access = Access(self.directory / "surgeons.yaml" if role == "patient" else None)
         self.native = NativeViews(self.directory / "viewers")
+        self.controller = NativeController(self.directory / "controller")
+        self.controller_server = None
+        self.controller_certificate = None
         self.peers, self.peer_nodes, self.nodes, self.owners = {}, {}, {}, {}
         self.tokens, self.sequences, self.selected = {}, {}, set()
         self.control_lock = asyncio.Lock()
@@ -283,6 +287,7 @@ class Application:
                 "width": device["width"],
                 "height": device["height"],
                 "depth": device.get("depth", False),
+                "codec": device.get("codec", "h264"),
             }
         )
         if self.role == "surgeon" and self.remote_status.get("status") != "approved":
@@ -321,7 +326,11 @@ class Application:
             config = self.node_registry.configs.get(key, {})
             writer = connections.get(key)
             ip = config.get("ip", "")
-            if writer and (address := writer.get_extra_info("peername")):
+            if (
+                writer
+                and not writer.is_closing()
+                and (address := writer.get_extra_info("peername"))
+            ):
                 ip = address[0]
             nodes.append(
                 {
@@ -356,6 +365,7 @@ class Application:
                             "kind",
                             "status",
                             "error",
+                            "encoding_error",
                             "frames",
                             "width",
                             "height",
@@ -468,10 +478,12 @@ class Application:
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
         mode = params.get("mode", "jog")
-        if mode not in {"step", "jog", "home", "grip"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian"}:
             raise ValueError("Unknown robot motion mode")
         if mode == "home" and not robot["controls"].get("home_deg"):
             raise ValueError("Home is not supported by this robot")
+        if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
+            raise ValueError("MIRA Cartesian jogging is not supported by this robot")
         if mode == "grip" and not robot["controls"].get("grippers"):
             raise ValueError("Gripper control is not supported by this robot")
         if (
@@ -492,7 +504,7 @@ class Application:
                 **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
                 **(
                     {"mode": mode}
-                    if mode in {"home", "grip"} or robot["controls"].get("step_mode")
+                    if mode in {"home", "grip", "cartesian"} or robot["controls"].get("step_mode")
                     else {}
                 ),
             },
@@ -568,6 +580,7 @@ class Application:
                 await self.streams.close()
                 await self.media.clear()
                 await self.native.close()
+                await self.controller.close()
 
         self.selected.clear()
         self.tokens.clear()
@@ -668,10 +681,35 @@ class Application:
             "video_pipeline_frames": self.video.sink.frames if self.video else 0,
             **statistics,
             "native_views": self.native.status(),
+            "native_controller": self.controller.status(),
             "clock": self.clock.status(),
         }
 
     async def action(self, method, params):
+        if method == "controller.close":
+            await self.controller.close()
+            return True
+        if method == "controller.open":
+            if (
+                self.role != "surgeon"
+                or self.remote_status.get("status") != "approved"
+                or not self.remote_status.get("robot")
+            ):
+                raise PermissionError("Robot control permission is required")
+            if not self.controller_server:
+                raise RuntimeError("Start the surgeon dashboard before opening native controls")
+            selected = params.get("id")
+            if selected and not any(
+                r["id"] == selected for r in self.remote_status.get("robots", [])
+            ):
+                raise ValueError("Robot is unavailable")
+            return await self.controller.open(
+                self.controller_server,
+                selected,
+                self.controller_certificate,
+                params.get("preferences"),
+                params.get("input"),
+            )
         if method == "view.depth":
             return await self.native.display(**params)
         if method == "view.holoviz":
@@ -681,7 +719,7 @@ class Application:
             camera = next(
                 (c for c in inventory.get("cameras", []) if c["id"] == params["camera"]), {}
             )
-            if camera.get("codec", "h264") != "h264":
+            if camera.get("codec", "h264") not in {"h264", "surgical-tokenizer"}:
                 raise ValueError("Use Holoviz for this stream format")
             await self.native.close(params["camera"])
             await self._sync_streams()
@@ -727,6 +765,7 @@ class Application:
                 await self.streams.close()
                 await self.media.clear()
                 await self.native.close()
+                await self.controller.close()
                 return True
             if not self.remote or self.remote.closed.is_set():
                 raise ConnectionError("Connect to a patient first")
@@ -912,6 +951,7 @@ class Application:
                         await self.streams.close()
                         await self.media.clear()
                         await self.native.close()
+                        await self.controller.close()
                     self.remote_status = state
                     if state.get("status") == "approved":
                         await self._sync_streams()
@@ -922,6 +962,7 @@ class Application:
                         await self.streams.close()
                         await self.media.clear()
                         await self.native.close()
+                        await self.controller.close()
             except Exception as exc:
                 LOG.warning("Session update: %s", exc)
             tick += 1
@@ -929,6 +970,7 @@ class Application:
 
     async def close(self):
         await self.native.close()
+        await self.controller.close()
         LOG.info("Stopping application endpoint")
         if self.server:
             self.server.close()

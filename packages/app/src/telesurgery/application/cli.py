@@ -71,7 +71,9 @@ def main(argv=None):
         help="workspace directory (default: ./workspace)",
     )
     node.add_argument("--port", type=port, default=0, help="direct video port (default: automatic)")
-    node.add_argument("--sim", choices=["mira", "franka"], help="start a simulation on this node")
+    node.add_argument(
+        "--sim", choices=["mira", "franka", "versius"], help="start a simulation on this node"
+    )
     node.add_argument("--sim-gui", action="store_true", help="open the Isaac Sim window for --sim")
     node.add_argument(
         "--profile",
@@ -92,6 +94,16 @@ def main(argv=None):
         "--franka-address", help="Franka IPv4 address (first-use default: 172.16.0.3)"
     )
     commands.add_parser("doctor", help="check the SDK and GPU video codec")
+    controller = commands.add_parser(
+        "controller", help="open native robot controls on the surgeon desktop"
+    )
+    controller.add_argument(
+        "--server", default="http://127.0.0.1:8002", help="surgeon dashboard URL"
+    )
+    controller.add_argument("--robot", help="initial robot ID (otherwise choose in the window)")
+    controller.add_argument(
+        "--certificate", type=Path, help="trusted certificate for an HTTPS dashboard"
+    )
     args = parser.parse_args(argv)
     if args.role in {"patient", "surgeon"}:
         if bool(args.ssl_cert) != bool(args.ssl_key):
@@ -108,11 +120,15 @@ def main(argv=None):
         parser.error("physical device profiles cannot be combined with --sim")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("aioice").setLevel(logging.WARNING)
-    if args.role != "doctor":
+    if args.role not in {"doctor", "controller"}:
         args.workspace = args.workspace.expanduser().resolve()
         os.environ["TELESURGERY_WORKSPACE"] = str(args.workspace)
     try:
-        if args.role == "doctor":
+        if args.role == "controller":
+            from telesurgery.controller.client import Client
+
+            Client(args.server, args.certificate).action("controller.open", {"id": args.robot})
+        elif args.role == "doctor":
             from telesurgery_core.video.codecs import probe
             from telesurgery_core.video.config import Config
             from telesurgery_runtime.backends.sdk import require_sdk

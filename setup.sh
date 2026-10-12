@@ -46,16 +46,18 @@ if ! $docker; then
 fi
 
 python3 scripts/clock_sync.py
+python3 scripts/setup_gamepads.py
 if $docker; then exit 0; fi
 
 glib=libglib2.0-0
 if dpkg-query -W libglib2.0-0t64 >/dev/null 2>&1; then glib=libglib2.0-0t64; fi
 packages=(build-essential ca-certificates curl git pkg-config libgl1 libegl1
           libxkbcommon0 libvulkan1 "$glib" libx11-dev libxrandr-dev
-          libxinerama-dev libxcursor-dev libxi-dev libusb-1.0-0)
+          libxinerama-dev libxcursor-dev libxi-dev libusb-1.0-0
+          libsdl2-2.0-0 python3-tk)
 missing=()
 for package in "${packages[@]}"; do
-    if [[ "$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)" != installed ]]; then
+    if [[ "$(dpkg-query -W -f='${db:Status-Status}' "${package%%=*}" 2>/dev/null || true)" != installed ]]; then
         missing+=("$package")
     fi
 done
@@ -104,6 +106,8 @@ if $franka; then
 fi
 step "Preparing simulation dependencies…" uv pip install --python "$python_bin" \
     --target "$workspace/sim-deps" 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
+step "Preparing simulation meshes…" uv pip install --python "$python_bin" \
+    --target "$workspace/sim-deps" --no-deps 'trimesh==5.1.0'
 step "Checking GPU codecs…" "$python_bin" -m telesurgery doctor
 
 echo "Setup complete."

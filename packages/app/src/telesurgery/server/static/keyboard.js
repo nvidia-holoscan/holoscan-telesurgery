@@ -7,9 +7,11 @@ import {
     inputBlocked,
     jogGroups,
     pairedArms,
+    miraToolJog,
+    keyboardHolds,
 } from "./robot-input.js";
 
-const pairs = ["qa", "ws", "ed", "rf", "tg", "yh", "uj"];
+const pairs = ["qa", "ws", "ed", "rf", "tg", "yh", "uj", "ik"];
 const editing = () =>
     document.activeElement?.closest(
         "input, textarea, select, button, a, [contenteditable]:not([contenteditable=false])",
@@ -28,6 +30,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     const group = document.createElement("select");
     group.setAttribute("aria-label", `${robot.name} keyboard joints`);
     const toolControl = Boolean(robot.controls.cartesian);
+    const miraTool = Boolean(robot.controls.mira_cartesian);
     if (toolControl) {
         group.setAttribute("aria-label", `${robot.name} keyboard mode`);
         const option = element("option", "Tool movement");
@@ -51,7 +54,18 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             group.append(option);
         }
     }
-    group.hidden = dual || group.options.length < 2;
+    if (miraTool) {
+        group.replaceChildren();
+        group.setAttribute("aria-label", `${robot.name} keyboard mode`);
+        for (const [value, label] of [["joints", "Joint movement"], ["mira-tool", "Tool movement · X/Y/Z + elbow"]]) {
+            const option = element("option", label);
+            option.value = value;
+            group.append(option);
+        }
+    }
+    const miraCartesian = () => miraTool && group.value === "mira-tool";
+    const continuousTool = () => cartesian() || miraCartesian();
+    group.hidden = (dual && !miraTool) || group.options.length < 2;
     const mapping = element("div", undefined, "keyboard-mapping");
     const arms = element("div", undefined, "motion-section");
     const rollControls = element("div", undefined, "motion-section");
@@ -68,12 +82,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     let feedback = robot.state || {};
     let feedbackLabels = [];
     container.append(group, mapping);
-    if (!group.hidden && !toolControl)
+    if (!group.hidden && !toolControl && !miraTool)
         container.append(
             element("p", "[ / ] switch joint groups", "gamepad-hint"),
         );
     const keys = new Set();
     const heldKeys = new Set();
+    const physicalKeys = keyboardHolds(release);
     let repeatAt = 0,
         repeating = false,
         lastJogAt = 0;
@@ -134,8 +149,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                 armRows.append(section);
             }
             const hint = element("div", undefined, "cartesian-keyboard-hint");
-            const frame = element("span", "Robot axes");
-            frame.title = "Directions follow the robot base, independent of the camera view";
+            const frame = element("span", "Arm-base directions");
+            frame.title = "Relative to this arm’s fixed base: forward +X, left +Y, up +Z. Camera and tool rotation do not change these directions.";
             hint.append(element("span", "Hold to move · release to stop"), frame);
             armRows.append(hint);
             return;
@@ -190,7 +205,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             const name = element(
                 "span",
                 dual
-                    ? (joint.index === 4 ? "" : `J${joint.index + 1}`)
+                    ? (miraCartesian() ? robot.controls.mira_cartesian.axes[joint.index] : joint.index === 4 ? "" : `J${joint.index + 1}`)
                     : `J${joint.joint}`,
             );
             name.title = dual
@@ -242,12 +257,14 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     function showFeedback() {
         const joints = feedback.joints_deg || feedback.targets_deg || {};
         for (const feedbackLabel of feedbackLabels) {
-            feedbackLabel.textContent = dual ? "°" : feedback.joints_deg ? "Measured (°)" : "Target (°)";
+            feedbackLabel.textContent = miraCartesian() ? "mm / °" : dual ? "°" : feedback.joints_deg ? "Measured (°)" : "Target (°)";
             feedbackLabel.title = `${feedback.joints_deg ? "Measured" : "Target"} · ${feedback.feedback_source || "Simulator drive targets"}`;
         }
         for (const value of mapping.querySelectorAll(".joint-position")) {
             const key = value.dataset.group;
-            const position = joints[key]?.[Number(value.dataset.joint)];
+            const index = Number(value.dataset.joint);
+            const position = miraCartesian() && index < 4
+                ? feedback.cartesian_mm_deg?.[key]?.[index] : joints[key]?.[index];
             value.textContent = Number.isFinite(position)
                 ? position.toFixed(2)
                 : "—";
@@ -285,34 +302,36 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                 value[binding.group][binding.index] +=
                     binding.sign * (cartesian() ? 1 : stepSize(binding.group, binding.index, seconds));
         }
-        return value;
+        return miraCartesian() ? miraToolJog(robot, value) : value;
     }
     function press(key) {
         if (!enabled || !allowed || inputBlocked() || keys.has(key)) return;
         keys.add(key);
-        if (stopping || (heldKeys.size && !dual && !cartesian())) return;
+        if (stopping || (heldKeys.size && !dual && !continuousTool())) return;
         // Track both hands while held; never queue a released tap behind a request.
-        if (busy && !cartesian() && !(dual && heldKeys.size)) return;
+        if (busy && !continuousTool() && !(dual && heldKeys.size)) return;
         if (!heldKeys.size) {
             lastJogAt = 0;
             repeating = false;
-            repeatAt = performance.now() + (cartesian() ? 0 : 450);
+            repeatAt = performance.now() + (continuousTool() ? 0 : 450);
         }
         heldKeys.add(key);
-        if (!busy) issue(cartesian() ? heldKeys : [key], cartesian());
+        if (!busy) issue(continuousTool() ? heldKeys : [key], continuousTool());
     }
     function release(key) {
         keys.delete(key);
         heldKeys.delete(key);
+        const cap = mapping.querySelector(`.key-cap[data-key="${key}"]`);
+        if (cap) cap.dataset.pressed = "false";
         if (!heldKeys.size) {
-            if (repeating || cartesian()) pause();
+            if (repeating || continuousTool()) pause();
             repeating = false;
         }
     }
     function issue(pressed, continuous = false) {
         if (busy || stopping) return;
         const now = performance.now();
-        if (cartesian() && now - lastSentAt < 50) return;
+        if (continuousTool() && now - lastSentAt < 50) return;
         const seconds = continuous && lastJogAt ? Math.min(0.1, (now - lastJogAt) / 1000) : 0.05;
         const value = command(pressed, seconds);
         if (
@@ -320,25 +339,27 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
                 .flat()
                 .some((v) => v !== 0)
         ) {
-            if (cartesian()) pause();
+            if (continuousTool()) pause();
             return;
         }
         active = busy = true;
         lastSentAt = now;
         lastJogAt = continuous ? now : 0;
-        Promise.resolve(send(value, continuous))
+        Promise.resolve(send(value, continuous, miraCartesian() ? "cartesian" : undefined))
             .catch(halt)
             .finally(() => {
                 busy = false;
                 // Resample held keys immediately after a slow response; never
                 // queue old directions or add another 50 ms to its latency.
-                if (cartesian() && !disposed) {
+                if (continuousTool() && !disposed) {
                     clearTimeout(timer);
                     timer = setTimeout(poll, Math.max(0, 50 - (performance.now() - lastSentAt)));
                 }
             });
     }
     function keydown(event) {
+        const key = event.key.toLowerCase();
+        const fresh = bindings.has(key) ? physicalKeys.press(key, event.repeat) : !event.repeat;
         if (
             !enabled ||
             !allowed ||
@@ -352,10 +373,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             halt();
             return;
         }
-        const key = event.key.toLowerCase();
         if (!["escape", "[", "]"].includes(key) && !bindings.has(key)) return;
         event.preventDefault();
-        if (event.repeat || keys.has(key)) return;
+        if (!fresh || keys.has(key)) return;
         if (key === "escape") {
             halt();
             return;
@@ -374,7 +394,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     }
     function keyup(event) {
         const key = event.key.toLowerCase();
-        release(key);
+        physicalKeys.release(key);
     }
     function poll() {
         if (disposed) return;
@@ -383,7 +403,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         lastTick = now;
         if (!enabled || !allowed || inputBlocked() || editing() || delayed)
             halt();
-        if (heldKeys.size && now >= repeatAt && !busy && !stopping) {
+        const nextJog = () => continuousTool() ? lastSentAt + 50 : repeatAt;
+        if (heldKeys.size && now >= nextJog() && !busy && !stopping) {
             repeating = true;
             repeatAt = now + 50;
             issue(heldKeys, true);
@@ -392,7 +413,11 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             cap.dataset.pressed = String(keys.has(cap.dataset.key));
             cap.disabled = !enabled || !allowed;
         }
-        timer = setTimeout(poll, 50);
+        // Timers may fire just before the requested deadline. Wait only the
+        // remainder so a held tool jog does not fall from 20 Hz to 10 Hz.
+        const delay = heldKeys.size && !busy && !stopping
+            ? Math.max(1, Math.min(50, nextJog() - performance.now())) : 50;
+        timer = setTimeout(poll, delay);
     }
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
@@ -424,6 +449,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         stop: halt,
         destroy() {
             disposed = true;
+            physicalKeys.destroy();
             clearTimeout(timer);
             window.removeEventListener("keydown", keydown);
             window.removeEventListener("keyup", keyup);

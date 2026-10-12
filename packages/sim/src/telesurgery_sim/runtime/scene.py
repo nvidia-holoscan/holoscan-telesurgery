@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--api-port", type=int, required=True)
     parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--versius-assets", type=Path)
     args = parser.parse_args()
     width, height = Config.width, Config.height
 
@@ -49,6 +50,11 @@ def main():
     server = None
     publishers = []
     try:
+        if args.sim == "versius":
+            from telesurgery_sim.runtime.versius import run
+
+            run(app, args)
+            return
         import cv2
         import numpy as np
         import omni.timeline
@@ -270,6 +276,10 @@ def main():
             else None,
         )
         cartesian_feedback = None
+        if args.sim == "mira":
+            from telesurgery_sim.runtime.mira import MiraFeedback
+
+            cartesian_feedback = MiraFeedback(stage, drives)
         if args.sim == "franka":
             from telesurgery_sim.runtime.franka import FrankaFeedback
 
@@ -320,7 +330,7 @@ def main():
                                 robot.apply({"method": "hold"})
                                 raise ValueError("Simulator physics feedback is stale")
                             result = robot.apply(request)
-                            if request.get("method", "").startswith("set_"):
+                            if request.get("method", "").startswith(("set_", "jog_")):
                                 command_sequence += 1
                     reply = {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
                 except (ValueError, TypeError, KeyError, queue.Full, TimeoutError) as exc:

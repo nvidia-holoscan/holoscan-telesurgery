@@ -30,6 +30,7 @@ mira = "telesurgery_robots.mira.adapter:MiraAdapter"
 franka = "telesurgery_robots.franka.adapter:Franka"
 mira-sim = "telesurgery_robots.adapters.simulation:MiraSimulation"
 franka-sim = "telesurgery_robots.adapters.simulation:FrankaSimulation"
+versius-sim = "telesurgery_robots.adapters.simulation:VersiusSimulation"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telesurgery_robots"]

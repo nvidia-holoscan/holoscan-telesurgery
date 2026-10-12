@@ -25,7 +25,7 @@ import { openLog } from "./logs.js";
 import { depthView, nativeDepthControls } from "./depth.js";
 import { equipmentTable } from "./equipment.js";
 import { feedStrip } from "./feeds.js";
-import { controllerWindow } from "./controller-window.js";
+import { motionValues } from "./robot-input.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -92,17 +92,26 @@ const patient = patientPages(
     refresh,
 );
 const robots = robotControls(refresh, openMetrics);
-const controller = controllerWindow({
-    release: (id) =>
-        id ? action("robot.release", { id }) : robots.releaseAll(),
-    changed: renderCurrent,
-    selection: () => robotId,
-    select: (id) => {
-        robotId = preferredRobot = id;
-    },
-});
-$("#popout-controller").onclick = () => controller.toggle().catch(notice);
-$("#focus-controller").onclick = () => controller.focus();
+const nativeControllerOpen = () => ["starting", "running"].includes(state?.native_controller?.status);
+const controllerPreferences = () => Object.fromEntries([...motionValues].filter(([key]) =>
+    [":arm-speed", ":roll-speed", ":grip-speed"].some(suffix => key.endsWith(suffix))));
+let restoredController;
+$("#native-controller").onclick = async () => {
+    const control = $("#native-controller");
+    control.disabled = true;
+    try {
+        await robots.releaseAll();
+        await action(nativeControllerOpen()
+            ? "controller.close" : "controller.open", {
+                id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
+            });
+        await refresh();
+    } catch (error) {
+        notice(error);
+    } finally {
+        renderCurrent();
+    }
+};
 const equipment = equipmentTable(
     renderCurrent,
     cameraCard,
@@ -397,9 +406,9 @@ function cameraCard(camera) {
             "secondary small icon-button camera-settings",
             "settings",
         );
-        settings.disabled = active || stream.disabled;
+        settings.disabled = stream.disabled;
         settings.title = active
-            ? "Stop streaming to change settings"
+            ? "Change stream encoding"
             : "Stream settings";
         controls.append(settings);
         const heading = element("div", undefined, "camera-name");
@@ -514,6 +523,8 @@ function cameraCard(camera) {
         card.append(element("p", state.native_views[camera.id].error));
     card.append(controls);
     if (camera.error) card.append(element("p", camera.error));
+    if (camera.encoding_error)
+        card.append(element("p", camera.encoding_error, "encoding-warning"));
     if (state.role === "surgeon")
         card.hidden = !camera.name
             .toLowerCase()
@@ -689,23 +700,16 @@ function renderRobots(data, isPatient, approved) {
         : viewOnly
           ? "VIEW ONLY"
           : "EXCLUSIVE ACCESS";
-    const detached = !isPatient && controller.detached;
-    $("#popout-controller").hidden = isPatient || viewOnly;
-    setIcon(
-        $("#popout-controller"),
-        controller.compact || detached ? "dock" : "popout",
-        controller.compact || detached
-            ? "Dock robot controls"
-            : "Pop out robot controls",
-    );
-    $("#controller-away").hidden = !detached;
-    $("#controller-focus").hidden = !controller.compact;
-    $("#robots").hidden = detached;
-    if (detached) $("#robot-choice").hidden = true;
-    robots.update(state, {
-        robots: controller.enabled || isPatient ? robotList : [],
-    });
-    if (!isPatient && controller.enabled && !robotList.length)
+    const nativeOpen = nativeControllerOpen();
+    $("#native-controller").hidden = isPatient || viewOnly;
+    $("#native-controller").disabled = !approved || (!nativeOpen && !robotId);
+    $("#native-controller").setAttribute("aria-pressed", String(nativeOpen));
+    setIcon($("#native-controller"), nativeOpen ? "dock" : "popout", nativeOpen ? "Dock robot controls" : "Pop out robot controls");
+    $("#native-controller-away").hidden = !nativeOpen;
+    $("#robots").hidden = nativeOpen;
+    if (nativeOpen) $("#robot-choice").hidden = true;
+    robots.update(state, {robots: robotList});
+    if (!isPatient && !robotList.length)
         $("#robots").replaceChildren(
             element(
                 "p",
@@ -718,18 +722,19 @@ function renderRobots(data, isPatient, approved) {
 }
 function renderCurrent() {
     if (!state) return;
+    const native = state.native_controller;
+    if (native?.status === "closed" && native.generation && native.generation !== restoredController) {
+        restoredController = native.generation;
+        for (const [key, value] of Object.entries(native.preferences || {}))
+            motionValues.set(key, value);
+        if (native.robot && state.session?.robots?.some(r => r.id === native.robot))
+            robotId = preferredRobot = native.robot;
+        if ("input" in native) robots.restoreInput(native.robot, native.input);
+        robots.rebuild();
+    }
     const isPatient = state.role === "patient",
         approved = state.session?.status === "approved";
     document.body.dataset.role = state.role;
-    if (controller.compact) {
-        document.title = "Holoscan Telesurgery - Robot control";
-        $("#device-workspace").hidden = false;
-        $("#operating-workspace").hidden = false;
-        $("#controller-unavailable").hidden =
-            approved && !isPatient && !!state.session?.robots?.length;
-        renderRobots(isPatient ? {} : inventory(), false, approved);
-        return;
-    }
     $("#role").textContent = isPatient ? "Patient" : "Surgeon";
     $("#sdk").textContent = `SDK ${String(state.sdk).split(".")[0]}`;
     $("#connection").textContent = isPatient
@@ -927,15 +932,13 @@ function renderCurrent() {
     $("#preview-devices").hidden = !isPatient;
     $("#empty-video").hidden = tiles.size + nativeCameras.length > 0;
     $("#empty-add-feeds").hidden = isPatient;
-    $("#stream-count").textContent =
-        `${tiles.size} browser${nativeCameras.length ? ` · ${nativeCameras.length} Holoviz` : ""}`;
     $("#hide-all").disabled = !state.selected?.length;
     $("#popout-all").disabled =
         changingWorkspace ||
-        (!selectedPopoutCameras().length && !currentRobotControl());
+        (!selectedPopoutCameras().length && (!currentRobotControl() || nativeControllerOpen()));
     $("#dock-all").disabled =
         changingWorkspace ||
-        (!controller.detached &&
+        (!nativeControllerOpen() &&
             !Object.keys(state.native_views || {}).some(nativeViewing));
     $("#show-all").disabled = !cameras.some((c) =>
         ["live", "stale"].includes(c.status),
@@ -1064,11 +1067,19 @@ async function changeWorkspace(native) {
     // Retire browser offers before native viewers claim those streams.
     renderCurrent();
     try {
-        // Open from the click itself, before awaiting native viewer startup,
-        // so browser popup blocking cannot strand the controller panel.
-        if (native && currentRobotControl() && !(await controller.open()))
-            return;
-        if (!native) await controller.dock();
+        await robots.releaseAll();
+        const failures = [];
+        try {
+            if (native && currentRobotControl())
+                await action("controller.open", {
+                    id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
+                });
+            else if (!native && nativeControllerOpen())
+                await action("controller.close");
+        } catch (error) {
+            failures.push(`Robot controls: ${error.message}`);
+        }
+        await refresh();
         if (document.fullscreenElement) await document.exitFullscreen();
         const inventoryCameras = inventory().cameras || [];
         const cameras = native
@@ -1082,7 +1093,6 @@ async function changeWorkspace(native) {
                               name: id,
                           },
                   );
-        const failures = [];
         for (const [index, camera] of cameras.entries()) {
             setIcon(
                 control,
@@ -1103,7 +1113,6 @@ async function changeWorkspace(native) {
             await refresh();
         }
         if (failures.length) notice(failures.join("; "));
-        if (native) controller.focus();
     } catch (error) {
         notice(error);
     } finally {

@@ -32,10 +32,10 @@ JOINT_LIMITS = np.array(
 )
 
 
-def joint_velocity(jacobian, position, translation, rotation, speed):
+def joint_velocity(jacobian, position, translation, rotation, speed, limits=JOINT_LIMITS):
     jacobian = np.asarray(jacobian, dtype=float)
     position = np.asarray(position, dtype=float)
-    if jacobian.shape != (6, 7) or position.shape != (7,):
+    if jacobian.shape != (6, len(limits)) or position.shape != (len(limits),):
         raise ValueError("Invalid Cartesian physics feedback")
     if not np.all(np.isfinite(jacobian)) or not np.all(np.isfinite(position)):
         raise ValueError("Nonfinite Cartesian physics feedback")
@@ -50,7 +50,7 @@ def joint_velocity(jacobian, position, translation, rotation, speed):
         jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + 0.03**2 * np.eye(6), twist)
     )
     velocity *= min(1, speed / max(1e-9, np.max(np.abs(velocity))))
-    room = np.where(velocity > 0, JOINT_LIMITS[:, 1] - position, position - JOINT_LIMITS[:, 0])
+    room = np.where(velocity > 0, limits[:, 1] - position, position - limits[:, 0])
     moving = np.abs(velocity) > 1e-8
     if moving.any():
         # Match the native planner's 0.02 rad reserve and 0.15 rad taper:
@@ -63,22 +63,24 @@ def joint_velocity(jacobian, position, translation, rotation, speed):
 class CartesianTrajectory:
     """Locally refreshed velocity trajectory with a bounded command lifetime."""
 
-    def __init__(self, position, speed):
-        self.generator = Ruckig(7, 0.001)
-        self.input, self.output = InputParameter(7), OutputParameter(7)
+    def __init__(self, position, speed, limits=JOINT_LIMITS):
+        self.limits = np.asarray(limits, dtype=float)
+        count = len(position)
+        self.generator = Ruckig(count, 0.001)
+        self.input, self.output = InputParameter(count), OutputParameter(count)
         self.input.control_interface = ControlInterface.Velocity
         # Keep the IK joint ratios together through acceleration and braking.
         # Independent ramps distort tool direction, especially at high speeds.
         self.input.synchronization = Synchronization.Phase
         self.input.current_position = list(position)
-        self.input.current_velocity = self.input.current_acceleration = [0.0] * 7
-        self.input.target_velocity = self.input.target_acceleration = [0.0] * 7
-        self.input.max_velocity = [speed] * 7
+        self.input.current_velocity = self.input.current_acceleration = [0.0] * count
+        self.input.target_velocity = self.input.target_acceleration = [0.0] * count
+        self.input.max_velocity = [speed] * count
         # Teleoperation must respond to release/reversal promptly, including
         # at 100% speed. Keep jerk-limited ramps, but avoid the multi-second
         # braking tail of the slower point-to-point Home profile.
-        self.input.max_acceleration = [np.rad2deg(1.0)] * 7
-        self.input.max_jerk = [np.rad2deg(10.0)] * 7
+        self.input.max_acceleration = [np.rad2deg(1.0)] * count
+        self.input.max_jerk = [np.rad2deg(10.0)] * count
         self.speed = speed
         self.command = None
         self.deadline = 0
@@ -111,9 +113,9 @@ class CartesianTrajectory:
             if np.max(np.abs(np.asarray(self.input.current_position) - position)) > tolerance:
                 self.stop("joint tracking error")
         velocity = (
-            joint_velocity(jacobian, position, **self.command, speed=self.speed)
+            joint_velocity(jacobian, position, **self.command, speed=self.speed, limits=self.limits)
             if self.command is not None
-            else [0.0] * 7
+            else [0.0] * len(position)
         )
         self.input.target_velocity = velocity
         self.generator.delta_time = elapsed
@@ -122,4 +124,4 @@ class CartesianTrajectory:
             raise RuntimeError(f"Franka Cartesian trajectory failed: {result}")
         self.finished = self.stopping and result == Result.Finished
         self.output.pass_to_input(self.input)
-        return np.clip(self.output.new_position, JOINT_LIMITS[:, 0], JOINT_LIMITS[:, 1]).tolist()
+        return np.clip(self.output.new_position, self.limits[:, 0], self.limits[:, 1]).tolist()

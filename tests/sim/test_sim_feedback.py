@@ -54,7 +54,9 @@ def test_feedback_waits_for_physics_and_rejects_missing_joint():
         feedback.read()
 
 
-def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch):
+@pytest.mark.parametrize("yaw", [0, 90, 180, 270])
+@pytest.mark.parametrize("tool_yaw", [0, 45, 180])
+def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, yaw, tool_yaw):
     monkeypatch.setattr("time.monotonic", lambda: 123)
     feedback = FrankaFeedback.__new__(FrankaFeedback)
     feedback.hand, feedback.tool_name = 2, "TCP"
@@ -74,19 +76,27 @@ def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch):
         get_jacobian_matrices=lambda: SimpleNamespace(numpy=lambda: tensors),
         get_dof_positions=lambda: SimpleNamespace(numpy=lambda: np.zeros((1, 7))),
     )
-    # Base rotated 90 degrees around world Z; tool is world +Y from the base.
-    quaternion = np.array([np.sqrt(0.5), 0, 0, np.sqrt(0.5)])
+    # CMR's opposing bases must each retain their own axes. Rotating the tool
+    # must not rotate the jog reference with it.
+    angle, tool_angle = np.deg2rad([yaw, tool_yaw]) / 2
+    quaternion = np.array([np.cos(angle), 0, 0, np.sin(angle)])
+    tool_quaternion = np.array([np.cos(tool_angle), 0, 0, np.sin(tool_angle)])
     base = rotation_matrix(quaternion)
+    origin = np.array([1, 2, 3])
     feedback.frames = SimpleNamespace(
         get_world_poses=lambda: (
-            SimpleNamespace(numpy=lambda: np.array([[1, 2, 3], [1, 2.5, 3]])),
-            SimpleNamespace(numpy=lambda: np.array([quaternion, quaternion])),
+            SimpleNamespace(numpy=lambda: np.array([origin, origin + base @ [0.5, 0, 0]])),
+            SimpleNamespace(numpy=lambda: np.array([quaternion, tool_quaternion])),
         )
     )
     measured = {"joints_deg": {"joints": list(range(7))}}
     state = feedback.read(measured)
     np.testing.assert_allclose(state["tool_pose"]["position_m"], [0.5, 0, 0], atol=1e-12)
-    np.testing.assert_allclose(state["tool_pose"]["orientation_matrix"], np.eye(3), atol=1e-12)
+    np.testing.assert_allclose(
+        state["tool_pose"]["orientation_matrix"],
+        base.T @ rotation_matrix(tool_quaternion),
+        atol=1e-12,
+    )
     np.testing.assert_allclose(
         feedback.kinematics[1], np.vstack((base.T @ jacobian[:3], base.T @ jacobian[3:]))
     )

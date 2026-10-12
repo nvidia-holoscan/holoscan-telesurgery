@@ -13,6 +13,7 @@ export const stages = {
     transport_ms: ["Stream transport", "transport"],
     receiver_queue_ms: ["Receive queue", "surgeon"],
     decode_ms: ["Decode", "decode"],
+    preview_encode_ms: ["Browser preview encode", "surgeon"],
     unpack_ms: ["Upload", "surgeon"],
     render_submit_ms: ["Holoviz handoff", "surgeon"],
     browser_queue_ms: ["WebRTC queue", "surgeon"],

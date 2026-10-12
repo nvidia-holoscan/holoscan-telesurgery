@@ -5,6 +5,38 @@ import { element } from "./ui.js";
 
 export const motionValues = new Map();
 
+export function keyboardHolds(release) {
+    // Keep physical holds across input halts, so repeat pairs cannot rearm motion.
+    const down = new Set(), pending = new Map();
+    return {
+        press(key, repeat) {
+            clearTimeout(pending.get(key));
+            pending.delete(key);
+            const fresh = !down.has(key) && !repeat;
+            down.add(key);
+            return fresh;
+        },
+        release(key) {
+            if (!down.has(key)) return;
+            clearTimeout(pending.get(key));
+            // Some Linux keyboard paths report autorepeat as keyup/keydown
+            // pairs (repeat=false), observed up to 9 ms apart on the host.
+            // Coalesce those pairs; a real release stops within 20 ms. Focus
+            // loss, Escape and the input watchdog still stop immediately.
+            pending.set(key, setTimeout(() => {
+                pending.delete(key);
+                down.delete(key);
+                release(key);
+            }, 20));
+        },
+        destroy() {
+            for (const timer of pending.values()) clearTimeout(timer);
+            pending.clear();
+            down.clear();
+        },
+    };
+}
+
 export function jointStep(robot, stop) {
     const maximum =
         robot.controls.max_step_deg || robot.controls.step_deg || 0.2;
@@ -191,4 +223,18 @@ export function inputBlocked() {
             'dialog[open], [role="dialog"][aria-modal="true"]:not([hidden])',
         )
     );
+}
+
+// Convert the speed-scaled joint input into the bounded MIRA tool-jog contract.
+export function miraToolJog(robot, command) {
+    const config = robot.controls.mira_cartesian;
+    const maximum = robot.controls.max_step_deg || 1;
+    return Object.fromEntries(Object.entries(command).map(([arm, values]) => {
+        const result = values.map((v, i) => v / maximum *
+            (i < 3 ? config.linear_step_mm : config.angular_step_deg));
+        const length = Math.hypot(...result.slice(0, 3));
+        if (length > config.linear_step_mm)
+            for (let i = 0; i < 3; i++) result[i] *= config.linear_step_mm / length;
+        return [arm, result];
+    }));
 }

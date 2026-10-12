@@ -125,7 +125,8 @@ def plot_stream(rows, sdk, source, camera, receiver):
     fig.text(
         0.975,
         0.984,
-        f"{'SDK 5 / SDK 4' if compare else f'SDK {sdk}'} · {receiver_label}",
+        f"{'SDK 5 EA3 / SDK 4' if compare else ('SDK 5 EA3' if sdk == '5' else 'SDK 4')}"
+        f" · {receiver_label}",
         ha="right",
         va="top",
         fontsize=11,
@@ -226,7 +227,7 @@ def plot_stream(rows, sdk, source, camera, receiver):
         0,
         0.044,
         (
-            "Bars: SDK 5 (left), SDK 4 (right). Total labels: SDK 5 / SDK 4 (ms). "
+            "Bars: SDK 5 EA3 (left), SDK 4 (right). Total labels: SDK 5 / SDK 4 (ms). "
             "Percentile rows share a scale within each resolution."
             if compare
             else "FHD 1920×1080  ·  QHD 2560×1440  ·  4K 3840×2160. "
@@ -284,7 +285,8 @@ def plot_comparison(rows):
 
     fig, axis = plt.subplots(figsize=(13, 4.6))
     fig.subplots_adjust(left=0.21, right=0.97, bottom=0.30, top=0.9)
-    scale = max(abs(value) for row in values for value in row if math.isfinite(value))
+    largest = max(abs(value) for row in values for value in row if math.isfinite(value))
+    scale = max(10, math.ceil(largest / 10) * 10)
     cmap = plt.get_cmap("PuOr_r").copy()
     cmap.set_bad("#e2e8f0")
     colors = axis.imshow(values, cmap=cmap, norm=TwoSlopeNorm(0, -scale, scale), aspect="auto")
@@ -314,14 +316,16 @@ def plot_comparison(rows):
     colorbar = fig.colorbar(
         colors, cax=fig.add_axes((0.21, 0.12, 0.76, 0.025)), orientation="horizontal"
     )
-    colorbar.set_ticks([-100, -50, 0, 50, 100], labels=["−100%", "−50%", "0%", "+50%", "+100%"])
+    ticks = [-scale, -scale / 2, 0, scale / 2, scale]
+    colorbar.set_ticks(ticks, labels=[f"{tick:+g}%" if tick else "0%" for tick in ticks])
     colorbar.outline.set_visible(False)
-    fig.text(0.21, 0.18, "Lower latency on SDK 5", fontsize=10)
-    fig.text(0.97, 0.18, "Higher latency on SDK 5", fontsize=10, ha="right")
+    fig.text(0.21, 0.18, "Lower latency on SDK 5 EA3", fontsize=10)
+    fig.text(0.97, 0.18, "Higher latency on SDK 5 EA3", fontsize=10, ha="right")
     fig.text(
         0,
         0.025,
-        "Change = (SDK 5 / SDK 4 − 1) × 100. Gray = not tested. Single runs; no significance test.",
+        "Change = (SDK 5 EA3 / SDK 4 − 1) × 100. Gray = not tested. "
+        "Separate runs and application revisions.",
         fontsize=9,
         color="#526171",
     )

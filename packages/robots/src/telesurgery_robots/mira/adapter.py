@@ -11,6 +11,7 @@ import time
 
 from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_robots.adapters.base import values
+from telesurgery_robots.mira.cartesian import CARTESIAN, bounded_solution, command, positions
 from telesurgery_robots.mira.controller import MiraController
 from telesurgery_robots.mira.gripper import (
     GRIP_COUNTS,
@@ -44,6 +45,9 @@ class Mira:
         self.grip = GripperJog()
         self.grip_stopping = set()
         self.roll_active = self.roll_holding = False
+        self.tool_mode = False
+        self.arm_holding = False
+        self.jog_deadline = 0.0
 
     def state(self):
         if self.client is None:
@@ -53,6 +57,11 @@ class Mira:
         try:
             pose = self.client.send({"method": "get_mira_pose", "params": None})
             state = self._feedback(pose)
+            if self.arm_holding or self.jog_deadline and time.monotonic() >= self.jog_deadline:
+                self.client.notify({"method": "set_mira_pose", "params": state["joints_deg"]})
+                self.arm_holding = False
+                self.jog_deadline = 0.0
+                state["control_active"] = self.home_target is not None or bool(self.grip.rates)
             if self.home_holding:
                 self.client.notify({"method": "set_mira_pose", "params": state["joints_deg"]})
                 self.home_holding = False
@@ -64,6 +73,10 @@ class Mira:
             targets.update(self.grip.advance(measured))
             if targets:
                 state = self._write_grips(targets)
+            if self.tool_mode:
+                state["cartesian_mm_deg"] = positions(
+                    self.client.send({"method": "get_mira_fkine_cartesian", "params": None})
+                )
             return state
         except Exception:
             self.close()
@@ -130,8 +143,12 @@ class Mira:
             "grippers": {
                 arm: clamp(joints[arm][5] / maximum) for arm, maximum in GRIP_COUNTS.items()
             },
-            "acknowledgement": "measured position received",
-            "control_active": self.home_target is not None or bool(self.grip.rates),
+            "acknowledgement": "vendor cached position received",
+            "hardware_timestamp_available": False,
+            "stop_acknowledged": False,
+            "control_active": self.home_target is not None
+            or bool(self.grip.rates)
+            or bool(self.jog_deadline),
             "home_active": self.home_target is not None,
             **({"targets_deg": self.home_target} if self.home_target else {}),
         }
@@ -140,7 +157,13 @@ class Mira:
         method = request["method"]
         if method == "get_state":
             return self.state()
-        if method not in {"hold", "set_home", "jog_gripper", "set_mira_joint_delta"}:
+        if method not in {
+            "hold",
+            "set_home",
+            "jog_gripper",
+            "set_mira_joint_delta",
+            "jog_mira_cartesian",
+        }:
             raise ValueError("Unsupported physical MIRA operation")
         if method == "set_home" and request.get("params"):
             raise ValueError("Home uses the configured pose")
@@ -153,7 +176,11 @@ class Mira:
             movement = {
                 arm: values(request["params"][arm], 5, MIRA_STEP_LIMIT) for arm in ("left", "right")
             }
+        if method == "jog_mira_cartesian":
+            movement = command(request.get("params"))
+            self.tool_mode = True
         if method in {"hold", "set_home"}:
+            self.jog_deadline = 0.0
             if method == "hold":
                 self._cancel_home()
             self.grip_stopping.update(self.grip.rates)
@@ -168,12 +195,30 @@ class Mira:
             state["control_active"] = True
             state["acknowledgement"] = "gripper input accepted"
             return state
+        if method == "jog_mira_cartesian" and any(any(v[:4]) for v in movement.values()):
+            # The vendor delta RPC adds to its persistent commanded target. Use
+            # cached measured FK and query IK first instead; its motion RPC has
+            # no success acknowledgement and can silently clamp unreachable XYZ.
+            target = {
+                arm: [
+                    p + d
+                    for p, d in zip(state["cartesian_mm_deg"][arm], movement[arm][:4], strict=True)
+                ]
+                for arm in pose
+            }
+            try:
+                solution = self.client.send({"method": "get_mira_cartesian_ik", "params": target})
+            except Exception:
+                self.close()
+                raise
+            pose = bounded_solution(solution, pose, movement)
         if movement:
             # Validate both roll targets before sending either arm's command.
             rolls = {arm: roll_target(pose[arm][4], movement[arm][4]) for arm in pose}
             for arm in pose:
-                for index, change in enumerate(movement[arm][:4]):
-                    pose[arm][index] += change
+                if method == "set_mira_joint_delta":
+                    for index, change in enumerate(movement[arm][:4]):
+                        pose[arm][index] += change
                 pose[arm][4] = rolls[arm]
         elif method == "set_home":
             for arm in pose:
@@ -181,6 +226,8 @@ class Mira:
             self.home_target = pose
             self.home_deadline = time.monotonic() + 30
         try:
+            if method == "jog_mira_cartesian":
+                self.jog_deadline = time.monotonic() + 0.2
             self.client.notify({"method": "set_mira_pose", "params": pose})
             if method == "set_home" or movement and any(movement[arm][4] for arm in movement):
                 self._write_roll(pose)
@@ -196,6 +243,7 @@ class Mira:
             "hold": "hold target sent",
             "set_home": "home target sent",
             "set_mira_joint_delta": "jog target sent",
+            "jog_mira_cartesian": "Cartesian target sent",
         }[method]
         return state
 
@@ -206,6 +254,8 @@ class Mira:
             self.home_target = None
 
     def close(self):
+        self.arm_holding |= bool(self.jog_deadline)
+        self.jog_deadline = 0.0
         self._cancel_home()
         self.roll_holding = self.roll_active
         self.grip_stopping.update(self.grip.rates)
@@ -216,6 +266,7 @@ class Mira:
 
 
 class MiraAdapter:
+    mira_cartesian = CARTESIAN
     controller = MiraController
     simulation = False
     manages_connection = True
@@ -234,6 +285,9 @@ class MiraAdapter:
 
     def jog(self, command):
         return self.client.send({"method": "set_mira_joint_delta", "params": command})
+
+    def jog_cartesian(self, movement):
+        return self.client.send({"method": "jog_mira_cartesian", "params": movement})
 
     def hold(self):
         return self.client.send({"method": "hold"})

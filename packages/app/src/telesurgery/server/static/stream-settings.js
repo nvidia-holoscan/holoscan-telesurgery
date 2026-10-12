@@ -58,10 +58,16 @@ export function streamSettings(changed) {
         updateEncoder();
     }
     function updateEncoder() {
+        const compatible = ["1280x720", "1920x1080"].includes(resolution.value);
+        const neuralOption = $("#stream-codec").querySelector('option[value="surgical-tokenizer"]');
+        if (neuralOption) neuralOption.disabled = !compatible;
+        if (!compatible && $("#stream-codec").value === "surgical-tokenizer")
+            $("#stream-codec").value = "h264";
         const codec = $("#stream-codec").value,
             jpeg = codec === "nvjpeg",
-            raw = codec === "raw-bgr8";
-        $("#stream-encoder").hidden = raw;
+            raw = codec === "raw-bgr8",
+            neural = codec === "surgical-tokenizer";
+        $("#stream-encoder").hidden = raw || neural;
         $("#stream-qp-field").hidden = jpeg;
         $("#stream-quality").disabled = jpeg;
         $("#stream-jpeg-field").hidden = !jpeg;
@@ -73,11 +79,17 @@ export function streamSettings(changed) {
         const [width, height] = resolution.value.split("x").map(Number);
         $("#stream-viewing").textContent = raw
             ? `View in Holoviz. Raw BGR8 needs about ${((width * height * Number(fps.value) * 24) / 1e9).toFixed(2)} Gbit/s per viewer, before transport overhead. No stream compression.${["MJPG", "JPEG"].includes(format.value) ? " Camera capture is still JPEG-compressed." : ""}`
+            : neural
+              ? "View in the browser or Holoviz. The model is downloaded and prepared automatically on first use."
             : codec === "h264"
               ? "View in the browser or Holoviz."
               : "View in Holoviz. Browser preview is unavailable for this codec.";
         $("#stream-summary").textContent =
             `${resolution.selectedOptions[0].textContent} · ${fpsLabel(fps.value)} · ${codecName(codec)}`;
+        if (["live", "starting", "stale"].includes(camera.status)) {
+            for (const field of [resolution, fps, format, $("#stream-depth"), $("#stream-receiver")])
+                field.disabled = true;
+        }
     }
     $("#stream-codec").onchange = updateEncoder;
     function updateRates(preferred = fps.value) {
@@ -120,7 +132,7 @@ export function streamSettings(changed) {
                     ...(camera.receivers?.length
                         ? { receiver: $("#stream-receiver").value }
                         : {}),
-                    ...(codec === "raw-bgr8"
+                    ...(["raw-bgr8", "surgical-tokenizer"].includes(codec)
                         ? {}
                         : codec === "nvjpeg"
                           ? {
@@ -147,6 +159,10 @@ export function streamSettings(changed) {
     };
     return (item) => {
         camera = item;
+        const active = ["live", "starting", "stale"].includes(item.status);
+        $("#stream-title").textContent = active ? "Change encoding" : "Start stream";
+        start.textContent = active ? "Apply encoding" : "Start stream";
+        $("#stream-depth").disabled = false;
         modes = item.modes?.length
             ? item.modes
             : [
@@ -175,6 +191,8 @@ export function streamSettings(changed) {
             (value) =>
                 value === "raw-bgr8"
                     ? "Uncompressed · BGR8"
+                    : value === "surgical-tokenizer"
+                      ? codecName(value)
                     : value === "nvjpeg"
                       ? "JPEG · nvJPEG"
                       : `${codecName(value)} · NVENC`,
@@ -183,7 +201,9 @@ export function streamSettings(changed) {
         $("#stream-preset").value = item.encoder_preset || "P1";
         $("#stream-encoder").open = false;
         $("#stream-error").hidden = true;
-        $("#stream-mode-note").textContent = item.modes?.length
+        $("#stream-mode-note").textContent = active
+            ? "Encoding can change while streaming. Stop the stream to change capture settings."
+            : item.modes?.length
             ? "Only supported capture modes are shown. Your choice is remembered for Stream all."
             : "Using the configured camera mode. This source does not report additional modes.";
         format.replaceChildren();

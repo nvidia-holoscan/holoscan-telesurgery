@@ -21,7 +21,7 @@ class NodeSimulation:
 
     def start(self, environment, gui=False):
         if environment not in PRESETS:
-            raise ValueError("Choose MIRA or Franka")
+            raise ValueError("Choose MIRA, Franka or Versius")
         self.environment = environment
         self.task = asyncio.create_task(self._start(gui))
 

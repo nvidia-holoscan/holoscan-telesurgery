@@ -12,7 +12,7 @@ while (($#)); do
         --sdk) sdk="${2:?--sdk requires 4 or 5}"; shift 2 ;;
         --docker) docker=true; shift ;;
         -h|--help)
-            echo "Usage: ./run.sh [--sdk 4] [--docker] {patient|surgeon|node|doctor} [options]"
+            echo "Usage: ./run.sh [--sdk 4] [--docker] {patient|surgeon|node|controller|doctor} [options]"
             echo "Use ./run.sh patient --help for dashboard options."
             exit 0 ;;
         *) break ;;

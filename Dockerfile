@@ -72,7 +72,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Isaac Sim runs in its own container with these small gateway dependencies.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps \
-    'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
+    'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4' \
+    && uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps --no-deps \
+    'trimesh==5.1.0'
 
 FROM native-build AS application
 COPY packages ./packages
@@ -87,7 +89,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
     PATH=/opt/telesurgery/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12-venv ca-certificates chrony docker.io libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
+    python3.12-venv python3-tk libsdl2-2.0-0 \
+    ca-certificates chrony docker.io \
+    libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
     libvulkan1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6 \
     libpoconet80t64 libpocofoundation80t64 libfmt9 libgomp1 libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*

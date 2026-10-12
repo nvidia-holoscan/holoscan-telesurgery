@@ -4,6 +4,7 @@
 """Validate capture choices against a camera's advertised modes."""
 
 from telesurgery_core.video.config import Config
+from telesurgery_core.video.tokenizer_model import CODEC, token_shape
 
 DEFAULTS = {
     key: getattr(Config, key)
@@ -62,6 +63,8 @@ def select(camera, settings=None):
         raise ValueError("Receiver selection is only available for HSB cameras")
     if selected["codec"] not in camera.get("codecs", ["h264", "h265", "nvjpeg", "raw-bgr8"]):
         raise ValueError("This node does not support the selected codec")
+    if selected["codec"] == CODEC:
+        token_shape(selected["width"], selected["height"])
     if type(selected["qp"]) is not int or not 0 <= selected["qp"] <= 51:
         raise ValueError("Quality (QP) must be an integer from 0 to 51")
     if selected["encoder_preset"] not in ("P1", "P3", "P5"):

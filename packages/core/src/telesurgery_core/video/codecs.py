@@ -97,6 +97,10 @@ class CodecWorker:
 
 
 def create_codec(config, *, encode):
+    if config.codec == "surgical-tokenizer":
+        from telesurgery_core.video.tokenizer import TokenizerCodec
+
+        return TokenizerCodec(config, encode=encode)
     if config.codec == "raw-bgr8":
         from telesurgery_core.video.raw import RawCodec
 
@@ -301,6 +305,19 @@ class GpuCodec:
 
 
 def describe(config, *, encoding=True):
+    if config.codec == "surgical-tokenizer":
+        from telesurgery_core.video.tokenizer import runtime
+        from telesurgery_core.video.tokenizer_model import PROFILE
+
+        return {
+            "name": config.codec,
+            "library": "tensorrt-cu13",
+            "version": runtime().__version__,
+            "profile": PROFILE,
+            "gpu": config.codec_gpu,
+            "independent_frames": True,
+            "trial": True,
+        }
     if config.codec == "raw-bgr8":
         return {"name": config.codec, "compression": False, "bytes_per_pixel": 3}
     package = "nvidia-nvimgcodec-cu13" if config.codec == "nvjpeg" else "pynvvideocodec"
@@ -335,14 +352,17 @@ def probe(config):
         stack.callback(encoder.close)
         decoder = create_codec(config, encode=False)
         stack.callback(decoder.close)
-        pixels = np.full((240, 320, 3), (40, 90, 180), dtype=np.uint8)
-        header = VideoHeader(0, time.time_ns(), 320, 240)
+        width, height = (
+            (config.width, config.height) if config.codec == "surgical-tokenizer" else (320, 240)
+        )
+        pixels = np.full((height, width, 3), (40, 90, 180), dtype=np.uint8)
+        header = VideoHeader(0, time.time_ns(), width, height)
         frame = decoder.decode(*encoder.encode(Frame(header, pixels)))
         if np.abs(frame.image.astype(float) - pixels).mean() > 10:
             raise RuntimeError("GPU codec probe produced unexpected colors")
         return {
             **describe(config),
             "round_trip": "passed",
-            "probe_dimensions": [320, 240],
+            "probe_dimensions": [width, height],
             "first_frame_immediate": True,
         }

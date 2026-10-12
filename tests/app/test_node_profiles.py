@@ -146,6 +146,7 @@ def test_profile_input_errors(tmp_path, monkeypatch, names, options, error):
 
 
 def test_cli_prepares_profiles_before_running_node(tmp_path, monkeypatch, executable):
+    monkeypatch.setenv("TELESURGERY_WORKSPACE", str(tmp_path))
     calls = []
 
     async def run_service(directory, *args):
@@ -222,6 +223,7 @@ def test_profiles_join_physical_inventory_and_reject_conflicts(tmp_path, monkeyp
 def test_invalid_manual_robots_report_configuration_error(tmp_path, monkeypatch, caplog, robots):
     from telesurgery.nodes import local
 
+    monkeypatch.setenv("TELESURGERY_WORKSPACE", str(tmp_path))
     monkeypatch.setattr(local, "camera_devices", lambda: [])
     monkeypatch.setattr(local, "enrich", lambda cameras: None)
     monkeypatch.setattr(local, "backend", lambda kind: SimpleNamespace(discover=lambda: {}))

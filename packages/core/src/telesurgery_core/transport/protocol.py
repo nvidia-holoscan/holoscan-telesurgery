@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from telesurgery_core.video.tokenizer_model import CODEC, PROFILE, payload_size, token_shape
+
 VERSION = 1
 MAX_HEADER = 4096
 MAX_VIDEO = 8 * 1024 * 1024
@@ -53,6 +55,7 @@ class VideoHeader:
     encoded_ns: int = 0
     pack_ns: int = 0
     depth_bytes: int = 0
+    codec_profile: str = ""
 
     def encode(self) -> bytes:
         return json.dumps(asdict(self), allow_nan=False, separators=(",", ":")).encode()
@@ -61,10 +64,15 @@ class VideoHeader:
     def decode(cls, data: bytes) -> VideoHeader:
         doc = _document(data)
         codec = doc.get("codec", "h264")
-        if not isinstance(codec, str) or codec not in {"h264", "h265", "nvjpeg", "raw-bgr8"}:
+        if not isinstance(codec, str) or codec not in {"h264", "h265", "nvjpeg", "raw-bgr8", CODEC}:
             raise ValueError("unsupported video codec")
         width = _integer(doc.get("width"), "width", 1, 4096)
         height = _integer(doc.get("height"), "height", 1, 2160)
+        profile = doc.get("codec_profile", "")
+        if profile != (PROFILE if codec == CODEC else ""):
+            raise ValueError("unsupported codec profile")
+        if codec == CODEC:
+            token_shape(width, height)
         return cls(
             _integer(doc.get("sequence"), "sequence", 0),
             _integer(doc.get("captured_ns"), "capture timestamp", 1),
@@ -81,6 +89,7 @@ class VideoHeader:
             encoded_ns=_integer(doc.get("encoded_ns", 0), "encode completion", 0),
             pack_ns=_integer(doc.get("pack_ns", 0), "packing duration", 0),
             depth_bytes=_integer(doc.get("depth_bytes", 0), "depth size", 0, MAX_DEPTH),
+            codec_profile=profile,
         )
 
 
@@ -94,6 +103,9 @@ def decode_video(parts: list[bytes]) -> tuple[VideoHeader, bytes]:
     if header.codec == "raw-bgr8":
         if size != header.width * header.height * 3:
             raise ValueError("expected an exact raw BGR8 frame")
+    elif header.codec == CODEC:
+        if size != payload_size(header.width, header.height):
+            raise ValueError("expected an exact surgical tokenizer payload")
     elif not 0 < size <= MAX_VIDEO:
         raise ValueError("expected a bounded compressed video payload")
     return header, parts[1]

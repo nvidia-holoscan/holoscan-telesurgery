@@ -50,7 +50,8 @@ async def browser_open(playwright, address, cameras):
     browser = await playwright.chromium.launch(
         headless=False, args=["--autoplay-policy=no-user-gesture-required"]
     )
-    page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+    # Timing probes evaluate functions in the instrumented page under the app's CSP.
+    page = await browser.new_page(viewport={"width": 1600, "height": 1000}, bypass_csp=True)
 
     async def expose_tiles(route):
         response = await route.fetch()

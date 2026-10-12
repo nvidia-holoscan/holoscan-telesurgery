@@ -11,6 +11,7 @@ dependencies = ["telesurgery-app"]
 [project.optional-dependencies]
 franka = ["telesurgery-robots[franka]"]
 codecs-cu13 = ["cupy-cuda13x>=14,<15", "pynvvideocodec==2.2.3", "nvidia-nvimgcodec-cu13==0.9.0.20"]
+tokenizer-cu13 = ["tensorrt-cu13-bindings==10.13.3.9.post1", "tensorrt-cu13-libs==10.13.3.9.post1"]
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff==0.16.10", "pre-commit==4.6.2", "playwright>=1.50,<2"]

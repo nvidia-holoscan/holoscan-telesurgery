@@ -65,6 +65,7 @@ async def test_independent_speeds_timing_and_edit_interruption():
             }
             await page.keyboard.up("q")
             await page.keyboard.up("t")
+            await page.clock.run_for(20)
             assert await page.evaluate("stops") == 1
             await page.evaluate("""async () => {
                 input.destroy();input.element.remove();moves=[];

@@ -532,6 +532,9 @@ body[data-role="surgeon"] #content {
     margin-top: 6px;
     overflow-wrap: anywhere;
 }
+.encoding-warning {
+    color: #765519;
+}
 .camera-name {
     display: flex;
     align-items: center;
@@ -862,6 +865,15 @@ body[data-role] .video-tile:fullscreen video,
 .depth-stage[data-depth="depth"] canvas {
     background: #151b15;
 }
+.depth-stage .depth-color {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    pointer-events: none;
+}
+.depth-stage[data-depth="side"] .depth-color {
+    width: 50%;
+}
 .depth-stage[data-depth="side"] {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -973,31 +985,8 @@ body[data-role] .video-tile:fullscreen video,
     max-height: calc(100dvh - 40px);
     overflow: auto;
 }
-#controller-focus {
+#native-controller-away .field-hint {
     margin: 0 0 12px;
-}
-#controller-away .field-hint {
-    margin: 0 0 12px;
-}
-body.controller-window > .app-header,
-body.controller-window #patient-nav,
-body.controller-window main > :not(#device-workspace),
-body.controller-window #device-workspace > :not(#operating-workspace),
-body.controller-window #camera-workspace {
-    display: none;
-}
-body.controller-window .app-shell,
-body.controller-window #operating-workspace {
-    display: block;
-    min-height: 0;
-}
-body.controller-window #content {
-    padding: 12px;
-}
-body.controller-window #robots-panel {
-    position: static;
-    max-height: none;
-    margin: 0;
 }
 #robot-choice {
     margin: 0 0 8px;
@@ -1273,6 +1262,24 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     gap: 4px;
     touch-action: none;
 }
+.gripper-feedback {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+}
+.gripper-feedback meter {
+    flex: 1;
+    min-width: 0;
+    height: 12px;
+}
+.gripper-feedback output {
+    flex-shrink: 0;
+    text-align: right;
+    color: var(--muted);
+    font-size: 11px;
+}
 .gripper-control button[data-pressed="true"] {
     border-color: var(--green);
     background: #eaf3df;
@@ -1329,7 +1336,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .speed-control {
     display: grid;
     grid-template-columns: 76px minmax(0, 1fr) 32px;
-    gap: 0 8px;
+    gap: 0 6px;
     margin: 0 0 10px;
     padding: 0;
     border: 0;
@@ -1384,7 +1391,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     cursor: not-allowed;
 }
 .speed-control output {
-    text-align: right;
+    text-align: left;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
@@ -1526,10 +1533,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .robot-panel:has(.compact-controls) {
     padding: 14px;
 }
-body[data-role="surgeon"] .robot-panel:has(.compact-controls) {
-    margin-top: 0;
-}
-body[data-role="surgeon"]:not(.controller-window) #content:has(.compact-controls) {
+body[data-role="surgeon"] #content:has(.compact-controls) {
     padding-bottom: 16px;
 }
 body[data-role="surgeon"] .app-shell:has(.compact-controls) {

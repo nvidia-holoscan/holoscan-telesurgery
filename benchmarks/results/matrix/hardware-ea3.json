@@ -1,0 +1,143 @@
+{
+  "measured_utc": "2026-10-12T05:59:29.318880+00:00",
+  "holoscan_revision": "163dac10195d6b603f9e6158a1d5dfb390732203",
+  "collection": "SDK 5.0.0a3 (public EA3); SDK 4 baseline retains hardware.json. Unused telesurgery streams and simulations stopped; clocks/power observed, not fixed.",
+  "workstation": {
+    "system": {
+      "exit": 0,
+      "text": "Linux uni 7.0.0-34-generic #34~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 15:38:29 UTC 2 x86_64 x86_64 x86_64 GNU/Linux\n"
+    },
+    "cpu": {
+      "exit": 0,
+      "text": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           46 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  32\nOn-line CPU(s) list:                     0-31\nVendor ID:                               GenuineIntel\nModel name:                              Intel(R) Core(TM) i9-14900K\nCPU family:                              6\nModel:                                   183\nThread(s) per core:                      2\nCore(s) per socket:                      24\nSocket(s):                               1\nStepping:                                1\nCPU(s) scaling MHz:                      87%\nCPU max MHz:                             6000.0000\nCPU min MHz:                             800.0000\nBogoMIPS:                                6374.40\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize pconfig arch_lbr ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nL1d cache:                               896 KiB (24 instances)\nL1i cache:                               1.3 MiB (24 instances)\nL2 cache:                                32 MiB (12 instances)\nL3 cache:                                36 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-31\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Mitigation; Clear Register File\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n"
+    },
+    "memory": {
+      "exit": 0,
+      "text": "               total        used        free      shared  buff/cache   available\nMem:     134724853760 25965420544 41672654848   963837952 69336268800 108759433216\nSwap:     8589930496      675840  8589254656\n"
+    },
+    "gpu": {
+      "exit": 0,
+      "text": "name, driver_version, memory.total [MiB], memory.used [MiB], power.draw [W], utilization.gpu [%], clocks.current.graphics [MHz], clocks.current.memory [MHz], power.limit [W]\nNVIDIA RTX PRO 6000 Blackwell Workstation Edition, 580.126.20, 97887 MiB, 11062 MiB, 153.35 W, 42 %, 2790 MHz, 13365 MHz, 600.00 W\nNVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 580.126.20, 97887 MiB, 64 MiB, 7.67 W, 0 %, 172 MHz, 405 MHz, 300.00 W\n"
+    },
+    "gpu_processes": {
+      "exit": 0,
+      "text": "pid, process_name, used_gpu_memory [MiB]\n1843661, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 940 MiB\n1908804, /isaac-sim/kit/python/bin/python3, 4801 MiB\n1908493, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 578 MiB\n1917914, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 1248 MiB\n1926376, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 602 MiB\n1926411, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 602 MiB\n1926568, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 782 MiB\n1926624, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 782 MiB\n1926260, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 578 MiB\n"
+    },
+    "clock": {
+      "exit": 0,
+      "text": "Reference ID    : 5BBD5B9D (alphyn.canonical.com)\nStratum         : 3\nRef time (UTC)  : Mon Oct 12 05:51:38 2026\nSystem time     : 0.000153842 seconds slow of NTP time\nLast offset     : -0.000158054 seconds\nRMS offset      : 0.001445548 seconds\nFrequency       : 18.763 ppm slow\nResidual freq   : +0.005 ppm\nSkew            : 0.434 ppm\nRoot delay      : 0.111112908 seconds\nRoot dispersion : 0.002050173 seconds\nUpdate interval : 1032.0 seconds\nLeap status     : Normal\n"
+    },
+    "network": {
+      "exit": 0,
+      "text": "lo               UNKNOWN        127.0.0.1/8 ::1/128 \neno1             UP             10.111.19.0/23 fe80::ce28:aaff:fed0:f069/64 \neno2             DOWN           \nenp115s0f0np0    DOWN           \nenp115s0f1np1    DOWN           \nenxb04f13de342a  DOWN           \nwlp7s0           DOWN           \nbr-dfbea64985f5  DOWN           172.20.0.1/16 fe80::a022:83ff:fe84:9bd0/64 \nbr-e96874c98d49  DOWN           172.22.0.1/16 fe80::ccd3:41ff:fe1f:2325/64 \nbr-f11654b0c821  DOWN           172.19.0.1/16 fe80::cfb:d5ff:fe05:1d98/64 \nbr-0192cc41fd37  DOWN           172.18.0.1/16 fe80::e8a5:4bff:fed4:f5bf/64 \nbr-15dfeb99a507  DOWN           172.21.0.1/16 fe80::e0c8:ebff:fe2b:2f58/64 \nbr-40989af994f1  DOWN           172.23.0.1/16 fe80::bc6f:c0ff:fe83:bc75/64 \ndocker0          DOWN           172.17.0.1/16 fe80::8cf5:abff:fef7:ece8/64 \n"
+    },
+    "sdk5": {
+      "exit": 0,
+      "text": "5.0.0a3\n"
+    },
+    "git": {
+      "exit": 0,
+      "text": "d0bac10ec2587c2eea6297258651fa538a42422d\n"
+    },
+    "links": {
+      "exit": 1,
+      "text": "/sys/class/net/br-0192cc41fd37/speed\n-1\n/sys/class/net/br-15dfeb99a507/speed\n-1\n/sys/class/net/br-40989af994f1/speed\n-1\n/sys/class/net/br-dfbea64985f5/speed\n-1\n/sys/class/net/br-e96874c98d49/speed\n-1\n/sys/class/net/br-f11654b0c821/speed\n-1\n/sys/class/net/docker0/speed\n-1\n/sys/class/net/eno1/speed\n10000\n/sys/class/net/eno2/speed\n-1\n/sys/class/net/enp115s0f0np0/speed\n-1\n/sys/class/net/enp115s0f1np1/speed\n-1\n/sys/class/net/enxb04f13de342a/speed\n-1\n/sys/class/net/lo/speed\n/sys/class/net/wlp7s0/speed\n"
+    },
+    "brio_controls": {
+      "exit": 0,
+      "text": "Driver Info:\n\tDriver name      : uvcvideo\n\tCard type        : Logitech BRIO\n\tBus info         : usb-0000:00:14.0-3\n\tDriver version   : 7.0.14\n\tCapabilities     : 0x84a00001\n\t\tVideo Capture\n\t\tMetadata Capture\n\t\tStreaming\n\t\tExtended Pix Format\n\t\tDevice Capabilities\n\tDevice Caps      : 0x04200001\n\t\tVideo Capture\n\t\tStreaming\n\t\tExtended Pix Format\nMedia Driver Info:\n\tDriver name      : uvcvideo\n\tModel            : Logitech BRIO\n\tSerial           : A714C92E\n\tBus info         : usb-0000:00:14.0-3\n\tMedia version    : 7.0.14\n\tHardware revision: 0x00000317 (791)\n\tDriver version   : 7.0.14\nInterface Info:\n\tID               : 0x03000002\n\tType             : V4L Video\nEntity Info:\n\tID               : 0x00000001 (1)\n\tName             : Logitech BRIO\n\tFunction         : V4L2 I/O\n\tFlags            : default\n\tPad 0x0100000d   : 0: Sink\n\t  Link 0x0200002c: from remote pad 0x1000010 of entity 'Processing 3' (Video Pixel Formatter): Data, Enabled, Immutable\nPriority: 2\nVideo input : 0 (Camera 1: ok)\nFormat Video Capture:\n\tWidth/Height      : 1920/1080\n\tPixel Format      : 'YUYV' (YUYV 4:2:2)\n\tField             : None\n\tBytes per Line    : 3840\n\tSize Image        : 4147200\n\tColorspace        : sRGB\n\tTransfer Function : Rec. 709\n\tYCbCr/HSV Encoding: ITU-R 601\n\tQuantization      : Default (maps to Limited Range)\n\tFlags             : \nCrop Capability Video Capture:\n\tBounds      : Left 0, Top 0, Width 1920, Height 1080\n\tDefault     : Left 0, Top 0, Width 1920, Height 1080\n\tPixel Aspect: 1/1\nSelection Video Capture: crop_default, Left 0, Top 0, Width 1920, Height 1080, Flags: \nSelection Video Capture: crop_bounds, Left 0, Top 0, Width 1920, Height 1080, Flags: \nStreaming Parameters Video Capture:\n\tCapabilities     : timeperframe\n\tFrames per second: 30.000 (30/1)\n\tRead buffers     : 0\n\nUser Controls\n\n                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=128 flags=0x00001000\n                       contrast 0x00980901 (int)    : min=0 max=255 step=1 default=128 value=128 flags=0x00001000\n                     saturation 0x00980902 (int)    : min=0 max=255 step=1 default=128 value=128 flags=0x00001000\n        white_balance_automatic 0x0098090c (bool)   : default=1 value=1\n                           gain 0x00980913 (int)    : min=0 max=255 step=1 default=0 value=0 flags=0x00001000\n           power_line_frequency 0x00980918 (menu)   : min=0 max=2 default=2 value=2 (60 Hz)\n\t\t\t\t0: Disabled\n\t\t\t\t1: 50 Hz\n\t\t\t\t2: 60 Hz\n      white_balance_temperature 0x0098091a (int)    : min=2000 max=7500 step=10 default=4000 value=4310 flags=inactive, 0x00001000\n                      sharpness 0x0098091b (int)    : min=0 max=255 step=1 default=128 value=128 flags=0x00001000\n         backlight_compensation 0x0098091c (int)    : min=0 max=1 step=1 default=1 value=1 flags=0x00001000\n\nCamera Controls\n\n                  auto_exposure 0x009a0901 (menu)   : min=0 max=3 default=3 value=3 (Aperture Priority Mode)\n\t\t\t\t1: Manual Mode\n\t\t\t\t3: Aperture Priority Mode\n         exposure_time_absolute 0x009a0902 (int)    : min=3 max=2047 step=1 default=250 value=625 flags=inactive, 0x00001000\n     exposure_dynamic_framerate 0x009a0903 (bool)   : default=0 value=1\n                   pan_absolute 0x009a0908 (int)    : min=-36000 max=36000 step=3600 default=0 value=0 flags=0x00001000\n                  tilt_absolute 0x009a0909 (int)    : min=-36000 max=36000 step=3600 default=0 value=0 flags=0x00001000\n                 focus_absolute 0x009a090a (int)    : min=0 max=255 step=5 default=0 value=10 flags=inactive, 0x00001000\n     focus_automatic_continuous 0x009a090c (bool)   : default=1 value=1\n                  zoom_absolute 0x009a090d (int)    : min=100 max=500 step=1 default=100 value=100 flags=0x00001000\n"
+    }
+  },
+  "10.111.19.209": {
+    "system": {
+      "exit": 0,
+      "text": "Linux spark-4129 6.17.0-1014-nvidia #14-Ubuntu SMP PREEMPT_DYNAMIC Tue Mar 17 19:01:40 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux\n"
+    },
+    "cpu": {
+      "exit": 0,
+      "text": "Architecture:                            aarch64\nCPU op-mode(s):                          64-bit\nByte Order:                              Little Endian\nCPU(s):                                  20\nOn-line CPU(s) list:                     0-19\nVendor ID:                               ARM\nModel name:                              Cortex-X925\nModel:                                   1\nThread(s) per core:                      1\nCore(s) per socket:                      10\nSocket(s):                               1\nStepping:                                r0p1\nFrequency boost:                         disabled\nCPU(s) scaling MHz:                      100%\nCPU max MHz:                             3900.0000\nCPU min MHz:                             1378.0000\nBogoMIPS:                                2000.00\nFlags:                                   fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt\nModel name:                              Cortex-A725\nModel:                                   1\nThread(s) per core:                      1\nCore(s) per socket:                      10\nSocket(s):                               1\nStepping:                                r0p1\nCPU(s) scaling MHz:                      100%\nCPU max MHz:                             2808.0000\nCPU min MHz:                             338.0000\nBogoMIPS:                                2000.00\nFlags:                                   fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt\nL1d cache:                               1.3 MiB (20 instances)\nL1i cache:                               1.3 MiB (20 instances)\nL2 cache:                                25 MiB (20 instances)\nL3 cache:                                24 MiB (2 instances)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-19\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; CSV2, BHB\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n"
+    },
+    "memory": {
+      "exit": 0,
+      "text": "               total        used        free      shared  buff/cache   available\nMem:     130663591936  5693485056 21028388864    38289408 105152368640 124970106880\nSwap:    17179865088   607014912 16572850176\n"
+    },
+    "gpu": {
+      "exit": 0,
+      "text": "name, driver_version, memory.total [MiB], memory.used [MiB], power.draw [W], utilization.gpu [%], clocks.current.graphics [MHz], clocks.current.memory [MHz], power.limit [W]\nNVIDIA GB10, 580.126.09, [N/A], [N/A], 5.52 W, 0 %, 208 MHz, [N/A], [N/A]\n"
+    },
+    "gpu_processes": {
+      "exit": 0,
+      "text": "pid, process_name, used_gpu_memory [MiB]\n"
+    },
+    "clock": {
+      "exit": 0,
+      "text": "Reference ID    : 5BBD5B9D (alphyn.canonical.com)\nStratum         : 3\nRef time (UTC)  : Mon Oct 12 05:42:28 2026\nSystem time     : 0.000457301 seconds fast of NTP time\nLast offset     : +0.000376367 seconds\nRMS offset      : 0.003843612 seconds\nFrequency       : 9.937 ppm slow\nResidual freq   : +0.018 ppm\nSkew            : 0.170 ppm\nRoot delay      : 0.111134261 seconds\nRoot dispersion : 0.002668079 seconds\nUpdate interval : 1025.5 seconds\nLeap status     : Normal\n"
+    },
+    "network": {
+      "exit": 0,
+      "text": "lo               UNKNOWN        127.0.0.1/8 ::1/128 \nenP7s7           UP             10.111.19.209/23 fe80::1f9a:be8a:f6d0:9478/64 \nwlP9s9           DOWN           \ndocker0          DOWN           172.17.0.1/16 fe80::3086:acff:fed2:e725/64 \n"
+    },
+    "sdk5": {
+      "exit": 0,
+      "text": "5.0.0a3\n"
+    },
+    "git": {
+      "exit": 0,
+      "text": "bc0a92adaf786292e2fd9a2fdff7715ce584d58e\n"
+    },
+    "links": {
+      "exit": 1,
+      "text": "/sys/class/net/docker0/speed\n-1\n/sys/class/net/enP7s7/speed\n10000\n/sys/class/net/lo/speed\n/sys/class/net/wlP9s9/speed\n"
+    }
+  },
+  "10.111.19.159": {
+    "system": {
+      "exit": 0,
+      "text": "Linux thor1 6.8.12-tegra #1 SMP PREEMPT Tue Dec 30 15:40:41 PST 2025 aarch64 aarch64 aarch64 GNU/Linux\n"
+    },
+    "cpu": {
+      "exit": 0,
+      "text": "Architecture:                         aarch64\nCPU op-mode(s):                       64-bit\nByte Order:                           Little Endian\nCPU(s):                               14\nOn-line CPU(s) list:                  0-13\nVendor ID:                            ARM\nModel name:                           -\nModel:                                0\nThread(s) per core:                   1\nCore(s) per cluster:                  14\nSocket(s):                            -\nCluster(s):                           1\nStepping:                             r0p0\nCPU(s) scaling MHz:                   45%\nCPU max MHz:                          2601.0000\nCPU min MHz:                          54.0000\nBogoMIPS:                             2000.00\nFlags:                                fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt\nL1d cache:                            896 KiB (14 instances)\nL1i cache:                            896 KiB (14 instances)\nL2 cache:                             14 MiB (14 instances)\nNUMA node(s):                         1\nNUMA node0 CPU(s):                    0-13\nVulnerability Gather data sampling:   Not affected\nVulnerability Itlb multihit:          Not affected\nVulnerability L1tf:                   Not affected\nVulnerability Mds:                    Not affected\nVulnerability Meltdown:               Not affected\nVulnerability Mmio stale data:        Not affected\nVulnerability Reg file data sampling: Not affected\nVulnerability Retbleed:               Not affected\nVulnerability Spec rstack overflow:   Not affected\nVulnerability Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:             Mitigation; __user pointer sanitization\nVulnerability Spectre v2:             Not affected\nVulnerability Srbds:                  Not affected\nVulnerability Tsx async abort:        Not affected\n"
+    },
+    "memory": {
+      "exit": 0,
+      "text": "               total        used        free      shared  buff/cache   available\nMem:     131881177088  6972997632 83676962816    72302592 42505588736 124908179456\nSwap:     2147479552           0  2147479552\n"
+    },
+    "gpu": {
+      "exit": 0,
+      "text": "name, driver_version, memory.total [MiB], memory.used [MiB], power.draw [W], utilization.gpu [%], clocks.current.graphics [MHz], clocks.current.memory [MHz], power.limit [W]\nNVIDIA Thor, 580.00, [N/A], [N/A], 2.37 W, 0 %, 315 MHz, [N/A], [N/A]\n"
+    },
+    "gpu_processes": {
+      "exit": 0,
+      "text": "pid, process_name, used_gpu_memory [MiB]\n174991, /home/sachi/Projects/holoscan-telesurgery/.venv-sdk5/bin/python, 126 MiB\n"
+    },
+    "clock": {
+      "exit": 0,
+      "text": "Reference ID    : 5BBD5B9D (alphyn.canonical.com)\nStratum         : 3\nRef time (UTC)  : Mon Oct 12 05:52:22 2026\nSystem time     : 0.000246749 seconds slow of NTP time\nLast offset     : +0.000047636 seconds\nRMS offset      : 0.000745314 seconds\nFrequency       : 4.668 ppm slow\nResidual freq   : -0.005 ppm\nSkew            : 1.106 ppm\nRoot delay      : 0.111043580 seconds\nRoot dispersion : 0.003194334 seconds\nUpdate interval : 515.6 seconds\nLeap status     : Normal\n"
+    },
+    "network": {
+      "exit": 0,
+      "text": "lo               UNKNOWN        127.0.0.1/8 ::1/128 \ncan0             DOWN           \nenP2p1s0         UP             10.111.19.159/23 fe80::3503:4a0:b0e5:3868/64 \ncan1             DOWN           \ncan2             DOWN           \ncan3             DOWN           \nmgbe0_0          UP             192.168.0.101/24 fe80::13dd:ae2c:e541:7536/64 \nmgbe1_0          DOWN           \nwlP1p1s0         DOWN           \nmgbe2_0          DOWN           \nmgbe3_0          DOWN           \nl4tbr0           DOWN           192.168.55.1/24 fe80::1/64 \nusb0             DOWN           \nusb1             DOWN           \ndocker0          DOWN           172.17.0.1/16 fe80::503b:aeff:fef2:c21a/64 \n"
+    },
+    "sdk5": {
+      "exit": 0,
+      "text": "5.0.0a3\n"
+    },
+    "git": {
+      "exit": 0,
+      "text": "bc0a92adaf786292e2fd9a2fdff7715ce584d58e\n"
+    },
+    "links": {
+      "exit": 1,
+      "text": "/sys/class/net/can0/speed\n/sys/class/net/can1/speed\n/sys/class/net/can2/speed\n/sys/class/net/can3/speed\n/sys/class/net/docker0/speed\n-1\n/sys/class/net/enP2p1s0/speed\n5000\n/sys/class/net/l4tbr0/speed\n-1\n/sys/class/net/lo/speed\n/sys/class/net/mgbe0_0/speed\n10000\n/sys/class/net/mgbe1_0/speed\n10000\n/sys/class/net/mgbe2_0/speed\n10000\n/sys/class/net/mgbe3_0/speed\n10000\n/sys/class/net/usb0/speed\n/sys/class/net/usb1/speed\n/sys/class/net/wlP1p1s0/speed\n"
+    }
+  },
+  "source_hash_scope": "Sorted Python/JavaScript under packages and C/C++/CUDA sources/headers under native; UTF-8 relative path, NUL, bytes, NUL. All 120 files match on workstation, Spark and Thor.",
+  "application_source_sha256": "a03e811994706d2c641b7595508b573f4a873b8d65ff4d545814a118b9d7626e",
+  "source_deployment": "Remote checkouts were synchronized from workstation commit d0bac10ec2587c2eea6297258651fa538a42422d; their local Git HEAD predates those synchronized working files.",
+  "spark_mira_observation": {
+    "measured_utc": "2026-10-12T07:01:33.482131+00:00",
+    "context": "Both MIRA cameras streaming; first 1080p nvJPEG warmup. First-use renderer shader caching finished before measurements.",
+    "gpu": "name, utilization.gpu [%], power.draw [W], clocks.current.graphics [MHz]\nNVIDIA GB10, 62 %, 28.09 W, 2398 MHz\n"
+  }
+}

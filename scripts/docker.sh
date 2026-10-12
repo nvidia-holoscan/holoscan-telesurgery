@@ -144,6 +144,15 @@ if [[ -n "${DISPLAY:-}" && -d /tmp/.X11-unix ]]; then
                --volume "$display_auth:/tmp/telesurgery-xauthority:ro")
     fi
 fi
+if [[ "${1:-}" == surgeon && -d /dev/input ]]; then
+    for device in /dev/input/event*; do
+        if [[ -c "$device" ]] && udevadm info --query=property --name="$device" |
+            grep -qx 'ID_INPUT_JOYSTICK=1'; then
+            args+=(--device "$device" --group-add "$(stat -c %g "$device")")
+        fi
+    done
+    if [[ -d /run/udev ]]; then args+=(--volume /run/udev:/run/udev:ro); fi
+fi
 # Simulation and managed physical MIRA controllers use the host Docker service.
 if [[ "${1:-}" == node ]]; then
     args+=(--volume /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)")

@@ -108,7 +108,7 @@ class Controller:
         self.expires = time.monotonic() + 2
 
     def move(self, token, sequence, command, sent_at, mode="jog", speed_deg_s=None):
-        if mode not in {"step", "jog", "home", "grip"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian"}:
             raise ValueError("Unknown robot motion mode")
         if type(sent_at) not in (float, int) or not math.isfinite(sent_at):
             raise ValueError("Invalid controller timestamp")
@@ -140,6 +140,14 @@ class Controller:
             gripper_rates(command, self.adapter.grippers)
             self.sequence = sequence
             return self.record(lambda: self.adapter.grip(command))
+        if mode == "cartesian":
+            from telesurgery_robots.mira.cartesian import command as tool_command
+
+            if not hasattr(self.adapter, "jog_cartesian"):
+                raise ValueError("MIRA Cartesian jogging is not supported by this robot")
+            command = tool_command(command)
+            self.sequence = sequence
+            return self.record(lambda: self.adapter.jog_cartesian(command))
         if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
             from telesurgery_robots.adapters.base import cartesian_command
 
