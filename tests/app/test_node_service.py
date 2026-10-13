@@ -6,12 +6,67 @@
 import asyncio
 import json
 import secrets
+import signal
 import stat
 from dataclasses import asdict
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from telesurgery.nodes.address import endpoint
 from telesurgery_core.configuration import load
+
+
+@pytest.mark.asyncio
+async def test_repeated_shutdown_signals_do_not_interrupt_node_cleanup(monkeypatch):
+    from telesurgery.nodes.client import _run
+
+    handlers = {}
+    monkeypatch.setattr(
+        asyncio.get_running_loop(),
+        "add_signal_handler",
+        lambda number, callback: handlers.update({number: callback}),
+    )
+    ready, cleaning, finish, cleaned = (asyncio.Event() for _ in range(4))
+
+    async def run():
+        try:
+            ready.set()
+            await asyncio.Future()
+        finally:
+            cleaning.set()
+            await finish.wait()
+            cleaned.set()
+
+    task = asyncio.create_task(_run(SimpleNamespace(run=run)))
+    try:
+        await asyncio.wait_for(ready.wait(), 2)
+        handlers[signal.SIGTERM]()
+        await asyncio.wait_for(cleaning.wait(), 2)
+        handlers[signal.SIGINT]()
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cleaned.is_set()
+    finally:
+        finish.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_node_resources_close_even_when_video_cleanup_fails():
+    from telesurgery.nodes.client import NodeClient
+
+    client = object.__new__(NodeClient)
+    client.removed = True
+    client.clock = SimpleNamespace(watch=AsyncMock())
+    client.feedback = AsyncMock()
+    client.video = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("video cleanup")))
+    client.node = SimpleNamespace(close=AsyncMock())
+    with pytest.raises(RuntimeError, match="video cleanup"):
+        await client.run()
+    client.node.close.assert_awaited_once()
 
 
 def test_patient_addresses():

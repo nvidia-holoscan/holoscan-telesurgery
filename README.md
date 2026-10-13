@@ -111,7 +111,7 @@ See [Versius controls](docs/robot-controls.md#versius-simulation) for the two-su
 - **Franka:** Enable FCI in Desk and run `./run.sh --docker node --patient PATIENT_IP --profile franka` (native: run `./setup.sh --profile franka` first and omit `--docker`); the default address is `172.16.0.3`, overridden with `--franka-address ROBOT_IP`.
 - **HSB camera:** Connect the board to the node's camera network and run `./run.sh --docker node --patient PATIENT_IP`; boards are discovered automatically with IMX274 sensor 0 as the default ([other sensors](docs/architecture.md#camera-configuration)).
 
-## Configuration
+## Miscellaneous
 
 ### Streams
 
@@ -129,4 +129,21 @@ See [Versius controls](docs/robot-controls.md#versius-simulation) for the two-su
 
 - Data is stored in `./workspace`, with logs under `logs/`. Override with `--workspace PATH`.
 
+### Stopping services
+
+Works for native and Docker services on the local host:
+
+```bash
+./run.sh status
+./run.sh stop patient
+./run.sh stop surgeon
+./run.sh stop node --name uni-mira
+./run.sh stop --all
+```
+
+A role alone stops its only running instance. If several match, specify `--name` / `--port`, or add `--all`.
+Use `--workspace PATH` for another workspace.
+Shutdown allows 30 seconds for cleanup. Change this with `--timeout SECONDS`; add `--force` to kill after the timeout.
+
+----
 Research demonstration. [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [TODO](docs/TODO.md)

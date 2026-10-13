@@ -41,13 +41,13 @@ def robot(kind):
 @pytest.mark.parametrize("scale", [1, 1.5, 2])
 @pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
 @pytest.mark.parametrize("gamepad", [None, "DualSense", "Xbox", "Nintendo Switch Pro Controller"])
-def test_native_layout_fits_rendered_text(monkeypatch, scale, kind, gamepad):
+def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, kind, gamepad):
     import tkinter as tk
 
     from telesurgery.controller.window import Window
 
     try:
-        root = tk.Tk()
+        root = tk.Tk(screenName=virtual_display)
     except tk.TclError:
         pytest.skip("Native layout check needs an X display")
     window = None

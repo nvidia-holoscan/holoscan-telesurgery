@@ -7,7 +7,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 sdk="$1"
 shift
-workspace="$root/workspace"
+workspace="$(realpath -m -- "$root/workspace")"
 app_args=("$@")
 mounts=()
 simulation=false
@@ -15,6 +15,8 @@ mira=false
 api_supplied=false
 api_path=""
 help=false
+role="${1:-}"
+name="" port="" sim=""
 for ((i=0; i<${#app_args[@]}; i++)); do
     option="${app_args[i]%%=*}"
     case "$option" in
@@ -43,7 +45,18 @@ for ((i=0; i<${#app_args[@]}; i++)); do
             else
                 app_args[i]="$path"
             fi ;;
-        --sim) simulation=true ;;
+        --name|--port|--sim)
+            if [[ "${app_args[i]}" == *=* ]]; then
+                value="${app_args[i]#*=}"
+            else
+                ((i+=1))
+                value="${app_args[i]:?option requires a value}"
+            fi
+            case "$option" in
+                --name) name="$value" ;;
+                --port) port="$value" ;;
+                --sim) sim="$value"; simulation=true ;;
+            esac ;;
         --profile)
             if [[ "${app_args[i]}" == *=* ]]; then
                 profile="${app_args[i]#*=}"
@@ -118,6 +131,21 @@ args=(--rm --init --gpus all --network host --hostname "$(hostname)" --user "$(i
       --volume /etc/passwd:/etc/passwd:ro --volume /etc/group:/etc/group:ro
       --volume "$root:$root:ro" --volume "$workspace:$workspace" --workdir "$root"
       "${mounts[@]}")
+if ! $help && [[ "$role" == patient || "$role" == surgeon || "$role" == node ]]; then
+    case "$role" in
+        patient) instance="${port:-8000}" ;;
+        surgeon) instance="${port:-8002}" ;;
+        node) instance="${name:-$(hostname)${sim:+-$sim}}" ;;
+    esac
+    identity="$(printf '%s\0' "$workspace" "$role" "$instance" "$(id -u)" | sha256sum)"
+    safe_instance="${instance//[^a-zA-Z0-9_.-]/_}"
+    label=com.nvidia.telesurgery
+    args+=(--name "telesurgery-$role-${safe_instance:0:64}-${identity:0:12}"
+           --label "$label.workspace=$workspace" --label "$label.role=$role"
+           --label "$label.instance=$instance" --label "$label.uid=$(id -u)"
+           --label "$label.log=${TELESURGERY_LOG:-}"
+           --env TELESURGERY_CONTAINER=1 --stop-timeout 30)
+fi
 if docker info --format '{{range $name, $_ := .Runtimes}}{{println $name}}{{end}}' | grep -qx nvidia; then
     args+=(--runtime=nvidia)
 fi

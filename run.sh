@@ -12,8 +12,9 @@ while (($#)); do
         --sdk) sdk="${2:?--sdk requires 4 or 5}"; shift 2 ;;
         --docker) docker=true; shift ;;
         -h|--help)
-            echo "Usage: ./run.sh [--sdk 4] [--docker] {patient|surgeon|node|controller|doctor} [options]"
+            echo "Usage: ./run.sh [--sdk 4] [--docker] {patient|surgeon|node|controller|doctor|status|stop} [options]"
             echo "Use ./run.sh patient --help for dashboard options."
+            echo "Use ./run.sh status or ./run.sh stop --help to manage running services."
             exit 0 ;;
         *) break ;;
     esac
@@ -21,6 +22,9 @@ done
 [[ "$sdk" == 4 || "$sdk" == 5 ]] || { echo "SDK must be 4 or 5" >&2; exit 1; }
 
 role="${1:-}"
+if [[ "$role" == status || "$role" == stop ]]; then
+    exec python3 "$root/packages/app/src/telesurgery/application/lifecycle.py" "$@"
+fi
 if [[ "$role" == patient || "$role" == surgeon || "$role" == node ]]; then
     workspace="$root/workspace"
     name="" sim="" port="" help=false
@@ -54,6 +58,7 @@ if [[ "$role" == patient || "$role" == surgeon || "$role" == node ]]; then
         logs="$(realpath -m -- "$workspace")/logs"
         (umask 077; mkdir -p -- "$logs")
         log="$(mktemp "$logs/$role-$name-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.log")"
+        export TELESURGERY_LOG="$log"
         if [[ -t 0 && -t 1 ]]; then export TELESURGERY_TTY=1; fi
         export PYTHONUNBUFFERED=1
         # Keep the application PID and exit status; retain shutdown output on Ctrl+C.

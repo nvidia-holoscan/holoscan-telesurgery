@@ -160,8 +160,10 @@ class NodeClient:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            await self.video.close()
-            await self.node.close()
+            try:
+                await self.video.close()
+            finally:
+                await self.node.close()
 
 
 async def run_service(directory, patient, name, video_port=0, environment=None, sim_gui=False):
@@ -178,6 +180,15 @@ async def run_service(directory, patient, name, video_port=0, environment=None, 
 
 async def _run(client):
     task = asyncio.current_task()
+    stopping = False
+
+    def stop():
+        nonlocal stopping
+        # A second stop request must not cancel the cleanup started by the first.
+        if not stopping:
+            stopping = True
+            task.cancel()
+
     for number in (signal.SIGINT, signal.SIGTERM):
-        asyncio.get_running_loop().add_signal_handler(number, task.cancel)
+        asyncio.get_running_loop().add_signal_handler(number, stop)
     await client.run()

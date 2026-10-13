@@ -39,7 +39,7 @@ class MiraController:
         )
         try:
             output, error = await asyncio.wait_for(
-                process.communicate(), 8 if args[0] == "run" else 2
+                process.communicate(), 8 if args[0] in {"run", "stop"} else 2
             )
         finally:
             if process.returncode is None:
@@ -151,3 +151,9 @@ class MiraController:
             except ValueError:
                 pass
         return {"text": output, "updated_seconds_ago": age}
+
+    async def stop(self):
+        info = await self._inspect()
+        if info and info["State"].get("Running"):
+            # Use the verified container ID so a replacement with the same name is untouched.
+            await self._docker("stop", "--time", "5", info["Id"])
