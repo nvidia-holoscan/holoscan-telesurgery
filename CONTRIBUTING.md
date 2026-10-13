@@ -12,10 +12,12 @@ Run native [setup](README.md#native-execution), then install development tools w
 uv pip install --python .venv-sdk5/bin/python --group dev
 .venv-sdk5/bin/playwright install chromium
 .venv-sdk5/bin/pre-commit run --all-files
-.venv-sdk5/bin/pytest -q
+xvfb-run -a .venv-sdk5/bin/pytest -q
 ```
 
 For SDK 4, use `.venv-sdk4`. Use `setup.sh` for runtime dependency changes so the SDK and patched codec stay consistent.
+
+Native setup and the Docker image include Xvfb and xauth. Run tests under `xvfb-run -a` so native viewers and controller windows use a virtual display. The native controller layout tests also create their own virtual display, and skip if Xvfb is unavailable; they never open on the desktop display.
 
 Keep application logic in the shared packages and SDK-specific code in `packages/runtime/src/telesurgery_runtime/backends`. Preserve bounded queues, frame ownership, CUDA ordering, command expiry and orderly shutdown. Verify hardware changes on the actual device. Keep generated artifacts in `workspace/` or `build/`. Do not hard-wrap Markdown paragraphs.
 

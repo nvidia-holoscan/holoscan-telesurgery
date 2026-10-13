@@ -135,6 +135,14 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk, suffi
     assert len(copies) == (1 if role == "node-sim" else 0)
     if copies:
         assert copies[0][-4:] == [image, "-r", "/opt/sim-deps/.", "/workspace/sim-deps/"]
+    if options[0] != "doctor":
+        label = "com.nvidia.telesurgery"
+        assert f"{label}.workspace={root / 'workspace'}" in run
+        assert f"{label}.role={options[0]}" in run
+        assert f"{label}.uid={os.getuid()}" in run
+        assert run[run.index("--name") + 1].startswith(f"telesurgery-{options[0]}-")
+        assert "TELESURGERY_CONTAINER=1" in run
+        assert run[run.index("--stop-timeout") + 1] == "30"
 
 
 @pytest.mark.parametrize("assignment", [False, True])
@@ -234,3 +242,22 @@ def test_explicit_default_binary_remains_writable(docker_launcher, tmp_path):
     command = json.loads(records.read_text().splitlines()[-1])
     assert f"{workspace}:{workspace}" in command
     assert f"{binary}:{binary}:ro" not in command
+
+
+def test_container_identity_uses_canonical_workspace(docker_launcher, tmp_path):
+    root, records = docker_launcher
+    workspace = tmp_path / "real workspace"
+    workspace.mkdir()
+    (root / "workspace").symlink_to(workspace, target_is_directory=True)
+    names = []
+    for arguments in ([], ["--workspace", str(workspace)], ["--port=8004"]):
+        subprocess.run(
+            ["bash", str(root / "run.sh"), "--docker", "surgeon", *arguments],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        command = json.loads(records.read_text().splitlines()[-1])
+        names.append(command[command.index("--name") + 1])
+        assert f"com.nvidia.telesurgery.workspace={workspace}" in command
+    assert names[0] == names[1] != names[2]

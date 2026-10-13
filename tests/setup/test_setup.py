@@ -132,7 +132,7 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
 @pytest.mark.parametrize("sdk", ["4", "5"])
 def test_missing_controller_libraries_use_distribution_versions(setup, monkeypatch, sdk):
     _, invoke = setup
-    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk")
+    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk xvfb xauth")
     result, records = invoke("--sdk", sdk)
     assert result.returncode == 0, result.stderr
     installs = [
@@ -147,6 +147,8 @@ def test_missing_controller_libraries_use_distribution_versions(setup, monkeypat
             "--no-install-recommends",
             "libsdl2-2.0-0",
             "python3-tk",
+            "xvfb",
+            "xauth",
         ]
     ]
 

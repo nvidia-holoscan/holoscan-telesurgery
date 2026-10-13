@@ -54,7 +54,7 @@ if dpkg-query -W libglib2.0-0t64 >/dev/null 2>&1; then glib=libglib2.0-0t64; fi
 packages=(build-essential ca-certificates curl git pkg-config libgl1 libegl1
           libxkbcommon0 libvulkan1 "$glib" libx11-dev libxrandr-dev
           libxinerama-dev libxcursor-dev libxi-dev libusb-1.0-0
-          libsdl2-2.0-0 python3-tk)
+          libsdl2-2.0-0 python3-tk xvfb xauth)
 missing=()
 for package in "${packages[@]}"; do
     if [[ "$(dpkg-query -W -f='${db:Status-Status}' "${package%%=*}" 2>/dev/null || true)" != installed ]]; then

@@ -9,6 +9,7 @@ import signal
 from pathlib import Path
 
 from aiohttp import web
+from telesurgery.application.lifecycle import register
 from telesurgery.server.application import Application
 from telesurgery.server.security import (
     dashboard_client_host,
@@ -165,11 +166,12 @@ def serve(
         service.controller_server = f"{'https' if ssl else 'http'}://{controller_host}:{port}"
         if ssl:
             service.controller_certificate = str(ssl_cert or directory / "https" / "endpoint.pem")
-        web.run_app(
-            create_app(service, host),
-            host=host,
-            port=port,
-            ssl_context=context,
-            access_log=None,
-            shutdown_timeout=5,
-        )
+        with register(directory, role, port):
+            web.run_app(
+                create_app(service, host),
+                host=host,
+                port=port,
+                ssl_context=context,
+                access_log=None,
+                shutdown_timeout=5,
+            )

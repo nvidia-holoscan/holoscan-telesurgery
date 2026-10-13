@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import socket
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -28,8 +29,15 @@ def node_name(value):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in {"status", "stop"}:
+        from telesurgery.application.lifecycle import main as manage
+
+        return manage(argv)
     parser = argparse.ArgumentParser(prog="./run.sh", description="Holoscan telesurgery")
     commands = parser.add_subparsers(dest="role", required=True)
+    commands.add_parser("status", help="list running local services")
+    commands.add_parser("stop", help="stop local services gracefully")
     for role, default_port in (("patient", 8000), ("surgeon", 8002)):
         command = commands.add_parser(role, help=f"start the {role} dashboard")
         command.add_argument(
@@ -138,6 +146,7 @@ def main(argv=None):
         elif args.role == "node":
             import fcntl
 
+            from telesurgery.application.lifecycle import register
             from telesurgery.nodes.profiles import prepare
 
             name = args.name or socket.gethostname() + (f"-{args.sim}" if args.sim else "")
@@ -167,11 +176,12 @@ def main(argv=None):
                 pid = directory / "node.pid"
                 pid.write_text(str(os.getpid()))
                 try:
-                    asyncio.run(
-                        run_service(
-                            directory, args.patient, name, args.port, args.sim, args.sim_gui
+                    with register(directory, "node", name):
+                        asyncio.run(
+                            run_service(
+                                directory, args.patient, name, args.port, args.sim, args.sim_gui
+                            )
                         )
-                    )
                 except asyncio.CancelledError:
                     pass
                 finally:

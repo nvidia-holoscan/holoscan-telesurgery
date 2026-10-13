@@ -6,7 +6,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from telesurgery.nodes.service import NodeService
@@ -173,3 +173,52 @@ def test_managed_controller_rejects_public_api_binding(tmp_path):
     )
     with pytest.raises(ValueError, match="127.0.0.1"):
         controller.command()
+
+
+@pytest.mark.asyncio
+async def test_controller_stop_verifies_ownership_and_uses_container_id(tmp_path):
+    controller = MiraController({"id": "mira", "controller": {}}, tmp_path)
+    info = {
+        "Id": "owned-container-id",
+        "Config": {"Labels": {controller.label: controller.identity}},
+        "State": {"Running": True},
+    }
+    controller._docker = AsyncMock(side_effect=[json.dumps([info]), ""])
+    await controller.stop()
+    controller._docker.assert_awaited_with("stop", "--time", "5", "owned-container-id")
+    info["Config"]["Labels"][controller.label] = "another-installation"
+    controller._docker = AsyncMock(return_value=json.dumps([info]))
+    with pytest.raises(RuntimeError, match="another installation"):
+        await controller.stop()
+    controller._docker.assert_awaited_once_with("inspect", controller.name)
+    controller._docker = AsyncMock(return_value=None)
+    await controller.stop()
+    controller._docker.assert_awaited_once_with("inspect", controller.name)
+
+
+@pytest.mark.asyncio
+async def test_node_shutdown_closes_connections_before_owned_controllers_even_on_failure():
+    node = object.__new__(NodeService)
+    events = []
+
+    def disconnect():
+        events.append("connections")
+
+    async def cameras():
+        events.append("cameras")
+        raise RuntimeError("camera failed")
+
+    async def controller():
+        events.append("controller")
+
+    async def simulation():
+        events.append("simulation")
+
+    node.robots = SimpleNamespace(devices={"mira": {}}, close=Mock(side_effect=disconnect))
+    node.local = SimpleNamespace(robots={"mira": {}, "external": {}}, close=cameras)
+    managed = SimpleNamespace(stop=controller)
+    node.controller = lambda key: managed if key == "mira" else None
+    node.room = SimpleNamespace(task=None, close=simulation)
+    with pytest.raises(RuntimeError, match="camera failed"):
+        await node.close()
+    assert events == ["connections", "cameras", "controller", "simulation"]

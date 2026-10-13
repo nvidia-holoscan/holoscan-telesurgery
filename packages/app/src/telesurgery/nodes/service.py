@@ -146,10 +146,25 @@ class NodeService:
         if self.room and self.room.task:
             self.room.task.cancel()
             await asyncio.gather(self.room.task, return_exceptions=True)
-        await self.local.close()
-        try:
-            if self.robots.devices:
-                await asyncio.to_thread(self.robots.close)
-        finally:
-            if self.room:
-                await self.room.close()
+        errors = []
+
+        async def cleanup(operation):
+            try:
+                await operation
+            except Exception as exc:
+                errors.append(str(exc) or type(exc).__name__)
+
+        if self.robots.devices:
+            await cleanup(asyncio.to_thread(self.robots.close))
+        await cleanup(self.local.close())
+        for key in self.local.robots:
+            try:
+                controller = self.controller(key)
+                if controller:
+                    await cleanup(controller.stop())
+            except Exception as exc:
+                errors.append(str(exc) or type(exc).__name__)
+        if self.room:
+            await cleanup(self.room.close())
+        if errors:
+            raise RuntimeError("Node cleanup failed: " + "; ".join(errors))
