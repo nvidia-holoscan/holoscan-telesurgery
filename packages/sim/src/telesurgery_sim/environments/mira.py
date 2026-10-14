@@ -135,7 +135,9 @@ def configure_task_physics(stage):
         drive.CreateStiffnessAttr(6400 if index < 5 else 5236)
         drive.CreateDampingAttr(160 if index < 5 else 34.9)
         drive.CreateMaxForceAttr(10_000_000 if index < 4 else 30_000 if index == 4 else 3000)
-        PhysxSchema.PhysxJointAPI.Apply(prim).CreateMaxJointVelocityAttr(30 if index < 4 else 20)
+        PhysxSchema.PhysxJointAPI.Apply(prim).CreateMaxJointVelocityAttr(
+            30 if index < 4 else 100 if index == 4 else 20
+        )
         if match[1] == "L" and index == 5:
             UsdPhysics.RevoluteJoint(prim).CreateLowerLimitAttr(0)
 

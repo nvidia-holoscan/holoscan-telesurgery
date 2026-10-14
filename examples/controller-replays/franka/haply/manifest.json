@@ -5,7 +5,7 @@
   "task": "Ultrasound probe approach and torso swipe",
   "source": "Measured tool checkpoints from the reference keyboard approach and scan through production Cartesian controls; normalized for each selected device",
   "starting_scene": "Fresh Franka scene at Home",
-  "duration_s": 60,
+  "duration_s": 36.4,
   "streams": {
     "franka": {
       "file": "franka.jsonl.gz",
@@ -29,43 +29,84 @@
     "task": "Probe approach and torso scan checkpoints reached in Isaac physics",
     "scan_endpoint_distance_m": 0.142688
   },
-  "scan_start_s": 21.680080972029828,
+  "scan_start_s": 13.97,
   "replay_verified": true,
   "replayed": {
     "date": "2026-10-14",
     "patient_host": "UNI",
     "surgeon_host": "UNI",
-    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
-    "added_round_trip_delay_ms": 0,
-    "elapsed_s": 77.42,
-    "checkpoints_reached": 18,
-    "post_replay_hold_s": 3,
-    "cameras_enabled": false,
-    "measured_final_tool_pose": {
-      "frame": "base",
-      "end_effector": "TCP",
-      "position_m": [
-        0.665433406829834,
-        0.07218632102012634,
-        0.1570276916027069
-      ],
-      "orientation_matrix": [
-        [
-          -0.9999816417694092,
-          0.005963081493973732,
-          0.0011391154257580638
+    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
+    "local": {
+      "added_round_trip_delay_ms": 0,
+      "replay_elapsed_s": 32.67,
+      "elapsed_including_setup_and_retention_s": 44.98,
+      "checkpoints_reached": {
+        "franka": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": false,
+      "measured_final_tool_pose": {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [
+          0.6653698086738586,
+          0.0720629096031189,
+          0.15708978474140167
         ],
-        [
-          0.005966913886368275,
-          0.9999764561653137,
-          0.003390723839402199
-        ],
-        [
-          -0.001118869404308498,
-          0.0033974582329392433,
-          -0.9999936819076538
+        "orientation_matrix": [
+          [
+            -0.9999810457229614,
+            0.006079120095819235,
+            0.001012700260616839
+          ],
+          [
+            0.006082630250602961,
+            0.9999753832817078,
+            0.0034997835755348206
+          ],
+          [
+            -0.0009913997491821647,
+            0.0035058772191405296,
+            -0.9999934434890747
+          ]
         ]
-      ]
+      }
+    },
+    "delayed": {
+      "added_round_trip_delay_ms": 80,
+      "replay_elapsed_s": 43.78,
+      "elapsed_including_setup_and_retention_s": 56.2,
+      "checkpoints_reached": {
+        "franka": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": false,
+      "measured_final_tool_pose": {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [
+          0.6654211282730103,
+          0.07202659547328949,
+          0.15704666078090668
+        ],
+        "orientation_matrix": [
+          [
+            -0.9999830722808838,
+            0.00569524709135294,
+            0.0011075793299824
+          ],
+          [
+            0.005698977969586849,
+            0.9999780058860779,
+            0.0033950244542211294
+          ],
+          [
+            -0.0010882194619625807,
+            0.003401279216632247,
+            -0.9999935626983643
+          ]
+        ]
+      }
     }
   },
   "cross_node_replayed": {

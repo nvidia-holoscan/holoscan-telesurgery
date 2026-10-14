@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 from telesurgery_robots.mira.adapter import Mira
-from telesurgery_robots.mira.cartesian import bounded_solution, command
+from telesurgery_robots.mira.cartesian import SIM_CARTESIAN, bounded_solution, command
 from telesurgery_robots.mira.poses import MIRA_HOME
 from telesurgery_robots.simulation.state import SimRobot
 
@@ -82,6 +82,36 @@ def test_ik_rejects_invalid_second_arm_before_motion():
     pose = Vendor().pose
     with pytest.raises(ValueError):
         bounded_solution({"left": pose["left"], "right": [0]}, pose, movement())
+
+
+def test_faster_simulated_roll_remains_measured_bounded_and_expires(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    robot = SimRobot()
+    measured = {arm: [*MIRA_HOME, 0] for arm in robot.pose}
+    robot.feedback = {"joints_deg": measured}
+    robot.kinematics = (
+        {
+            arm: (np.array(q), np.zeros(4), np.eye(4), [(-180, 180)] * 4)
+            for arm, q in measured.items()
+        },
+        clock[0],
+    )
+    request = {"left": [0, 0, 0, 0, 5], "right": [0] * 5}
+    with pytest.raises(ValueError, match="angular step"):
+        command(request)  # Physical MIRA retains its one-degree roll limit.
+    for _ in range(3):
+        robot.apply({"method": "jog_mira_cartesian", "params": request})
+        assert robot.pose["left"][4] == 5  # Frozen feedback cannot accumulate roll travel.
+    request["left"][4] = 5.01
+    with pytest.raises(ValueError, match="angular step"):
+        command(request, SIM_CARTESIAN)
+    request["left"] = [0, 0, 0, 1.01, 0]
+    with pytest.raises(ValueError, match="angular step"):
+        command(request, SIM_CARTESIAN)
+    clock[0] += 0.21
+    assert not robot.apply({"method": "get_state"})["control_active"]
+    assert robot.pose["left"][:5] == measured["left"]
 
 
 def test_simulator_uses_physics_jacobian_and_measured_hold(monkeypatch):

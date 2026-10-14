@@ -28,6 +28,15 @@ async def test_mira_tool_mode_and_release(device):
 
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            assert await page.evaluate(
+                """async () => {
+                    const {miraToolJog} = await import('/robot-input.js');
+                    const robot = {controls: {max_step_deg: 5,
+                        mira_cartesian: {linear_step_mm: 5, angular_step_deg: 1,
+                            roll_step_deg: 5}}};
+                    return miraToolJog(robot, {right: [0, 0, 0, 5, 5]}).right;
+                }"""
+            ) == [0, 0, 0, 1, 5]
             await page.evaluate(
                 """async device => {
                 document.hasFocus=()=>true;

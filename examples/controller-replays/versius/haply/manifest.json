@@ -5,7 +5,7 @@
   "task": "Left pickup, handoff, left withdrawal and right lift",
   "source": "Reference two-surgeon keyboard handoff with raised joint preparation, calibrated grasp endpoints, measured tool/gripper feedback and handoff barriers; normalized for each selected device",
   "starting_scene": "Fresh Versius scene with both arms at Home and the needle on its raised rest",
-  "duration_s": 192,
+  "duration_s": 80.69,
   "streams": {
     "left": {
       "file": "left.jsonl.gz",
@@ -104,45 +104,94 @@
   },
   "observed": {
     "needle_start_m": [
-      1.0477378964424133e-09,
-      -0.03999998793005943,
-      0.504516065120697
+      1.3969838619232178e-09,
+      -0.040000006556510925,
+      0.5045161247253418
     ],
     "needle_after_left_lift_m": [
-      -0.00018839770928025246,
-      -0.04031417891383171,
-      0.5351811051368713
+      3.405113238841295e-05,
+      -0.0404760017991066,
+      0.5350401401519775
     ],
     "needle_final_m": [
-      0.00033975893165916204,
-      -0.04011828079819679,
-      0.5544770359992981
+      0.00028696097433567047,
+      -0.04047513008117676,
+      0.5547099709510803
     ],
-    "left_lift_m": 0.030665,
-    "final_lift_m": 0.049961,
-    "retention_observed_s": 3,
-    "left_final_gripper": 0.5987284550148595,
-    "right_final_gripper": 0.10984638316229994
+    "final_lift_m": 0.050194,
+    "retention_observed_s": 3
   },
   "replay_verified": true,
   "replayed": {
     "date": "2026-10-14",
     "patient_host": "UNI",
     "surgeon_host": "UNI",
-    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
-    "added_round_trip_delay_ms": 0,
-    "elapsed_s": 192.9,
-    "checkpoints_reached": {
-      "left": 18,
-      "right": 15
+    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
+    "local": {
+      "added_round_trip_delay_ms": 0,
+      "replay_elapsed_s": 80.29,
+      "elapsed_including_setup_and_retention_s": 92.16,
+      "checkpoints_reached": {
+        "right": 15,
+        "left": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": true,
+      "needle_start_m": [
+        1.3969838619232178e-09,
+        -0.040000006556510925,
+        0.5045161247253418
+      ],
+      "needle_after_left_lift_m": [
+        3.405113238841295e-05,
+        -0.0404760017991066,
+        0.5350401401519775
+      ],
+      "needle_final_m": [
+        0.00028696097433567047,
+        -0.04047513008117676,
+        0.5547099709510803
+      ],
+      "final_lift_m": 0.050194
     },
-    "post_replay_hold_s": 3,
-    "cameras_enabled": false
+    "delayed": {
+      "added_round_trip_delay_ms": 80,
+      "replay_elapsed_s": 91.72,
+      "elapsed_including_setup_and_retention_s": 104.69,
+      "checkpoints_reached": {
+        "right": 15,
+        "left": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": true,
+      "needle_start_m": [
+        2.3283064365386963e-10,
+        -0.03999999538064003,
+        0.504516065120697
+      ],
+      "needle_after_left_lift_m": [
+        -0.0001927709672600031,
+        -0.040368497371673584,
+        0.5352933406829834
+      ],
+      "needle_final_m": [
+        0.00020091247279196978,
+        -0.04028594121336937,
+        0.5545024275779724
+      ],
+      "final_lift_m": 0.049986
+    }
   },
   "barriers": 3,
   "barrier_labels": [
     "Left pickup and lift complete",
     "Right grasp complete before left release",
     "Left withdrawal complete before right lift"
-  ]
+  ],
+  "asset_bundle": {
+    "file": "CMR_Versius_All_Assets.zip",
+    "sha256": "a0de8cac372313f52ef804d82951ec87ca7477df09be2f1dc51b5e462bb68810",
+    "layout": "nvidia-cmr/assets/URDF",
+    "embedded_glb_materials": true
+  }
 }

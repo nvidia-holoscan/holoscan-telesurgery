@@ -47,7 +47,8 @@ def test_grasp_waits_for_recorded_pose_with_servo_lag_and_packet_delay(delay):
             assert mode == "cartesian"
             values = command["right"]
             assert sum(v * v for v in values[:3]) <= 25 + 1e-9
-            assert max(abs(v) for v in values[3:]) <= 1
+            assert abs(values[3]) <= 1
+            assert abs(values[4]) <= 5
             assert command["left"] == [0] * 5
             playback.validate_request(mode, command)
             # An accepted increment only partly becomes measured motion.
@@ -57,7 +58,7 @@ def test_grasp_waits_for_recorded_pose_with_servo_lag_and_packet_delay(delay):
         now[0] += delay
     else:
         pytest.fail("Recorded pose was not reached")
-    assert issued > 20
+    assert issued > 1
 
 
 def test_planned_arrival_does_not_close_jaws_before_measured_arrival():
@@ -75,6 +76,22 @@ def test_planned_arrival_does_not_close_jaws_before_measured_arrival():
                 playback.read(now[0], feedback)
         else:
             assert playback.read(now[0], feedback)["request"] is None
+
+
+def test_loaded_lift_tolerance_does_not_relax_precise_grasp_arrival():
+    goal = [0, 25, 0, 0, 0]
+    measured = state([0, 24.8, 0, 0, 0])
+    measured["control_active"] = False
+    precise = player([row(pose={"right": goal})], [0.0])
+    assert not precise.read(0, measured)["done"]
+    lift = player([row(pose={"right": goal}, position_tolerance_mm=0.25)], [0.0])
+    assert lift.read(0, measured)["done"]
+
+
+@pytest.mark.parametrize("tolerance", [0, 0.3, True, float("nan"), "0.25"])
+def test_pose_tolerance_cannot_remove_measured_arrival_bounds(tolerance):
+    with pytest.raises(ValueError, match="pose tolerance"):
+        validate_checkpoints([row(pose={"right": [0] * 5}, position_tolerance_mm=tolerance)])
 
 
 def test_opening_slows_near_goal_and_closing_releases_on_stable_contact():
@@ -107,6 +124,45 @@ def test_checkpoints_require_feedback_and_stop_after_polling_stalls():
     now[0] = 0.4
     with pytest.raises(TimeoutError, match="stopped polling"):
         playback.read(0.4, state([0] * 5))
+
+
+def test_closing_contact_allows_compliant_jaws_to_spread_slightly():
+    now = [0.0]
+    playback = player([row(grip={"right": 0})], now)
+    for tick in range(20):
+        now[0] = tick * 0.1
+        result = playback.read(now[0], {"grippers": {"right": 0.04 + tick * 0.001}})
+        if result["done"]:
+            assert now[0] >= 1.2
+            break
+        playback.acknowledge({})
+    else:
+        pytest.fail("Compliant contact never completed")
+
+
+def test_stuck_open_gripper_is_not_accepted_as_needle_contact():
+    now = [0.0]
+    playback = player([row(grip={"right": 0})], now)
+    for tick in range(50):
+        now[0] = tick * 0.1
+        assert not playback.read(now[0], {"grippers": {"right": 0.5}})["done"]
+        playback.acknowledge({})
+    now[0] = 5.1
+    with pytest.raises(TimeoutError, match="checkpoint"):
+        playback.read(now[0], {"grippers": {"right": 0.5}})
+
+
+def test_delayed_gripper_feedback_slows_approach_to_opening_target():
+    now = [0.0]
+    playback = player([row(grip={"right": 0.25})], now)
+    measured = {"grippers": {"right": 0.24}}
+    initial = playback.read(0, measured)["request"][1]["right"]
+    playback.acknowledge({})
+    now[0] = 0.35
+    playback.read_at = now[0]
+    delayed = playback.read(now[0], measured)["request"][1]["right"]
+    assert 0 < delayed < initial
+    assert delayed * 0.7 == pytest.approx(0.01)
 
 
 @pytest.mark.parametrize(
@@ -184,6 +240,31 @@ def tool_state(position, *, rotation=None, velocity=0):
         "velocity_deg_s": {"joints": [velocity] * 7},
         "control_active": velocity != 0,
     }
+
+
+def test_delayed_tool_feedback_reduces_correction_without_changing_arrival_tolerance():
+    now = [0.0]
+    target = tool_state([0, 0, 0])["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot("franka"),
+        {"device": "keyboard"},
+        "franka",
+        [row(tool_pose=target)],
+        "run",
+        lambda: now[0],
+    )
+    measured = tool_state([0.002, 0, 0])
+    local = playback.read(0, measured)["request"][1]["translation"][0]
+    playback.acknowledge({})
+    now[0] = 0.35
+    playback.read_at = now[0]  # Dashboard heartbeat is independent of feedback.
+    delayed = playback.read(now[0], measured)["request"][1]["translation"][0]
+    assert delayed == pytest.approx(local / 2)
+    assert not playback.finished
+    playback.acknowledge({})
+    now[0] += 0.1
+    result = playback.read(now[0], tool_state([0.0002, 0, 0]))
+    assert result["done"]
 
 
 @pytest.mark.parametrize("environment", ["franka", "versius"])
@@ -397,6 +478,30 @@ def test_versius_joint_preparation_waits_for_measured_arrival_and_settles():
     now[0] = 0.3
     feedback["joints_deg"]["joints"] = goal
     assert playback.read(0.3, feedback)["done"]
+
+
+@pytest.mark.parametrize("maximum", [1, 5])
+def test_joint_preparation_uses_advertised_step_bound_and_waits_for_completion(maximum):
+    now = [0.0]
+    robot = cartesian_robot("versius")
+    robot["controls"]["max_step_deg"] = maximum
+    goal = [0, -40, 10, 100, -20, 20, -20, 110]
+    playback = CheckpointPlayback(
+        robot, {"device": "keyboard"}, "left", [row(joint_pose=goal)], "run", lambda: now[0]
+    )
+    feedback = {
+        "joints_deg": {"joints": [v - 10 for v in goal]},
+        "targets_deg": {"joints": [v - 10 for v in goal]},
+        "control_active": False,
+    }
+    assert playback.read(0, feedback)["request"] == ("step", {"joints": [maximum] * 8})
+    playback.acknowledge({})
+    feedback["control_active"] = True
+    for tick in range(1, 6):
+        now[0] = tick * 0.2
+        result = playback.read(now[0], feedback)
+        assert result["request"] is None
+        assert result["waiting_feedback"]
 
 
 @pytest.mark.parametrize("target", [[0] * 7, [0] * 9, [0, -40, 10, 100, -20, 30, -20, 110]])

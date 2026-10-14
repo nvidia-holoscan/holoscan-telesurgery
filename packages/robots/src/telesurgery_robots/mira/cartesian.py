@@ -18,6 +18,7 @@ SIM_CARTESIAN = {
     **CARTESIAN,
     "frame": "MIRA simulation base",
     "linear_step_mm": 5.0,
+    "roll_step_deg": 5.0,
     # Inverse3 right / forward / up into the simulation's base frame.
     # The procedure camera looks along world +X; world +Y is up.
     "haply_basis": [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
@@ -33,7 +34,9 @@ def command(data, limits=CARTESIAN):
         delta = values(data[arm], 5, math.inf)
         if math.hypot(*delta[:3]) > limits["linear_step_mm"] + 1e-9:
             raise ValueError(f"MIRA translation exceeds {limits['linear_step_mm']} mm per command")
-        if any(abs(v) > limits["angular_step_deg"] for v in delta[3:]):
+        if abs(delta[3]) > limits["angular_step_deg"] or abs(delta[4]) > limits.get(
+            "roll_step_deg", limits["angular_step_deg"]
+        ):
             raise ValueError("MIRA rotation exceeds the angular step limit")
         result[arm] = delta
     return result
