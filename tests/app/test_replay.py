@@ -165,3 +165,73 @@ def test_handoff_barrier_tracks_each_owner_and_survives_motion_acknowledgements(
     with pytest.raises(PermissionError):
         barrier.poll(run, "X", "node:right", owners, checkpoint=2)
     assert barrier.poll(run, "X", "node:left", owners, checkpoint=2)["checkpoint"] == 2
+
+
+@pytest.mark.parametrize("first", ["left", "right"])
+def test_checkpoint_replay_starts_alone_and_waits_at_handoff_for_late_surgeon(catalog, first):
+    _, manifest = catalog.recordings["versius/keyboard"]
+    manifest.update(version=2, barriers=3)
+    now = [10.0]
+
+    def clock():
+        return now[0]
+
+    barrier = Rendezvous(catalog, clock)
+    second = "right" if first == "left" else "left"
+    owners = {f"node:{first}": Ownership(clock)}
+    first_owner = owners[f"node:{first}"]
+    token = first_owner.acquire("X")
+    run = barrier.join("versius/keyboard", robot(first), "X", token)
+    assert barrier.poll(run, "X", f"node:{first}", owners)["elapsed"] == 0
+    # The other surgeon need not even own its arm yet. Keep the first live
+    # well beyond motion deadlines while it holds at the first handoff.
+    for _ in range(600):
+        now[0] += 0.1
+        first_owner.validate("X", token)
+        result = barrier.poll(run, "X", f"node:{first}", owners, checkpoint=1)
+        assert result["checkpoint"] == 0 and not result["done"]
+    with pytest.raises(RuntimeError, match="already ready"):
+        barrier.join("versius/keyboard", robot(first), "X", token)
+    with pytest.raises(PermissionError, match="separate surgeon"):
+        barrier.join("versius/keyboard", robot(second), "X", "another-token")
+    owners[f"node:{second}"] = second_owner = Ownership(clock)
+    second_token = second_owner.acquire("Y")
+    assert barrier.join("versius/keyboard", robot(second), "Y", second_token) == run
+    result = barrier.poll(run, "Y", f"node:{second}", owners, checkpoint=1)
+    assert result["elapsed"] == pytest.approx(60)
+    assert result["checkpoint"] == 1 and not result["done"]
+    for checkpoint in (2, 3):
+        result = barrier.poll(run, "Y", f"node:{second}", owners, checkpoint=checkpoint)
+        assert result["checkpoint"] == checkpoint - 1
+        result = barrier.poll(run, "X", f"node:{first}", owners, checkpoint=checkpoint)
+        assert result["checkpoint"] == checkpoint
+    assert not barrier.poll(run, "X", f"node:{first}", owners, finished=True)["done"]
+    assert barrier.poll(run, "Y", f"node:{second}", owners, finished=True)["done"]
+
+
+@pytest.mark.parametrize("failure", ["cancel", "release", "silent", "reacquire"])
+def test_independent_replay_cannot_continue_after_first_participant_stops(catalog, failure):
+    _, manifest = catalog.recordings["versius/keyboard"]
+    manifest.update(version=2, barriers=3)
+    now = [10.0]
+
+    def clock():
+        return now[0]
+
+    barrier = Rendezvous(catalog, clock)
+    owners = {"node:left": Ownership(clock), "node:right": Ownership(clock)}
+    left_token = owners["node:left"].acquire("X")
+    run = barrier.join("versius/keyboard", robot(), "X", left_token)
+    barrier.poll(run, "X", "node:left", owners, checkpoint=1)
+    right_token = owners["node:right"].acquire("Y")
+    assert barrier.join("versius/keyboard", robot("right"), "Y", right_token) == run
+    if failure == "cancel":
+        barrier.cancel(run, "X", "node:left")
+    elif failure in {"release", "reacquire"}:
+        owners["node:left"].release()
+        if failure == "reacquire":
+            assert owners["node:left"].acquire("X") != left_token
+    else:
+        now[0] += 0.51
+    with pytest.raises(RuntimeError, match="Replay stopped"):
+        barrier.poll(run, "Y", "node:right", owners, checkpoint=1)

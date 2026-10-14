@@ -462,6 +462,11 @@ class Application:
                             else {}
                         ),
                         "owner_id": surgeon.id if surgeon else None,
+                        **(
+                            {"reset_scene_blocked": self.scene_reset_blocked(robot_id)}
+                            if device.get("controls", {}).get("reset_scene")
+                            else {}
+                        ),
                         "state": device.get("state"),
                         "error": self.faults.get(robot_id, device.get("error", "")),
                         "status": device.get("status", "online")
@@ -470,6 +475,24 @@ class Application:
                     }
                 )
         return {"nodes": nodes, "cameras": cameras, "robots": robots}
+
+    def scene_reset_blocked(self, key):
+        node, _ = key.split(":", 1)
+        devices = self.nodes.get(node, {}).get("robots", [])
+        scene = [
+            f"{node}:{device['id']}"
+            for device in devices
+            if device.get("simulation") and device["kind"] == "versius-sim"
+        ]
+        if key in scene:
+            for other in scene:
+                owner = self.owners.get(other)
+                if other != key and owner and (owner.owner is not None or not owner.ready):
+                    return (
+                        "Release control of all other arms and wait for them to stop "
+                        "before resetting."
+                    )
+        return ""
 
     async def node_call(self, key, method, params=None):
         for peer_id, node_id in self.peer_nodes.items():
@@ -542,6 +565,8 @@ class Application:
             robot.get("simulation") and robot["controls"].get("reset_scene")
         ):
             raise ValueError("Scene reset is not supported by this robot")
+        if mode == "reset" and (reason := self.scene_reset_blocked(key)):
+            raise PermissionError(reason)
         if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
             raise ValueError("MIRA Cartesian jogging is not supported by this robot")
         if mode == "grip" and not robot["controls"].get("grippers"):
@@ -552,6 +577,8 @@ class Application:
             or not -0.05 <= time.time() - sent <= 0.3
         ):
             raise ValueError("Robot input expired in transit")
+        if mode == "reset":
+            self.replay_barrier.released(key)
         self.robot_state[key] = await self.node_call(
             node,
             method,

@@ -195,6 +195,21 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
             reset = page.get_by_role("button", name="Reset scene", exact=True)
             await expect(reset).to_be_visible()
             assert await reset.locator("svg").count() == 1
+            hint = {
+                "mira": "Reset both arms and the needle.",
+                "franka": "Reset the arm and probe to their starting positions.",
+                "versius": "Reset all four arms and the needle.",
+            }[kind]
+            await expect(reset).to_have_attribute("title", hint)
+            if kind == "versius":
+                robot["reset_scene_blocked"] = "Release control of all other arms before resetting."
+                await expect(reset).to_be_disabled()
+                await expect(reset).to_have_attribute(
+                    "title", hint + " " + robot["reset_scene_blocked"]
+                )
+                assert not any(c.get("params", {}).get("mode") == "reset" for c in calls)
+                robot["reset_scene_blocked"] = ""
+                await expect(reset).to_be_enabled()
             async with page.expect_request(
                 lambda r: (
                     r.url.endswith("/api/action")

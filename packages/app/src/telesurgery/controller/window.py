@@ -23,6 +23,7 @@ from telesurgery.controller.haply import NAME as HAPLY_NAME
 from telesurgery.controller.haply import Haply, MiraHaply, mapper_for, supports
 from telesurgery.controller.haply import available as haply_available
 from telesurgery.controller.input import GRIP_KEYS, Inputs
+from telesurgery.controller.native_replay import NativeReplay, recording_for
 from telesurgery.controller.widgets import (
     BORDER,
     FONT,
@@ -48,6 +49,8 @@ class Window:
         self.root, self.client = root, client
         self.px = Scale(root)
         self.control = Control(client)
+        self.replay = NativeReplay(client, self.control)
+        self.recordings = []
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="robot-status")
         self.status_pending = None
         self.last_status = self.last_poll = self.last_devices = self.last_tick = 0
@@ -133,11 +136,17 @@ class Window:
             self.toolbar, "Reset scene", self.reset_scene, width=34, icon="reset"
         )
         Tooltip(self.reset_button, "Reset scene")
+        self.replay_button = Button(
+            self.toolbar, "Replay inputs", self.start_replay, width=34, icon="replay"
+        )
+        Tooltip(self.replay_button, "Replay inputs")
         self.stop_button = Button(
             self.toolbar, "Stop", self.stop, width=34, color="#a63735", icon="stop"
         )
         self.stop_button.pack(side="left")
         Tooltip(self.stop_button, "Stop motion · Esc")
+        self.replay_status = self.label(self.body, "", size=9, color=MUTED)
+        self.replay_status.configure(wraplength=self.px(356))
         self.controls = tk.Frame(
             self.body,
             bg="#f6f8f7",
@@ -171,7 +180,8 @@ class Window:
             anchor="w",
         )
 
-    def stop(self):
+    def stop(self, reason="operator stopped replay"):
+        self.replay.stop(reason)
         self.pending_home = False
         self.pending_reset = False
         self.pointer_control = False
@@ -204,7 +214,11 @@ class Window:
         return isinstance(focus, (ttk.Combobox, Slider, tk.Entry))
 
     def check_focus(self):
-        if not self.closing and not self.focused():
+        if (
+            not self.closing
+            and not self.focused()
+            and not (self.replay.active and self.root.winfo_viewable())
+        ):
             self.stop()
 
     def eligible(self):
@@ -234,6 +248,7 @@ class Window:
             and not state.get("stopping")
             and not self.pending_home
             and not self.pending_reset
+            and not self.replay.busy
             and not self.closing
         )
 
@@ -801,14 +816,34 @@ class Window:
             or not self.permitted()
             or not robot.get("simulation")
             or not robot["controls"].get("reset_scene")
+            or robot.get("reset_scene_blocked")
         ):
             return
         self.stop()
         self.pending_reset = True
         self.root.focus_set()
 
+    def replay_recording(self):
+        device = (
+            "haply"
+            if self.device.get() == HAPLY_NAME
+            else "keyboard"
+            if self.device.current() == 0
+            else "gamepad"
+        )
+        return recording_for(self.recordings, self.robots.get(self.selected, {}), device)
+
+    def start_replay(self):
+        recording = self.replay_recording()
+        if not recording or not self.available() or self.replay.busy:
+            return
+        self.stop()
+        self.replay.start(self.robots[self.selected], recording)
+        self.root.focus_set()
+
     def update_status(self, status, now):
         self.last_status = now
+        self.recordings = status.get("replays", [])
         self.session = status.get("session", {}) if status.get("role") == "surgeon" else {}
         self.robots = {
             r["id"]: r
@@ -850,14 +885,14 @@ class Window:
         now = time.monotonic()
         try:
             if self.last_tick and now - self.last_tick > 0.2:
-                self.stop()
+                self.stop("controller timer delayed")
             self.last_tick = now
             self.control.poll(now)
             if self.control.failed:
-                self.stop()
+                self.stop(self.control.error or "robot input failed")
                 self.control.failed = False
             if self.closing:
-                if self.control.ready and not self.control.owned:
+                if self.control.ready and not self.control.owned and not self.replay.busy:
                     self.root.destroy()
                     return
             else:
@@ -867,6 +902,7 @@ class Window:
                 if now - self.last_feedback >= 0.05:
                     self.feedback()
                     self.last_feedback = now
+            self.replay.poll(now)
         except Exception as exc:
             self.error = str(exc)
             self.stop()
@@ -935,6 +971,15 @@ class Window:
             return
         if not self.permitted():
             self.stop()
+            return
+        if self.replay.active:
+            recording = self.replay_recording()
+            if not self.root.winfo_viewable() or self.editing():
+                self.stop("controller hidden or input controls changed")
+            elif not recording or recording["id"] != self.replay.recording:
+                self.stop("recording selection changed")
+            return
+        if self.replay.busy:
             return
         if not self.focused() or self.editing():
             self.stop()
@@ -1048,15 +1093,49 @@ class Window:
         )
         if robot.get("simulation") and robot.get("controls", {}).get("reset_scene"):
             if not self.reset_button.winfo_manager():
-                self.reset_button.pack(side="left", before=self.stop_button, padx=self.px(0, 8))
+                self.reset_button.pack(
+                    side="left",
+                    before=self.replay_button
+                    if self.replay_button.winfo_manager()
+                    else self.stop_button,
+                    padx=self.px(0, 8),
+                )
             self.reset_button.update_state(
-                self.permitted() and self.control.ready and not self.pending_reset
+                self.permitted()
+                and self.control.ready
+                and not self.pending_reset
+                and not robot.get("reset_scene_blocked")
+            )
+            self.reset_button.tooltip.text = {
+                "mira-sim": "Reset both arms and the needle.",
+                "franka-sim": "Reset the arm and probe to their starting positions.",
+                "versius-sim": "Reset all four arms and the needle.",
+            }.get(robot.get("kind"), "Reset scene") + (
+                f" {robot['reset_scene_blocked']}" if robot.get("reset_scene_blocked") else ""
             )
         else:
             self.reset_button.pack_forget()
+        recording = self.replay_recording()
+        if recording and self.permitted():
+            if not self.replay_button.winfo_manager():
+                self.replay_button.pack(side="left", before=self.stop_button, padx=self.px(0, 8))
+            self.replay_button.update_state(available and not self.replay.busy)
+            self.replay_button.tooltip.text = (
+                f"Replay {recording['device']} inputs · {recording['task']}"
+            )
+        else:
+            self.replay_button.pack_forget()
+        if self.replay.status and self.replay.robot == self.selected:
+            self.replay_status.configure(text=self.replay.status)
+            if not self.replay_status.winfo_manager():
+                self.replay_status.pack(before=self.controls, fill="x", pady=self.px(0, 8))
+        else:
+            self.replay_status.pack_forget()
         if self.inputs and self.device.get() == HAPLY_NAME:
             self.haply_status.configure(
-                text=("Paused" if self.haply_input.paused else "Active")
+                text="Replay inputs"
+                if self.replay.active
+                else ("Paused" if self.haply_input.paused else "Active")
                 + (f" · {self.haply_input.arm.title()} arm" if self.inputs.dual else "")
             )
         elif self.inputs and self.device.current() != 0:
@@ -1070,7 +1149,9 @@ class Window:
                 or self.control.error
                 or robot.get("error")
                 or (
-                    f"Keep holding · Home in {remaining:.1f}s"
+                    "Replay · Stop / Esc to cancel"
+                    if self.replay.active
+                    else f"Keep holding · Home in {remaining:.1f}s"
                     if remaining is not None
                     else "Focus this window to control the robot."
                     if not self.focused()
@@ -1148,9 +1229,11 @@ class Window:
             text=self.error
             or self.control.error
             or robot.get("error")
-            or (self.haply_error if self.haply else "")
+            or (self.haply_error if self.haply and not self.replay.active else "")
             or (
-                "Acquire control to enable input."
+                ""
+                if self.replay.active
+                else "Acquire control to enable input."
                 if not self.permitted()
                 else "Focus this window to control the robot."
                 if not self.focused()
@@ -1169,6 +1252,7 @@ class Window:
         self.message.configure(text="Stopping and releasing control…")
 
     def shutdown(self):
+        self.replay.close()
         self.control.close()
         self.worker.shutdown(wait=True, cancel_futures=True)
         if self.gamepads:
