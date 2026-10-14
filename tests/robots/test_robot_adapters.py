@@ -845,12 +845,12 @@ def test_held_franka_key_promotes_active_step_and_stops(monkeypatch, joint, endi
         move()  # Home cannot be promoted into manual control.
 
 
-def test_scene_reset_requires_simulation_capability_and_fresh_owned_command():
+@pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
+def test_scene_reset_requires_simulation_capability_and_fresh_owned_command(kind):
     from telesurgery_robots.adapters.base import controls
-    from telesurgery_robots.adapters.simulation import MiraSimulation
     from telesurgery_robots.mira.adapter import MiraAdapter
 
-    adapter = MiraSimulation({"uri": "unused"})
+    adapter = adapter_type(kind + "-sim")({"uri": "unused"})
     calls = []
     adapter.request = lambda method, **kwargs: calls.append(method) or {"reset": True}
     assert controls(adapter, {})["reset_scene"]

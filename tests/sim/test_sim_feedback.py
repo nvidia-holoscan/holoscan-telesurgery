@@ -132,6 +132,43 @@ def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, 
     assert feedback.kinematics is None
 
 
+def test_scene_reset_preserves_angular_and_linear_joint_units(monkeypatch):
+    import sys
+    from unittest.mock import Mock
+
+    from telesurgery_sim.runtime.reset import SceneReset
+
+    physics = SimpleNamespace(RevoluteJoint=object(), PrismaticJoint=object())
+    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(Usd=Mock(), UsdPhysics=physics))
+    monkeypatch.setitem(
+        sys.modules, "isaacsim.core.experimental.prims", SimpleNamespace(RigidPrim=Mock())
+    )
+
+    def joint(path, kind, position):
+        return SimpleNamespace(
+            IsA=lambda schema: schema is kind,
+            GetPath=lambda: path,
+            GetAttribute=lambda _: SimpleNamespace(Get=lambda: position),
+        )
+
+    shoulder = joint("/shoulder", physics.RevoluteJoint, 15)
+    mimic = joint("/mimic", physics.RevoluteJoint, 45)
+    finger = joint("/finger", physics.PrismaticJoint, 0.03)
+    slider = joint("/slider", physics.PrismaticJoint, 0.02)
+    stage = SimpleNamespace(Traverse=lambda: [shoulder, mimic, finger, slider])
+    scene = SceneReset(
+        stage,
+        SimpleNamespace(views=[]),
+        {"joints": {0: shoulder}},
+        {"joints": [30]},
+        [],
+        joint_positions={"/finger": 0.04},
+    )
+    assert scene.positions == pytest.approx(
+        {"/shoulder": np.deg2rad(30), "/mimic": np.deg2rad(45), "/finger": 0.04, "/slider": 0.02}
+    )
+
+
 def test_scene_reset_restores_robot_props_and_zeroes_momentum():
     from unittest.mock import Mock
 

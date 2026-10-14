@@ -32,6 +32,7 @@ def robot(kind):
         "id": kind,
         "name": kind.title(),
         "kind": f"{kind}-sim",
+        "simulation": True,
         "status": "online",
         "controls": controls(adapter, {"motion_enabled": True}),
         "state": {"sequence": 1},
@@ -84,6 +85,8 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
         assert "Tool movement" in " ".join(window.mode_choice.cget("values"))
         assert window.body.winfo_width() >= window.body.winfo_reqwidth()
         assert window.stop_button.winfo_width() >= window.stop_button.winfo_reqwidth()
+        assert window.reset_button.winfo_ismapped()
+        assert window.home.winfo_x() < window.reset_button.winfo_x() < window.stop_button.winfo_x()
         for canvas in [window.home, window.stop_button, *window.keys.values(), *window.sliders]:
             for item in canvas.find_all():
                 if canvas.type(item) == "text":
