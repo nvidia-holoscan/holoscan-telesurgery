@@ -1,24 +1,24 @@
 {
-  "version": 1,
+  "version": 2,
   "environment": "franka",
   "device": "gamepad",
   "task": "Ultrasound probe approach and torso swipe",
-  "source": "Synthetic device input through production controller mappings",
+  "source": "Measured tool checkpoints from the reference keyboard approach and scan through production Cartesian controls; normalized for each selected device",
   "starting_scene": "Fresh Franka scene at Home",
-  "duration_s": 60.554145,
+  "duration_s": 60,
   "streams": {
     "franka": {
       "file": "franka.jsonl.gz",
       "initial": {
         "joints_deg": {
           "joints": [
-            -24.47211265563965,
-            -18.342636108398438,
-            13.682123184204102,
-            -106.19417572021484,
-            9.418106079101562,
-            90.7449722290039,
-            -21.334209442138672
+            -24.474349975585938,
+            -18.341707229614258,
+            13.682441711425781,
+            -106.195068359375,
+            9.416765213012695,
+            90.74629211425781,
+            -21.33296012878418
           ]
         },
         "grippers": {}
@@ -26,17 +26,46 @@
     }
   },
   "observed": {
-    "contact_frames": 2048,
-    "total_frames": 2049,
-    "contact_fraction": 0.9995119570522206,
-    "span_m": 0.1277414118753078,
-    "peak_force_n": 6.590382511627344
+    "task": "Probe approach and torso scan checkpoints reached in Isaac physics",
+    "scan_endpoint_distance_m": 0.142875
   },
-  "scan_start_s": 21.862667849985883,
+  "scan_start_s": 21.680080972029828,
   "replay_verified": true,
   "replayed": {
-    "device": "gamepad",
-    "contact_fraction": 1.0,
-    "span_m": 0.13317779207670946
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 160,
+    "elapsed_s": 124.04,
+    "checkpoints_reached": 18,
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false,
+    "measured_final_tool_pose": {
+      "frame": "base",
+      "end_effector": "TCP",
+      "position_m": [
+        0.6653069257736206,
+        0.07217898219823837,
+        0.15715786814689636
+      ],
+      "orientation_matrix": [
+        [
+          -0.9999821186065674,
+          0.005883508827537298,
+          0.001106702839024365
+        ],
+        [
+          0.005887302104383707,
+          0.9999766945838928,
+          0.00345615204423666
+        ],
+        [
+          -0.0010863427305594087,
+          0.003462605644017458,
+          -0.9999934434890747
+        ]
+      ]
+    }
   }
 }

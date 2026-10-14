@@ -84,6 +84,7 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback) {
             }
             if (result.state) feedback(result.state);
             status.textContent = result.waiting ? "Waiting for the other surgeon…"
+                : result.waiting_peer ? "Waiting at handoff checkpoint…"
                 : result.waiting_feedback ? `Replaying · ${Math.floor(result.elapsed)} s · waiting for feedback`
                 : `Replaying · ${Math.floor(result.elapsed)} s`;
             if (result.request) {

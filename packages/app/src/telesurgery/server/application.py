@@ -241,11 +241,17 @@ class Application:
                         key,
                         self.owners,
                         finished=params.get("finished") is True,
+                        checkpoint=params.get("checkpoint"),
                     )
                     robot = next((r for r in self.inventory()["robots"] if r["id"] == key), {})
                     if robot.get("stale") or robot.get("error") or robot.get("status") != "online":
                         raise RuntimeError("Replay stopped because robot feedback is unavailable")
-                    return {**barrier, "state": robot.get("state", self.robot_state.get(key, {}))}
+                    state = robot.get("state", self.robot_state.get(key, {}))
+                    if params.get("fresh") is True:
+                        # A motion acknowledgement may precede its physics step.
+                        # Observe again before calculating a checkpoint correction.
+                        state = await self._robot(peer.id, "robot.renew", params)
+                    return {**barrier, "state": state}
                 robot = next((r for r in self.inventory()["robots"] if r["id"] == key), None)
                 if robot is None or robot["status"] != "online":
                     raise ValueError("Robot is unavailable")
@@ -1111,7 +1117,13 @@ class Application:
                 read_rows, path.parent / manifest["streams"][role]["file"]
             )
             if manifest["version"] == 2:
-                validate_checkpoints(rows)
+                validate_checkpoints(
+                    rows, environment=manifest["environment"], device=manifest["device"]
+                )
+                if max((row.get("barrier", 0) for row in rows), default=0) != manifest.get(
+                    "barriers", 0
+                ):
+                    raise ValueError("Replay stream has incomplete handoff barriers")
             run = await self.remote.call(
                 "replay.join", {**credentials, "recording": params["recording"]}
             )
@@ -1131,6 +1143,7 @@ class Application:
             now = time.monotonic()
             if (
                 not feedback
+                or isinstance(playback, CheckpointPlayback)
                 or playback.barrier is None
                 or now - playback.polled_at >= 0.1
                 or playback.finished
@@ -1141,10 +1154,22 @@ class Application:
                         **credentials,
                         "run": playback.run,
                         "finished": playback.finished,
+                        **(
+                            {"checkpoint": playback.checkpoint, "fresh": True}
+                            if isinstance(playback, CheckpointPlayback)
+                            else {}
+                        ),
                     },
                 )
+                if isinstance(playback, CheckpointPlayback) and "checkpoint" not in barrier:
+                    raise RuntimeError(
+                        "Patient service does not support checkpoint replay; "
+                        "restart it with the updated code"
+                    )
                 if feedback:
                     playback.barrier, playback.polled_at = barrier, time.monotonic()
+                    if isinstance(playback, CheckpointPlayback):
+                        playback.renewed = time.monotonic()
             else:
                 barrier = playback.barrier
             elapsed = barrier["elapsed"]
@@ -1166,6 +1191,8 @@ class Application:
             ):
                 state = await self.action("robot.renew", {"id": key})
                 playback.renewed = time.monotonic()
+            if isinstance(playback, CheckpointPlayback):
+                playback.synchronized = barrier.get("checkpoint", 0)
             result = playback.read(-1 if elapsed is None else elapsed, state)
             if barrier["done"]:
                 self.replays.pop(key, None)

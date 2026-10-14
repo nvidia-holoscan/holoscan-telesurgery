@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "environment": "versius",
   "device": "haply",
   "task": "Left pickup, handoff, left withdrawal and right lift",
-  "source": "Synthetic device input through production controller mappings and two surgeon sessions",
+  "source": "Reference two-surgeon keyboard handoff with raised joint preparation, calibrated grasp endpoints, measured tool/gripper feedback and handoff barriers; normalized for each selected device",
   "starting_scene": "Fresh Versius scene with both arms at Home and the needle on its raised rest",
-  "duration_s": 195.576047,
+  "duration_s": 192,
   "streams": {
     "left": {
       "file": "left.jsonl.gz",
@@ -13,47 +13,46 @@
       "initial": {
         "joints_deg": {
           "joints": [
-            5.848141970687948e-10,
-            -29.999732971191406,
-            -3.0079061463794687e-09,
-            119.99760437011719,
-            7.158065784551582e-08,
-            0.0001206469678436406,
-            -8.159453113165682e-10,
-            89.99877166748047
+            -5.710609762843433e-10,
+            -29.999414443969727,
+            2.89102852768508e-09,
+            119.99850463867188,
+            -6.995272627818849e-08,
+            0.0001199285252369009,
+            8.298811637885706e-10,
+            90.00119018554688
           ]
         },
         "grippers": {
-          "hand": 0.9999997513674974
+          "hand": 1.0
         },
         "tool_pose": {
           "frame": "base",
           "end_effector": "TCP",
           "position_m": [
-            0.9210497140884399,
-            -1.6391277313232422e-07,
-            0.5295750498771667
+            0.9210524559020996,
+            -2.123415470123291e-07,
+            0.5295531153678894
           ],
           "orientation_matrix": [
             [
-              -3.504753112792969e-05,
-              -2.1110281522851437e-07,
-              1.0000001192092896
+              -1.3589859008789062e-05,
+              -2.9488728614524007e-07,
+              1.0
             ],
             [
-              2.119986675097607e-05,
-              -1.000000238418579,
-              -2.1036339603597298e-07
+              -2.1031273718108423e-05,
+              -1.0,
+              -2.9517286748159677e-07
             ],
             [
-              1.0000001192092896,
-              2.1199859475018457e-05,
-              3.4749507904052734e-05
+              1.0,
+              -2.103127735608723e-05,
+              1.3530254364013672e-05
             ]
           ]
         }
-      },
-      "producer_file": "left-100hz.jsonl.gz"
+      }
     },
     "right": {
       "file": "right.jsonl.gz",
@@ -61,83 +60,89 @@
       "initial": {
         "joints_deg": {
           "joints": [
-            5.847962114557959e-10,
-            -29.999732971191406,
-            -3.007810445154746e-09,
-            119.99760437011719,
-            7.157931491974523e-08,
-            0.00012064720067428425,
-            -8.159499187421204e-10,
-            89.99877166748047
+            5.948555537038658e-10,
+            -29.999431610107422,
+            -3.0764470970723323e-09,
+            119.99846649169922,
+            7.318870132166921e-08,
+            0.00011996221292065457,
+            -8.280931496074118e-10,
+            89.99874877929688
           ]
         },
         "grippers": {
-          "hand": 0.9999998001545629
+          "hand": 1.0
         },
         "tool_pose": {
           "frame": "base",
           "end_effector": "TCP",
           "position_m": [
-            0.9210496544837952,
-            -1.6391277313232422e-07,
-            0.529574990272522
+            0.9210524559020996,
+            -1.8998980522155762e-07,
+            0.5295543670654297
           ],
           "orientation_matrix": [
             [
-              -3.4749507904052734e-05,
-              -2.1110281522851437e-07,
-              1.0000001192092896
+              -1.4722347259521484e-05,
+              -2.530387064325623e-07,
+              1.0
             ],
             [
-              2.119986675097607e-05,
+              2.1663479856215417e-05,
               -1.0,
-              -2.1036339603597298e-07
+              -2.5271947379224e-07
             ],
             [
-              1.0000001192092896,
-              2.1199859475018457e-05,
-              3.4749507904052734e-05
+              1.0,
+              2.166347621823661e-05,
+              1.4722347259521484e-05
             ]
           ]
         }
-      },
-      "producer_file": "right-100hz.jsonl.gz"
+      }
     }
   },
   "observed": {
-    "initial": [
-      6.984919309616089e-10,
-      -0.04000000283122063,
-      0.5045161247253418
+    "needle_start_m": [
+      1.0477378964424133e-09,
+      -0.03999998793005943,
+      0.504516065120697
     ],
-    "left_lift": [
-      0.0006263991817831993,
-      -0.040496986359357834,
-      0.5356300473213196
+    "needle_after_left_lift_m": [
+      -0.00018839770928025246,
+      -0.04031417891383171,
+      0.5351811051368713
     ],
-    "right_only": [
-      0.0004645687295123935,
-      -0.04054179787635803,
-      0.5360201001167297
+    "needle_final_m": [
+      0.00033975893165916204,
+      -0.04011828079819679,
+      0.5544770359992981
     ],
-    "right_lift": [
-      0.0004894098965451121,
-      -0.04053507372736931,
-      0.5557292103767395
-    ]
+    "left_lift_m": 0.030665,
+    "final_lift_m": 0.049961,
+    "retention_observed_s": 3,
+    "left_final_gripper": 0.5987284550148595,
+    "right_final_gripper": 0.10984638316229994
   },
   "replay_verified": true,
   "replayed": {
-    "device": "haply",
-    "needle": [
-      0.0004727371269837022,
-      -0.04012584686279297,
-      0.554827868938446
-    ],
-    "right_tool": [
-      0.0039049816131592197,
-      -0.035049762725830075,
-      0.5587295484542847
-    ]
-  }
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 0,
+    "elapsed_s": 192.9,
+    "checkpoints_reached": {
+      "left": 18,
+      "right": 15
+    },
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false
+  },
+  "barriers": 3,
+  "barrier_labels": [
+    "Left pickup and lift complete",
+    "Right grasp complete before left release",
+    "Left withdrawal complete before right lift"
+  ]
 }
