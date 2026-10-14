@@ -129,7 +129,23 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk, suffi
     assert ("SYS_NICE" in run) is (role == "node-real")
     assert ("/var/run/docker.sock:/var/run/docker.sock" in run) is (role != "dashboard")
     if role != "node-real":
-        assert "--device" not in run
+        if options[0] != "surgeon":
+            assert "--device" not in run
+        else:
+            serial = Path("/dev/serial/by-id")
+            haply = {
+                str(p.resolve())
+                for pattern in (
+                    "usb-Teensyduino_Haply_inverse3_*",
+                    "usb-ZEPHYR_Haply_USB_Transceiver_*",
+                )
+                for p in serial.glob(pattern)
+            }
+            assert all(
+                run[i + 1] in haply or run[i + 1].startswith("/dev/input/event")
+                for i, value in enumerate(run)
+                if value == "--device"
+            )
         assert "--device-cgroup-rule" not in run
     copies = [c for c in commands if "--entrypoint" in c]
     assert len(copies) == (1 if role == "node-sim" else 0)

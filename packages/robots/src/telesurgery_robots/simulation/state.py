@@ -12,18 +12,24 @@ from telesurgery_robots.adapters.base import cartesian_command, speed_value, val
 from telesurgery_robots.franka.cartesian import JOINT_LIMITS, CartesianTrajectory
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.franka.trajectory import JointTrajectory
+from telesurgery_robots.mira.cartesian import SIM_CARTESIAN
 from telesurgery_robots.mira.cartesian import command as tool_command
 from telesurgery_robots.mira.gripper import GripperJog, clamp, gripper_rates
-from telesurgery_robots.mira.poses import MIRA_HOME, MIRA_HOME_GRIP, MIRA_HOME_ROLL, roll_target
+from telesurgery_robots.mira.poses import (
+    MIRA_HOME_GRIP,
+    MIRA_HOME_ROLL,
+    MIRA_SIM_HOME,
+    roll_target,
+)
 
 
 class SimRobot:
     # LJ6_1_joint and RJ6_joint limits in the MIRA USD; the jaws are mirrored.
-    gripper_ranges = {"left": (0.3, 40.0), "right": (-0.1, -40.0)}
+    gripper_ranges = {"left": (0.0, 40.0), "right": (-0.1, -40.0)}
 
     def __init__(self, environment="mira"):
         self.pose = {
-            arm: [*MIRA_HOME, MIRA_HOME_ROLL, closed + MIRA_HOME_GRIP * (opened - closed)]
+            arm: [*MIRA_SIM_HOME[arm], MIRA_HOME_ROLL, closed + MIRA_HOME_GRIP * (opened - closed)]
             for arm, (closed, opened) in self.gripper_ranges.items()
         }
         self.home = FRANKA_HOME
@@ -44,7 +50,8 @@ class SimRobot:
         self.updated = time.monotonic()
         self.deadline = 0.0
         self.feedback = {}
-        self.grip = GripperJog()
+        self.grip = GripperJog(retain_closing_load=environment in {"mira", "versius"})
+        self.mira_progress = {}
 
     @property
     def joint_target_velocity(self):
@@ -141,6 +148,7 @@ class SimRobot:
                 measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
                 self.pose[arm][:5] = measured[:5]
             self.mode = None
+        self.mira_progress.clear()
         self._grip_targets(self.grip.stop(self._grippers()))
         if self.cartesian:
             self.cartesian.stop()
@@ -149,10 +157,18 @@ class SimRobot:
             self.mode = "stopping"
 
     def _state(self):
+        tool_targets = {}
+        if "left" in self.pose and self.kinematics is not None:
+            for arm, (measured, position, jacobian, _) in self.kinematics[0].items():
+                # Linearize the nearby commanded pose using the same live
+                # Jacobian as IK. Keep this distinct from measured feedback.
+                delta = np.asarray(self.pose[arm][:4]) - measured[:4]
+                tool_targets[arm] = (position + jacobian @ delta).tolist()
         return {
             "targets_deg": {arm: list(pose) for arm, pose in self.pose.items()},
             "acknowledgement": "controller target accepted",
             **self.feedback,
+            **({"cartesian_target_mm_deg": tool_targets} if tool_targets else {}),
             **(
                 {
                     "control_active": self.mode == "home"
@@ -201,10 +217,24 @@ class SimRobot:
         method, params = request.get("method"), request.get("params") or {}
         if method in {"hold", "get_state"}:
             if method == "hold":
+                was_home = self.mode == "home"
                 self._stop()
                 if "left" in self.pose:
                     self.grip.clear()
-                    self._grip_targets(self._grippers())
+                    # Keep an existing grasp loaded. Replacing a closing
+                    # target with the measured aperture removes its force.
+                    measured_grip = self._grippers()
+                    self._grip_targets(
+                        {
+                            arm: measured_grip[arm]
+                            if was_home
+                            else min(
+                                measured_grip[arm],
+                                (self.pose[arm][5] - closed) / (opened - closed),
+                            )
+                            for arm, (closed, opened) in self.gripper_ranges.items()
+                        }
+                    )
                     for arm in self.pose:
                         measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
                         if self.mode == "home":
@@ -227,8 +257,8 @@ class SimRobot:
                 raise ValueError("Home uses the configured pose")
             self.grip.clear()
             self._grip_targets({arm: MIRA_HOME_GRIP for arm in self.pose})
-            for pose in self.pose.values():
-                pose[:4] = MIRA_HOME
+            for arm, pose in self.pose.items():
+                pose[:4] = MIRA_SIM_HOME[arm]
                 pose[4] = MIRA_HOME_ROLL
             self.mode = "home"
         elif method == "jog_gripper":
@@ -277,25 +307,79 @@ class SimRobot:
                 speed_value(params.get("speed_deg_s"), FRANKA_SPEED),
             )
         elif method == "jog_mira_cartesian" and "left" in self.pose:
-            movement = tool_command(params)
+            movement = tool_command(params, SIM_CARTESIAN)
             if self.kinematics is None or time.monotonic() - self.kinematics[1] > 0.3:
                 raise ValueError("MIRA Cartesian physics feedback is unavailable or stale")
             targets = {arm: list(pose) for arm, pose in self.pose.items()}
             for arm, delta in movement.items():
                 measured, _, jacobian, limits = self.kinematics[0][arm]
+                if self.mode != "mira-tool":
+                    targets[arm][:5] = measured[:5].tolist()
+                previous = np.asarray(targets[arm][:4])
+                lead = previous - measured[:4]
+                pending = np.max(np.abs(lead)) > 0.05
+                now = time.monotonic()
+                last, advanced = self.mira_progress.get(arm, (measured[:4], now))
+                if not pending or np.max(np.abs(measured[:4] - last)) > 0.01:
+                    last, advanced = measured[:4].copy(), now
+                self.mira_progress[arm] = last, advanced
+                if pending and now - advanced > 0.75:
+                    self._stop()
+                    raise ValueError("MIRA tool tracking error; release input before retrying")
                 if any(delta[:4]):
                     change = np.linalg.lstsq(jacobian, np.asarray(delta[:4]), rcond=1e-4)[0]
                     if np.max(np.abs(jacobian @ change - delta[:4])) > 0.01:
                         raise ValueError("MIRA tool direction is unavailable at this configuration")
-                    goal = measured[:4] + change
-                    if np.max(np.abs(change)) > 1 or any(
-                        not lo <= v <= hi for v, (lo, hi) in zip(goal, limits, strict=True)
+                    # Preserve travel not yet completed by physics. Replacing
+                    # this with measured + change every packet loses most of
+                    # small, continuous input. Bound the lead so contact cannot
+                    # accumulate an arbitrary deferred move.
+                    tool_lead = jacobian @ lead
+                    if (
+                        np.max(np.abs(lead)) > 1.01
+                        or np.linalg.norm(tool_lead[:3])
+                        > 2 * SIM_CARTESIAN["linear_step_mm"] + 0.01
+                        or abs(tool_lead[3]) > 1.01
                     ):
-                        raise ValueError(
-                            "MIRA Cartesian target exceeds joint limits; reduce arm speed"
+                        self._stop()
+                        raise ValueError("MIRA tool tracking error; release input before retrying")
+                    # Scale the whole tool increment together. Angular motion
+                    # can require several joint degrees even for a small tool
+                    # angle; wait for physics inside the existing 1-degree
+                    # lead envelope instead of rejecting normal servo delay.
+                    fraction = min(1.0, 1.0 / max(1.0, np.max(np.abs(change))))
+                    for old, step, actual, (lo, hi) in zip(
+                        previous, change, measured[:4], limits, strict=True
+                    ):
+                        if (step > 0 and min(old, actual) >= hi - 0.01) or (
+                            step < 0 and max(old, actual) <= lo + 0.01
+                        ):
+                            self._stop()
+                            raise ValueError("MIRA Cartesian target exceeds joint limits")
+                        if step > 0:
+                            fraction = min(fraction, (min(hi, actual + 1) - old) / step)
+                        elif step < 0:
+                            fraction = min(fraction, (max(lo, actual - 1) - old) / step)
+                    tool_change = jacobian @ change
+                    if tool_change[3] > 0:
+                        fraction = min(fraction, (1 - tool_lead[3]) / tool_change[3])
+                    elif tool_change[3] < 0:
+                        fraction = min(fraction, (-1 - tool_lead[3]) / tool_change[3])
+                    distance = np.linalg.norm(tool_change[:3])
+                    if distance > 0:
+                        # Positive root of ||lead + fraction * change|| <= radius.
+                        along = np.dot(tool_lead[:3], tool_change[:3])
+                        radius = 2 * SIM_CARTESIAN["linear_step_mm"]
+                        margin = radius**2 - np.dot(tool_lead[:3], tool_lead[:3])
+                        fraction = min(
+                            fraction,
+                            (-along + np.sqrt(max(0, along**2 + distance**2 * margin)))
+                            / distance**2,
                         )
+                    goal = previous + change * max(0, fraction)
                     targets[arm][:4] = goal.tolist()
-                targets[arm][4] = roll_target(measured[4], delta[4])
+                if delta[4]:
+                    targets[arm][4] = roll_target(measured[4], delta[4])
             self.pose = targets
             self.mode, self.deadline = "mira-tool", time.monotonic() + 0.2
         elif method == "set_mira_cartesian_delta" and "left" in self.pose:

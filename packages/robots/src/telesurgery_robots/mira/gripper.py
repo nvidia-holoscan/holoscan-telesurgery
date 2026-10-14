@@ -31,8 +31,9 @@ def gripper_rates(command, grippers):
 
 
 class GripperJog:
-    def __init__(self):
+    def __init__(self, *, retain_closing_load=False):
         self.rates, self.targets, self.deadlines = {}, {}, {}
+        self.retain_closing_load = retain_closing_load
         self.updated = time.monotonic()
 
     def command(self, rates, measured):
@@ -40,7 +41,11 @@ class GripperJog:
         if not self.rates:
             self.updated = now
         for arm, rate in rates.items():
-            if not rate and arm not in self.rates:
+            if not rate:
+                if arm in self.rates:
+                    # Stop on the next physics update while retaining the last
+                    # direction, just as releasing the controller does.
+                    self.deadlines[arm] = now
                 continue
             self.targets.setdefault(arm, clamp(measured[arm]))
             self.rates[arm], self.deadlines[arm] = rate, now + 0.2
@@ -67,7 +72,14 @@ class GripperJog:
         for key in list(self.rates) if arm is None else [arm]:
             if key not in self.rates:
                 continue
-            targets[key] = clamp(measured[key])
+            # A position-driven simulated jaw needs its small closing lead to
+            # retain contact force after button release. The lead was already
+            # bounded to 100 ms of travel; never continue an opening command.
+            targets[key] = clamp(
+                min(measured[key], self.targets[key])
+                if self.retain_closing_load and self.rates[key] < 0
+                else measured[key]
+            )
             del self.rates[key], self.targets[key], self.deadlines[key]
         return targets
 

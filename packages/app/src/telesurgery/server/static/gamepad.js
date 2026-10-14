@@ -4,6 +4,7 @@
 import { element } from "./ui.js";
 import { icon } from "./icons.js";
 import { normalizeGamepad } from "./gamepad-mapping.js";
+import { haplyName, supportsHaply } from "./haply.js";
 import {
     emptyJog,
     inputBlocked,
@@ -48,7 +49,7 @@ function controllerBindings(id) {
 
 export function gamepadInput(
     robot, send, stop, stepSize = () => 0.2, gripSpeed = () => 20,
-    { home = null, gripFeedback = () => {} } = {},
+    { home = null, gripFeedback = () => {}, haplyAvailable = () => false } = {},
 ) {
     const dual = pairedArms(robot);
     const franka = ["franka", "franka-sim"].includes(robot.kind) &&
@@ -72,6 +73,8 @@ export function gamepadInput(
     const keyboard = element("option", "Keyboard");
     keyboard.value = "keyboard";
     device.append(keyboard);
+    const haply = supportsHaply(robot) ? element("option", haplyName) : null;
+    if (haply) haply.value = "haply";
     const discovery = element("p", "Press a gamepad button to connect it here.", "input-discovery");
     discovery.hidden = true;
     group.setAttribute("aria-label", `${robot.name} gamepad joints`);
@@ -299,19 +302,19 @@ export function gamepadInput(
             timer = setTimeout(poll, 1000);
             return;
         }
-        discovery.hidden = !pads.length || pads.some(p => p.mapping === "standard");
+        discovery.hidden = device.value === "haply" || !pads.length || pads.some(p => p.mapping === "standard");
         discovery.textContent = typeof navigator.getGamepads !== "function"
             ? "Gamepad access requires a supported browser on localhost or HTTPS."
             : pads.length
               ? "This controller does not provide a supported button mapping."
               : "Press a gamepad button to connect it here.";
-        const next = JSON.stringify(
-            pads.map((p) => [p.index, p.id, p.mapping]),
-        );
+        const hasHaply = haply && haplyAvailable();
+        const next = JSON.stringify([hasHaply, pads.map((p) => [p.index, p.id, p.mapping])]);
         if (next !== signature) {
             signature = next;
             const selected = device.value;
             device.replaceChildren(keyboard);
+            if (hasHaply) device.append(haply);
             for (const pad of pads) {
                 const name = controllerName(pad.id);
                 const duplicate = pads.filter(p => controllerName(p.id) === name).length > 1;
@@ -348,10 +351,12 @@ export function gamepadInput(
                 ? pads.find(p => p.index === previous.index && p.id === previous.id && p.mapping === "standard")
                 : matching.length === previous.count ? matching[previous.ordinal] : null;
             device.value = match ? String(match.index) : "keyboard";
+            if (hasHaply && previous.name === haplyName) device.value = "haply";
             device.dispatchEvent(new Event("change"));
         }
         const pad = pads.find((p) => String(p.index) === device.value);
-        device.title = pad?.id || "To use a gamepad, connect it and press a button, then select it here.";
+        device.title = device.value === "haply" ? "Haply connected to the surgeon service's host"
+            : pad?.id || "To use a gamepad, connect it and press a button, then select it here.";
         const { enable, alternate: alternateButton, rollUp, rollDown, home: logoButton, homeFallback } = controllerBindings(pad?.id || "");
         const guidance = cartesian ? "Release controls to stop"
             : `Hold ${enable} for ${enabledTools}`;
@@ -578,15 +583,18 @@ export function gamepadInput(
         select: device,
         discovery,
         bindings: () => ({
+            ...(device.value === "haply" ? {haply: true} : {}),
             ...controllerBindings(device.selectedOptions[0]?.title || ""),
             toggleGrip: cartesian && !holdGrip,
             enableRequired: !cartesian,
         }),
-        selection: () => device.value === "keyboard" ? null : {
+        selection: () => device.value === "keyboard" ? null : device.value === "haply"
+            ? {name: haplyName, ordinal: 0, count: 1} : {
             index: Number(device.value), id: device.selectedOptions[0]?.title,
         },
         handoff() {
             if (device.value === "keyboard") return null;
+            if (device.value === "haply") return {name: haplyName, ordinal: 0, count: 1};
             const name = controllerName(device.selectedOptions[0].title);
             const matching = [...device.options].filter(option => option.value !== "keyboard" &&
                 !option.disabled && controllerName(option.title) === name);

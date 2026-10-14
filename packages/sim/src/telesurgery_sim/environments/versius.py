@@ -12,9 +12,14 @@ from telesurgery_robots.versius import HOME, LIMITS
 
 def build(stage, directory):
     import trimesh
-    from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics, Vt
+    from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics, UsdShade, Vt
 
     directory = Path(directory)
+    material = UsdShade.Material.Define(stage, "/World/JawContactMaterial")
+    physics = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    physics.CreateStaticFrictionAttr(1.0)
+    physics.CreateDynamicFrictionAttr(0.8)
+    physics.CreateRestitutionAttr(0)
     for name in ("BSU.urdf", "needle_holder_platform.urdf", "fenestrated_grasper_platform.urdf"):
         if not (directory / name).is_file():
             raise FileNotFoundError(
@@ -82,7 +87,9 @@ def build(stage, directory):
             PhysxSchema.PhysxRigidBodyAPI.Apply(prim).CreateDisableGravityAttr(True)
             inertia = link.find("inertial")
             mass = float(inertia.find("mass").get("value")) if inertia is not None else 0.02
-            UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(max(mass, 0.02))
+            UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(
+                max(mass, 0.0001 if name.startswith("jaw") else 0.02)
+            )
             for index, visual in enumerate(link.findall("visual")):
                 base = f"{root}/{name}/visual_{index}"
                 place(base, origin(visual.find("origin")))
@@ -124,6 +131,11 @@ def build(stage, directory):
                         contact = PhysxSchema.PhysxCollisionAPI.Apply(surface.GetPrim())
                         contact.CreateContactOffsetAttr(0.0002)
                         contact.CreateRestOffsetAttr(0.0)
+                        contact.CreateTorsionalPatchRadiusAttr(0.00025)
+                        contact.CreateMinTorsionalPatchRadiusAttr(0.0001)
+                        UsdShade.MaterialBindingAPI.Apply(surface.GetPrim()).Bind(
+                            material, materialPurpose="physics"
+                        )
                         UsdPhysics.MeshCollisionAPI.Apply(
                             surface.GetPrim()
                         ).CreateApproximationAttr("convexHull")
@@ -176,6 +188,17 @@ def build(stage, directory):
                 drive.CreateTargetPositionAttr(initial.get(name, 0))
                 drive.CreateTargetVelocityAttr(0)
                 PhysxSchema.PhysxJointAPI.Apply(api.GetPrim()).CreateArmatureAttr(0.01)
+                if after.startswith("jaw"):
+                    # Bounded jaw force, with a small closing preload retained
+                    # after input release. These are training settings, not
+                    # supplied hardware ratings.
+                    drive.CreateTypeAttr("force")
+                    drive.CreateStiffnessAttr(0.002)
+                    drive.CreateDampingAttr(0.00002)
+                    drive.CreateMaxForceAttr(0.02)
+                    physics = PhysxSchema.PhysxJointAPI.Apply(api.GetPrim())
+                    physics.CreateArmatureAttr(0.000001)
+                    physics.CreateMaxJointVelocityAttr(45)
                 drives[name] = drive
             else:
                 api.CreateLocalRot0Attr(Gf.Quatf(orientation))

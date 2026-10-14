@@ -19,6 +19,9 @@ from telesurgery.controller.gamepad import (
     controller_name,
     controller_selection,
 )
+from telesurgery.controller.haply import NAME as HAPLY_NAME
+from telesurgery.controller.haply import Haply, MiraHaply, mapper_for, supports
+from telesurgery.controller.haply import available as haply_available
 from telesurgery.controller.input import GRIP_KEYS, Inputs
 from telesurgery.controller.widgets import (
     BORDER,
@@ -58,11 +61,15 @@ class Window:
         self.robot_ids, self.device_ids = [], [None]
         self.gamepads = None
         self.gamepad_error = ""
+        self.haply = None
+        self.haply_input = MiraHaply()
+        self.haply_error = ""
         try:
             self.gamepads = Gamepads()
         except (OSError, RuntimeError) as exc:
             self.gamepad_error = str(exc)
         self.closing = self.pending_home = False
+        self.pending_reset = False
         self.pointer_control = False
         self.gamepad_sample = None
         self.error = ""
@@ -98,7 +105,14 @@ class Window:
         self.status_dot = self.label(status_row, "●", color=MUTED, size=8)
         self.status_dot.pack(side="left", padx=self.px(0, 5))
         self.status_label = self.label(status_row, "Connecting…", color=MUTED, size=9)
-        self.status_label.pack(side="left")
+        self.status_label.configure(wraplength=self.px(240))
+        self.status_label.pack(side="left", fill="x", expand=True)
+        self.acquire_button = Button(status_row, "Acquire", self.acquire_control, width=72)
+        Tooltip(self.acquire_button, "Acquire control")
+        self.release_button = Button(
+            status_row, "Release control", self.release_control, width=34, icon="release"
+        )
+        Tooltip(self.release_button, "Release control")
         self.toolbar = tk.Frame(self.body, bg="white")
         self.toolbar.pack(fill="x", pady=self.px(0, 10))
         self.device = ttk.Combobox(
@@ -115,9 +129,15 @@ class Window:
         self.home = Button(self.toolbar, "Home", self.go_home, width=34, icon="home")
         self.home.pack(side="left", padx=self.px(0, 8))
         Tooltip(self.home, "Home · Return to starting pose")
-        self.stop_button = Button(self.toolbar, "Stop  Esc", self.stop, width=81, color="#a63735")
+        self.reset_button = Button(
+            self.toolbar, "Reset scene", self.reset_scene, width=34, icon="reset"
+        )
+        Tooltip(self.reset_button, "Reset scene")
+        self.stop_button = Button(
+            self.toolbar, "Stop", self.stop, width=34, color="#a63735", icon="stop"
+        )
         self.stop_button.pack(side="left")
-        Tooltip(self.stop_button, "Stop motion and release control · Esc")
+        Tooltip(self.stop_button, "Stop motion · Esc")
         self.controls = tk.Frame(
             self.body,
             bg="#f6f8f7",
@@ -153,11 +173,24 @@ class Window:
 
     def stop(self):
         self.pending_home = False
+        self.pending_reset = False
         self.pointer_control = False
         self.gamepad_sample = None
+        self.haply_input.halt()
         if self.inputs:
             self.inputs.halt()
         self.control.stop()
+
+    def acquire_control(self):
+        self.stop()
+        if self.eligible():
+            self.control.acquire(self.selected)
+
+    def release_control(self):
+        self.stop()
+        robot = self.robots.get(self.selected, {})
+        mine = bool(self.session.get("id") and robot.get("owner_id") == self.session["id"])
+        self.control.release(self.selected if mine else None)
 
     def focused(self):
         # Tk creates dropdown popups outside tkinter's widget registry.
@@ -174,7 +207,7 @@ class Window:
         if not self.closing and not self.focused():
             self.stop()
 
-    def permitted(self):
+    def eligible(self):
         robot = self.robots.get(self.selected, {})
         return (
             self.session.get("status") == "approved"
@@ -187,6 +220,11 @@ class Window:
             and (not robot.get("owner") or robot.get("owner_id") == self.session.get("id"))
         )
 
+    def permitted(self):
+        return (
+            self.eligible() and self.control.owned == self.selected and not self.control.releasing
+        )
+
     def available(self):
         robot = self.robots.get(self.selected)
         state = self.control.feedback(robot) if robot else {}
@@ -195,6 +233,7 @@ class Window:
             and not state.get("home_active")
             and not state.get("stopping")
             and not self.pending_home
+            and not self.pending_reset
             and not self.closing
         )
 
@@ -202,9 +241,15 @@ class Window:
         self.stop()
         index = self.robot_choice.current()
         if 0 <= index < len(self.robot_ids):
+            if self.selected != self.robot_ids[index]:
+                self.control.release()
             self.selected = self.robot_ids[index]
+            if self.device.get() == HAPLY_NAME and not self.haply_supported():
+                self.device.current(0)
+                self.select_device()
             old_keys = self.inputs.keyboard if self.inputs else None
             self.inputs = Inputs(self.robots[self.selected])
+            self.haply_input = mapper_for(self.robots[self.selected])
             for kind in ("arm", "roll", "grip"):
                 value = self.preferences.get(f"{self.selected}:{kind}-speed")
                 if value is not None:
@@ -217,9 +262,17 @@ class Window:
 
     def select_device(self, _=None):
         self.stop()
+        haply = self.device.get() == HAPLY_NAME and self.haply_supported()
+        if self.haply and not haply:
+            self.haply.close()
+            self.haply = None
+        if haply:
+            self.haply_input = mapper_for(self.robots[self.selected])
+        if haply and self.haply is None:
+            self.haply = Haply()
         if self.gamepads:
             try:
-                self.gamepads.select(self.device_ids[self.device.current()])
+                self.gamepads.select(None if haply else self.device_ids[self.device.current()])
             except RuntimeError as exc:
                 self.error = str(exc)
                 self.device.current(0)
@@ -248,6 +301,8 @@ class Window:
             if self.gamepads
             else None
         )
+        if self.haply:
+            selection = {"name": HAPLY_NAME, "ordinal": 0, "count": 1}
         return {
             "status": status,
             "robot": self.selected,
@@ -298,6 +353,7 @@ class Window:
         self.home.tooltip.text = "Home · Return to starting pose"
         inputs = self.inputs
         keyboard = self.device.current() == 0
+        haply = self.device.get() == HAPLY_NAME
         hold_gamepad_grip = inputs.dual or inputs.hold_grip or inputs.mode != "cartesian"
         buttons = controller_bindings(self.device.get())
         grip_keys = {"z": "←", "x": "→", "n": buttons["close"], "m": buttons["open"]}
@@ -317,15 +373,17 @@ class Window:
             values=[name for _, name in options],
         )
         self.mode_choice.current(self.mode_ids.index(inputs.mode))
-        if len(options) > 1:
+        if len(options) > 1 and not haply:
             self.mode_choice.pack(fill="x", pady=self.px(0, 8))
         self.mode_choice.bind("<<ComboboxSelected>>", self.change_mode)
-        if keyboard:
+        if keyboard or haply:
             self.message.pack(anchor="w", fill="x", pady=self.px(8, 0))
             self.slider(self.controls, "arm", "Arm speed")
         else:
             self.message.pack_forget()
-        if keyboard and inputs.mode == "cartesian":
+        if haply:
+            self.haply_mapping()
+        elif keyboard and inputs.mode == "cartesian":
             grid = tk.Frame(self.controls, bg="white")
             grid.pack(fill="x")
             groups = [
@@ -422,6 +480,12 @@ class Window:
         if inputs.controls.get("grippers"):
             self.separator(self.controls)
             self.slider(self.controls, "grip", "Grip speed")
+            if haply:
+                for text in (
+                    "Hold single-dot button · Close gripper",
+                    "Hold two-dot button · Open gripper",
+                ):
+                    self.label(self.controls, text, size=9).pack(anchor="w", pady=self.px(3))
             if (
                 not keyboard
                 and not inputs.hold_grip
@@ -444,7 +508,7 @@ class Window:
                     self.label(section, group.title(), size=9, color=MUTED).pack(
                         anchor="w", pady=self.px(0, 4)
                     )
-                if group in GRIP_KEYS:
+                if group in GRIP_KEYS and not haply:
                     row = tk.Frame(section, bg="white")
                     row.pack(fill="x")
                     for key, text in zip(GRIP_KEYS[group], ("Close", "Open"), strict=True):
@@ -455,10 +519,10 @@ class Window:
                             text=text,
                             shortcut=key.upper()
                             if keyboard
-                            else (grip_keys[key] if hold_gamepad_grip else None),
+                            else (grip_keys[key] if hold_gamepad_grip and not haply else None),
                         )
                         cap.pack(side="left", padx=self.px(0, 4), fill="x", expand=True)
-                        if not keyboard and hold_gamepad_grip:
+                        if not keyboard and not haply and hold_gamepad_grip:
                             pair = (14, 15) if group == "left" else (2, 1)
                             self.gamepad_keys[key] = pair if text == "Close" else pair[::-1]
                         Tooltip(
@@ -466,6 +530,8 @@ class Window:
                             (
                                 f"Hold {key.upper()} or this button"
                                 if keyboard
+                                else "Hold this button"
+                                if haply
                                 else f"Hold {grip_keys[key]} or this button"
                                 if hold_gamepad_grip and inputs.mode == "cartesian"
                                 else f"Hold {buttons['enable']} + {grip_keys[key]} or this button"
@@ -530,6 +596,26 @@ class Window:
         cap = Badge(parent, text)
         self.gamepad_badges.append((cap, binding))
         return cap
+
+    def haply_supported(self):
+        robot = getattr(self, "robots", {}).get(getattr(self, "selected", None), {})
+        return supports(robot)
+
+    def haply_mapping(self):
+        self.haply_status = self.label(
+            self.controls, "Paused · Left arm" if self.inputs.dual else "Paused", bold=True
+        )
+        self.haply_status.pack(anchor="w", pady=self.px(4, 8))
+        for text in (
+            "Tap single-dot button · Start / stop movement",
+            *(("Tap two-dot button · Switch left / right arm",) if self.inputs.dual else ()),
+            "Move pen · Move tool",
+            "Tilt pen up / down · Angle tool" if self.inputs.dual else "Tilt pen · Angle tool",
+        ):
+            self.label(self.controls, text, size=9).pack(anchor="w", pady=self.px(3))
+        self.separator(self.controls)
+        self.slider(self.controls, "roll", "Roll speed")
+        self.label(self.controls, "Twist pen · Roll tool", size=9).pack(anchor="w", pady=self.px(3))
 
     def gamepad_mapping(self):
         inputs = self.inputs
@@ -708,6 +794,19 @@ class Window:
         self.pending_home = True
         self.root.focus_set()
 
+    def reset_scene(self):
+        robot = self.robots.get(self.selected)
+        if (
+            not robot
+            or not self.permitted()
+            or not robot.get("simulation")
+            or not robot["controls"].get("reset_scene")
+        ):
+            return
+        self.stop()
+        self.pending_reset = True
+        self.root.focus_set()
+
     def update_status(self, status, now):
         self.last_status = now
         self.session = status.get("session", {}) if status.get("role") == "surgeon" else {}
@@ -788,20 +887,31 @@ class Window:
             self.last_poll = now
 
     def poll_devices(self, now):
-        if not self.gamepads or now - self.last_devices < 0.5:
+        if now - self.last_devices < 0.5:
             return
+        if (
+            self.restore_input == {"name": HAPLY_NAME, "ordinal": 0, "count": 1}
+            and not self.last_status
+        ):
+            return  # Haply availability depends on the first robot-status response.
         self.last_devices = now
-        devices = self.gamepads.devices()
-        ids = [None, *devices]
+        devices = self.gamepads.devices() if self.gamepads else {}
+        ids = [None, *devices, *(["haply"] if self.haply_supported() and haply_available() else [])]
         if ids == self.device_ids and self.restore_input is None:
             return
-        selected = self.gamepads.selected
+        selected = (
+            "haply"
+            if getattr(self, "haply", None)
+            else (self.gamepads.selected if self.gamepads else None)
+        )
         restore, self.restore_input = self.restore_input, None
         if restore:
             matching = [
                 key for key, (_, raw) in devices.items() if controller_name(raw) == restore["name"]
             ]
             selected = matching[restore["ordinal"]] if len(matching) == restore["count"] else None
+            if restore == {"name": HAPLY_NAME, "ordinal": 0, "count": 1} and "haply" in ids:
+                selected = "haply"
         self.device_ids = ids
         names = [controller_name(name) for _, name in devices.values()]
         self.device["values"] = [
@@ -810,6 +920,7 @@ class Window:
                 name + (f" · {index + 1}" if names.count(name) > 1 else "")
                 for name, (index, _) in zip(names, devices.values(), strict=True)
             ],
+            *([HAPLY_NAME] if "haply" in ids else []),
         ]
         self.device.current(ids.index(selected) if selected in ids else 0)
         if restore or selected not in ids:
@@ -818,13 +929,24 @@ class Window:
     def drive(self, now):
         if self.inputs:
             self.inputs.keyboard.poll(now)
-        if not self.permitted() or not self.focused() or self.editing():
+        if not self.eligible():
+            self.stop()
+            self.control.release()
+            return
+        if not self.permitted():
+            self.stop()
+            return
+        if not self.focused() or self.editing():
             self.stop()
             return
         robot = self.robots.get(self.selected)
         if not robot or not self.inputs:
             return
         state = self.control.feedback(robot)
+        if self.pending_reset and self.control.ready:
+            self.pending_reset = False
+            self.control.move(self.selected, "reset", {}, None)
+            return
         if self.pending_home and self.control.ready and not state.get("stopping"):
             self.pending_home = False
             self.control.move(
@@ -836,10 +958,20 @@ class Window:
             return
         if not self.available():
             self.inputs.halt()
+            self.haply_input.halt()
             return
-        if not self.control.ready:
+        if self.haply and not self.pointer_control:
+            if not self.haply_supported():
+                self.stop()
+                return
+            sample, self.haply_error = self.haply.sample(now)
+            request = self.haply_input.update(
+                sample, state, self.inputs, now, ready=self.control.ready
+            )
+            self.haply_error = self.haply_error or self.haply_input.error
+        elif not self.control.ready:
             return
-        if self.device.current() == 0 or self.pointer_control:
+        elif self.device.current() == 0 or self.pointer_control:
             request = self.inputs.from_keyboard(now)
             if self.pointer_control and not self.inputs.keyboard.down:
                 self.pointer_control = False
@@ -868,11 +1000,14 @@ class Window:
     def feedback(self):
         robot = self.robots.get(self.selected, {})
         state = self.control.feedback(robot) if robot else {}
+        if self.haply:
+            _, error = self.haply.sample(time.monotonic())
+            self.haply_error = error or self.haply_input.error
         owned = self.control.owned == self.selected and not self.control.releasing
         status = (
-            "Controlled by " + (self.session.get("name", "you") if owned else robot["owner"])
+            "Active · " + (self.session.get("name", "you") if owned else robot["owner"])
             if owned or robot.get("owner")
-            else "Connected"
+            else "Available"
             if robot.get("status") == "online"
             else robot.get("status", self.session.get("status", "Disconnected")).title()
         )
@@ -881,6 +1016,17 @@ class Window:
         elif state.get("stopping"):
             status += " · Stopping…"
         self.status_label.configure(text=status)
+        mine = owned or bool(self.session.get("id") and robot.get("owner_id") == self.session["id"])
+        for button, visible in (
+            (self.release_button, mine),
+            (self.acquire_button, not mine and not robot.get("owner")),
+        ):
+            if visible and not button.winfo_manager():
+                button.pack(side="right", padx=self.px(8, 0))
+            elif not visible:
+                button.pack_forget()
+        self.release_button.update_state(not self.control.releasing)
+        self.acquire_button.update_state(self.eligible() and self.control.ready)
         self.status_dot.configure(
             fg=(
                 GREEN
@@ -894,12 +1040,26 @@ class Window:
             )
         )
         available = self.available()
+        self.stop_button.update_state(self.permitted())
         self.home.update_state(
             available
             and not state.get("control_active")
             and bool(robot.get("controls", {}).get("home_deg"))
         )
-        if self.inputs and self.device.current() != 0:
+        if robot.get("simulation") and robot.get("controls", {}).get("reset_scene"):
+            if not self.reset_button.winfo_manager():
+                self.reset_button.pack(side="left", before=self.stop_button, padx=self.px(0, 8))
+            self.reset_button.update_state(
+                self.permitted() and self.control.ready and not self.pending_reset
+            )
+        else:
+            self.reset_button.pack_forget()
+        if self.inputs and self.device.get() == HAPLY_NAME:
+            self.haply_status.configure(
+                text=("Paused" if self.haply_input.paused else "Active")
+                + (f" · {self.haply_input.arm.title()} arm" if self.inputs.dual else "")
+            )
+        elif self.inputs and self.device.current() != 0:
             remaining = (
                 max(0, 1 - (time.monotonic() - self.inputs.home_since))
                 if self.inputs.home_since is not None
@@ -943,7 +1103,7 @@ class Window:
         for (group, index), label in self.positions.items():
             values = (
                 state.get("cartesian_mm_deg", {}).get(group, [])
-                if self.inputs.mode == "mira-tool" and index < 4
+                if self.inputs.mode == "mira-tool" and self.device.current() == 0 and index < 4
                 else joints.get(group, [])
             )
             label.configure(
@@ -988,9 +1148,14 @@ class Window:
             text=self.error
             or self.control.error
             or robot.get("error")
+            or (self.haply_error if self.haply else "")
             or (
-                "Focus this window to control the robot."
+                "Acquire control to enable input."
+                if not self.permitted()
+                else "Focus this window to control the robot."
                 if not self.focused()
+                else ""
+                if self.haply
                 else "Center sticks and release buttons to resume."
                 if self.device.current() != 0 and self.inputs and not self.inputs.armed
                 else self.gamepad_error
@@ -999,6 +1164,7 @@ class Window:
 
     def close(self):
         self.stop()
+        self.control.release()
         self.closing = True
         self.message.configure(text="Stopping and releasing control…")
 
@@ -1007,6 +1173,8 @@ class Window:
         self.worker.shutdown(wait=True, cancel_futures=True)
         if self.gamepads:
             self.gamepads.close()
+        if self.haply:
+            self.haply.close()
 
 
 def now_stale(last_status):

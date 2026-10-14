@@ -200,12 +200,13 @@ async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_
                 "command": {"left": [1, 0, 0, 0, 0], "right": [0, 0, 0, 0, 0]},
             }
             replies = await asyncio.gather(
-                one.action("robot.move", command),
-                two.action("robot.move", command),
+                one.action("robot.acquire", {"id": robot_id}),
+                two.action("robot.acquire", {"id": robot_id}),
                 return_exceptions=True,
             )
             assert sum(isinstance(reply, Exception) for reply in replies) == 1, replies
             winner, other = (one, two) if not isinstance(replies[0], Exception) else (two, one)
+            await winner.action("robot.move", command)
             assert "timings" not in await winner.status()
             timing = (await winner.status(metrics=True))["timings"]
             assert timing["patient_round_trip_ms"]["count"] > 0
@@ -228,9 +229,10 @@ async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_
             assert robot_id not in winner.tokens
             assert not patient.owners[robot_id].ready
             with pytest.raises(RuntimeError, match="Previous stop was not confirmed"):
-                await other.action("robot.move", command)
+                await other.action("robot.acquire", {"id": robot_id})
             await patient.action("robot.revoke", {"id": robot_id})
             assert patient.owners[robot_id].ready
+            await other.action("robot.acquire", {"id": robot_id})
             await other.action("robot.move", command)
             assert observed.count("set_mira_cartesian_delta") == 2
             with pytest.raises(RuntimeError, match="expired|belongs"):
@@ -241,13 +243,14 @@ async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_
             await other.action("disconnect", {})
             await until(lambda: patient.owners[robot_id].owner is None)
             assert "hold" in observed
+            await winner.action("robot.acquire", {"id": robot_id})
             await winner.action("robot.move", command)
             winner_id = (first if winner is one else second)["id"]
             await patient.action("access.revoke", {"id": winner_id})
             assert patient.owners[robot_id].owner is None
             assert "robots" not in await winner.remote.call("status")
             with pytest.raises(RuntimeError, match="approval"):
-                await winner.action("robot.move", command)
+                await winner.action("robot.acquire", {"id": robot_id})
             assert (await winner.status(metrics=True))["timings"]["control_ack_ms"]["count"] == 1
             await other.connect(address, "New session", False)
             assert (await other.status(metrics=True))["timings"]["control_ack_ms"]["count"] == 0

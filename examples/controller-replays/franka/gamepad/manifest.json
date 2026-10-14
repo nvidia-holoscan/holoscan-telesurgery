@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "environment": "franka",
+  "device": "gamepad",
+  "task": "Ultrasound probe approach and torso swipe",
+  "source": "Synthetic device input through production controller mappings",
+  "starting_scene": "Fresh Franka scene at Home",
+  "duration_s": 60.554145,
+  "streams": {
+    "franka": {
+      "file": "franka.jsonl.gz",
+      "initial": {
+        "joints_deg": {
+          "joints": [
+            -24.47211265563965,
+            -18.342636108398438,
+            13.682123184204102,
+            -106.19417572021484,
+            9.418106079101562,
+            90.7449722290039,
+            -21.334209442138672
+          ]
+        },
+        "grippers": {}
+      }
+    }
+  },
+  "observed": {
+    "contact_frames": 2048,
+    "total_frames": 2049,
+    "contact_fraction": 0.9995119570522206,
+    "span_m": 0.1277414118753078,
+    "peak_force_n": 6.590382511627344
+  },
+  "scan_start_s": 21.862667849985883,
+  "replay_verified": true,
+  "replayed": {
+    "device": "gamepad",
+    "contact_fraction": 1.0,
+    "span_m": 0.13317779207670946
+  }
+}

@@ -39,6 +39,8 @@ with Path(os.environ["SETUP_CALLS"]).open("a") as log:
     log.write(json.dumps({"command": command, "sdk": os.environ["TELESURGERY_SDK"]}) + "\\n")
 if os.environ.get("SETUP_FAIL") in command:
     sys.exit("Setup fixture failure")
+if "scripts/setup_cache.py" in command and "check" in command:
+    sys.exit(0 if os.environ.get("SETUP_CACHE_HIT") and "--force" not in command else 1)
 if command[0] == "dpkg-query":
     if command[-1] in os.environ.get("SETUP_MISSING_PACKAGES", "libegl1").split():
         sys.exit(1)
@@ -77,7 +79,11 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     result, records = invoke(*options)
     assert result.returncode == 0, result.stderr
     assert {item["sdk"] for item in records} == {sdk}
-    commands = [item["command"] for item in records if item["command"][0] != "dpkg-query"]
+    commands = [
+        item["command"]
+        for item in records
+        if item["command"][0] != "dpkg-query" and "scripts/setup_cache.py" not in item["command"]
+    ]
     python = str(root / f".venv-sdk{sdk}/bin/python")
     assert commands == [
         ["nvcc", "--version"],
@@ -99,6 +105,7 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
             "--environment",
             str(root / f".venv-sdk{sdk}"),
         ],
+        ["python", "scripts/setup_haply.py"],
         ["python", f"scripts/builders/sdk{sdk}.py"],
         ["python", "scripts/builders/codecs.py"],
         [
@@ -127,12 +134,15 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
         ["python", "-m", "telesurgery", "doctor"],
     ]
     assert "Setup complete." in result.stdout
+    assert records[-1]["command"][:3] == ["python", "scripts/setup_cache.py", "record"]
 
 
 @pytest.mark.parametrize("sdk", ["4", "5"])
 def test_missing_controller_libraries_use_distribution_versions(setup, monkeypatch, sdk):
     _, invoke = setup
-    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk xvfb xauth")
+    monkeypatch.setenv(
+        "SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth"
+    )
     result, records = invoke("--sdk", sdk)
     assert result.returncode == 0, result.stderr
     installs = [
@@ -147,6 +157,7 @@ def test_missing_controller_libraries_use_distribution_versions(setup, monkeypat
             "--no-install-recommends",
             "libsdl2-2.0-0",
             "python3-tk",
+            "python3-websocket",
             "xvfb",
             "xauth",
         ]
@@ -182,6 +193,35 @@ def test_setup_places_simulation_packages_in_custom_workspace(setup, tmp_path):
     targets = [item["command"] for item in records if "--target" in item["command"]]
     assert len(targets) == 2
     assert all(str(workspace / "sim-deps") in command for command in targets)
+
+
+def test_unchanged_setup_keeps_host_checks_and_previous_log(setup, monkeypatch):
+    root, invoke = setup
+    monkeypatch.setenv("SETUP_CACHE_HIT", "1")
+    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "")
+    log = root / "build/setup.log"
+    log.write_text("Last successful GPU validation\n")
+    result, records = invoke()
+    assert result.returncode == 0, result.stderr
+    assert "already up to date" in result.stdout
+    commands = [item["command"] for item in records]
+    assert ["python3", "scripts/clock_sync.py"] in commands
+    assert ["python3", "scripts/setup_gamepads.py"] in commands
+    assert any(command[0] == "dpkg-query" for command in commands)
+    assert not any(command[0] in {"uv", "sudo", "apt-get"} for command in commands)
+    assert not any("doctor" in command for command in commands)
+    assert log.read_text() == "Last successful GPU validation\n"
+    assert not list((root / "build/setup").glob("run.*"))
+
+
+def test_force_reruns_installation_and_validation(setup, monkeypatch):
+    _, invoke = setup
+    monkeypatch.setenv("SETUP_CACHE_HIT", "1")
+    result, records = invoke("--force")
+    assert result.returncode == 0, result.stderr
+    assert any("scripts/builders/sdk5.py" in item["command"] for item in records)
+    assert any("doctor" in item["command"] for item in records)
+    assert records[-1]["command"][:3] == ["python", "scripts/setup_cache.py", "record"]
 
 
 def test_old_compiler_reports_docker_before_downloading_sdk(setup, monkeypatch):

@@ -23,6 +23,32 @@ class JointFeedback:
         }
         self.grippers = gripper_joints or {}
 
+    def apply_targets(self, positions, velocities=None):
+        """Send drive targets to live PhysX articulations.
+
+        Targets use physics units (radians for angular DOFs, metres for fingers).
+        Preserve uncommanded DOFs, including the second jaw's mimic joint.
+        """
+        if not self.views or not all(v.is_physics_tensor_entity_valid() for v in self.views):
+            return
+        known = {path for view in self.views for path in view.dof_paths[0]}
+        missing = (set(positions) | set(velocities or {})) - known
+        if missing:
+            raise RuntimeError(f"Simulator drive joints missing from physics: {sorted(missing)}")
+        for view in self.views:
+            paths = view.dof_paths[0]
+            indices = [i for i, path in enumerate(paths) if path in positions]
+            if indices:
+                view.set_dof_position_targets(
+                    [positions[paths[i]] for i in indices], dof_indices=indices
+                )
+            if velocities:
+                indices = [i for i, path in enumerate(paths) if path in velocities]
+                if indices:
+                    view.set_dof_velocity_targets(
+                        [velocities[paths[i]] for i in indices], dof_indices=indices
+                    )
+
     def read(self):
         # Tensor views become available only after physics starts.
         if not self.views or not all(v.is_physics_tensor_entity_valid() for v in self.views):

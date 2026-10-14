@@ -96,6 +96,10 @@ button.text-link {
     stroke-linejoin: round;
     pointer-events: none;
 }
+.icon-stop {
+    fill: #a63735;
+    stroke: none;
+}
 button.icon-button {
     width: 34px;
     height: 34px;
@@ -509,9 +513,47 @@ body[data-role="surgeon"] #content {
 }
 .node-directory {
     display: grid;
+    gap: 28px;
+}
+.node-card-grid {
+    display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 350px), 1fr));
     gap: 20px;
     grid-auto-rows: 1fr;
+}
+.node-group {
+    min-width: 0;
+}
+.node-group h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 14px;
+    font-size: 16px;
+}
+.node-group h2::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #8a948c;
+}
+.node-group[data-status="online"] h2::before {
+    background: #76a900;
+}
+.node-group-count {
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #eaf0e6;
+    color: #58665f;
+    font-size: 12px;
+    font-weight: 500;
+}
+.node-group[data-status="offline"] h2 {
+    color: var(--muted);
+}
+.node-group[data-status="offline"] .node-group-count {
+    background: #e9edeb;
 }
 .device {
     background: #fff;
@@ -1014,14 +1056,21 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .robot-status-line {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
+}
+.robot-status-line > .camera-metrics,
+.robot-status-line > button:last-child {
+    margin-left: auto;
 }
 .robot-status-line > button {
     flex-shrink: 0;
     width: 30px;
     min-height: 30px;
     padding: 5px;
+}
+.robot-status-line > .acquire-control {
+    width: auto;
+    padding: 4px 10px;
 }
 .robot > button {
     margin: 6px 8px 0 0;
@@ -1398,6 +1447,9 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .gripper-controls > .speed-control {
     grid-column: 1 / -1;
     margin-bottom: 0;
+}
+.gripper-controls > .haply-grip-hints {
+    grid-column: 1 / -1;
 }
 .compact-controls > .robot-state {
     margin-top: 8px;
@@ -1813,7 +1865,8 @@ body[data-role="patient"] .robot-description {
 .equipment-robot-actions > button:first-child {
     grid-column: 1;
 }
-.camera-settings {
+.camera-settings,
+.equipment-robot-actions .robot-force-release {
     grid-column: settings;
     grid-row: 1;
 }

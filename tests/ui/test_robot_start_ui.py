@@ -94,7 +94,7 @@ async def test_patient_start_confirmation_and_node_layout(tmp_path):
             await expect(disconnect).to_be_enabled()
             await expect(page.locator("#equipment-rows")).to_contain_text("Connecting")
             robot.update(status="online", stale=False)
-            await expect(page.locator("#equipment-rows")).to_contain_text("Connected")
+            await expect(page.locator("#equipment-rows")).to_contain_text("Available")
             robot.update(status="offline", stale=True, error="Controller connection failed")
             await expect(page.locator("#equipment-rows")).to_contain_text("Control error")
             robot["error"] = ""

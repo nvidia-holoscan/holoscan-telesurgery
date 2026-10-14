@@ -191,6 +191,7 @@ function motionSpeed(robot, stop, kind, title, limits, defaultPercent, maximumSt
     return {
         element: container,
         value,
+        percent: () => percent,
         increment: (seconds = 0.05) => Math.min(maximumStep, value() * seconds),
         update(available) { slider.disabled = !available; },
     };

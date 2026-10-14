@@ -168,6 +168,7 @@ def test_native_restores_handoff_without_substituting_a_missing_duplicate(availa
 
     window = Window.__new__(Window)
     window.gamepads = Mock(selected=None)
+    window.haply = None
     window.gamepads.devices.return_value = {42 + i: (i, "PS5 Controller") for i in range(available)}
     window.device, window.root = MagicMock(), Mock()
     current = [0]
@@ -365,7 +366,7 @@ def test_versius_grip_release_stops_only_the_gripper_while_stick_is_held():
     assert inputs.from_gamepad([0] * 4, set(), {}, 0.5) == ("release", {})
 
 
-def test_slow_reply_cannot_queue_motion_and_release_follows_inflight():
+def test_slow_reply_cannot_queue_motion_and_hold_keeps_ownership_until_release():
     accepted, reply = threading.Event(), threading.Event()
     calls = []
 
@@ -378,6 +379,13 @@ def test_slow_reply_cannot_queue_motion_and_release_follows_inflight():
 
     control = Control(SimpleNamespace(action=action))
     try:
+        assert not control.move("robot", "grip", {"hand": -0.5}, 10)
+        assert not calls
+        assert control.acquire("robot")
+        deadline = time.monotonic() + 2
+        while not control.ready and time.monotonic() < deadline:
+            control.poll(time.monotonic())
+            time.sleep(0.001)
         assert control.move("robot", "grip", {"hand": -0.5}, 10)
         assert accepted.wait(2)
         for _ in range(50):
@@ -385,14 +393,60 @@ def test_slow_reply_cannot_queue_motion_and_release_follows_inflight():
         control.stop()
         reply.set()
         deadline = time.monotonic() + 2
-        while (control.pending or control.owned) and time.monotonic() < deadline:
+        while not control.ready and time.monotonic() < deadline:
             control.poll(time.monotonic())
             time.sleep(0.001)
-        assert [method for method, _ in calls] == ["robot.move", "robot.release"]
-        assert calls[0][1]["command"] == {"velocity": {"hand": -0.5}}
-        assert control.ready and control.owned is None
+        assert [method for method, _ in calls] == ["robot.acquire", "robot.move", "robot.hold"]
+        assert calls[1][1]["command"] == {"velocity": {"hand": -0.5}}
+        assert control.ready and control.owned == "robot"
+        control.stop()
+        control.poll(control.last_renew + 0.6)
+        deadline = time.monotonic() + 2
+        while control.pending and time.monotonic() < deadline:
+            control.poll(time.monotonic())
+            time.sleep(0.001)
+        assert calls[-1][0] == "robot.renew"
+        assert control.owned == "robot"
+        control.release()
+        while control.owned and time.monotonic() < deadline:
+            control.poll(time.monotonic())
+            time.sleep(0.001)
+        assert calls[-1][0] == "robot.release" and control.owned is None
+        assert not control.move("robot", "jog", {"joints": [1]}, 10)
     finally:
         reply.set()
+        control.close()
+
+
+@pytest.mark.parametrize("hold_fails", [False, True])
+def test_native_move_error_stops_before_deciding_to_release(hold_fails):
+    calls = []
+
+    def action(method, params):
+        calls.append(method)
+        if method == "robot.move" or (method == "robot.hold" and hold_fails):
+            raise RuntimeError("controller rejected request")
+        return {"sequence": len(calls)}
+
+    control = Control(SimpleNamespace(action=action))
+
+    def drain():
+        deadline = time.monotonic() + 2
+        while not control.ready and time.monotonic() < deadline:
+            control.poll(time.monotonic())
+            time.sleep(0.001)
+        assert control.ready
+
+    try:
+        control.acquire("robot")
+        drain()
+        control.move("robot", "jog", {"joints": [1]}, None)
+        drain()
+        assert calls[:3] == ["robot.acquire", "robot.move", "robot.hold"]
+        assert control.owned == (None if hold_fails else "robot")
+        assert ("robot.release" in calls) == hold_fails
+        assert not control.moving
+    finally:
         control.close()
 
 
@@ -466,3 +520,67 @@ async def test_native_launch_requires_approved_robot_access():
 def test_native_rejects_non_dashboard_urls(url):
     with pytest.raises(ValueError):
         Client(url)
+
+
+def test_native_acquire_release_visibility_and_paused_ownership(monkeypatch, virtual_display):
+    import tkinter as tk
+
+    from telesurgery.controller.window import Window
+
+    root = tk.Tk(screenName=virtual_display)
+    window = None
+    calls = []
+
+    def action(method, params):
+        calls.append(method)
+        return {"sequence": len(calls) + 1}
+
+    try:
+        monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+        monkeypatch.setattr(Window, "tick", lambda self: None)
+        window = Window(root, SimpleNamespace(action=action))
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "operator",
+                    "name": "Operator",
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [robot("mira")],
+                },
+            },
+            time.monotonic(),
+        )
+        window.feedback()
+        root.update()
+        assert window.acquire_button.winfo_viewable()
+        assert not window.release_button.winfo_viewable()
+        assert not window.permitted()
+        window.acquire_control()
+        deadline = time.monotonic() + 2
+        while not window.control.ready and time.monotonic() < deadline:
+            window.control.poll(time.monotonic())
+            time.sleep(0.001)
+        window.feedback()
+        root.update()
+        assert window.status_label.cget("text") == "Active · Operator"
+        assert not window.acquire_button.winfo_viewable()
+        assert window.release_button.winfo_viewable()
+        assert window.permitted()
+        window.stop()
+        assert window.control.owned == "mira"
+        window.release_control()
+        while window.control.owned and time.monotonic() < deadline:
+            window.control.poll(time.monotonic())
+            time.sleep(0.001)
+        window.feedback()
+        root.update()
+        assert window.acquire_button.winfo_viewable()
+        assert not window.release_button.winfo_viewable()
+        assert not window.permitted()
+        assert calls == ["robot.acquire", "robot.release"]
+    finally:
+        if window:
+            window.shutdown()
+        root.destroy()

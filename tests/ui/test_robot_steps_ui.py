@@ -58,12 +58,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             await request.fulfill(json=state)
         elif path == "api/action":
             call = json.loads(request.request.post_data)
-            calls.append(call)
+            if call["action"] != "robot.renew":
+                calls.append(call)
             if call["action"] == "robot.move":
                 robot["state"]["control_active"] = True
                 robot["state"]["home_active"] = call["params"].get("mode") == "home"
                 robot["state"]["sequence"] += 1
-            if call["action"] == "robot.release":
+            if call["action"] in {"robot.hold", "robot.release"}:
                 robot["state"]["control_active"] = False
                 robot["state"]["home_active"] = False
                 robot["state"]["sequence"] += 1
@@ -87,6 +88,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             page.on("pageerror", lambda error: errors.append(str(error)))
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             await expect(page.get_by_label("Franka input", exact=True)).to_have_value("keyboard")
             await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
             await expect(page.get_by_label("Franka joint step", exact=True)).to_have_count(0)
@@ -108,7 +110,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
                 "mode": "step",
                 "speed_deg_s": speed_value,
             }
-            assert not any(c["action"] == "robot.release" for c in calls)
+            assert not any(c["action"] == "robot.hold" for c in calls)
             # A held input must promote a still-active step into a jog. Physical
             # tracking need not report idle before continuous input can begin.
             await plus.hover()
@@ -118,7 +120,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             assert all(c["params"]["mode"] == "jog" for c in moves()[2:])
             await page.mouse.up()
             await page.wait_for_timeout(150)
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             count = len(moves())
             await page.wait_for_timeout(700)
             assert len(moves()) == count  # Release stops jogging, with no queued input.
@@ -139,13 +141,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
                 assert move["params"]["speed_deg_s"] == speed_value
             await page.keyboard.up("t")
             await page.wait_for_timeout(150)
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             count = len(moves())
             await page.wait_for_timeout(700)
             assert len(moves()) == count
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(100)
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             # Slider endpoints respect node limits and never send motion.
             count = len(moves())
             await speed.focus()
@@ -159,7 +161,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             await speed.press("Enter")
             assert len(moves()) == count
             # Home is one fixed-pose request, with manual input paused until
-            # completion. Escape still stops it through the existing release.
+            # completion. Escape stops it while retaining ownership.
             await page.get_by_role("button", name="Home", exact=True).click()
             await expect(page.get_by_role("button", name="Going home…")).to_be_disabled()
             assert moves()[-1]["params"] == {
@@ -174,13 +176,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             assert len(moves()) == count + 1
             await page.get_by_role("button", name="Stop", exact=True).click()
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             robot["error"] = "Franka Home did not reach its target before timeout"
             await expect(page.locator("#robots .status")).to_have_text("Control error")
             await expect(page.locator("#robots .status")).to_have_class("status error")
             await expect(plus).to_be_disabled()
             robot["error"] = ""
-            await expect(page.locator("#robots .status")).to_have_text("Connected")
+            await expect(page.locator("#robots .status")).to_have_text("Available")
             await expect(page.locator("#robots .status")).to_have_class("status online")
             await page.screenshot(path=str(tmp_path / "franka-steps.png"), full_page=True)
             assert not errors

@@ -134,6 +134,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
             page = await context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             speed = page.get_by_label(f"{robot['name']} arm speed", exact=True)
             await speed.evaluate("s => {s.value=30;s.dispatchEvent(new Event('input'))}")
             await page.locator(".keyboard-controls").focus()

@@ -402,7 +402,7 @@ def test_simulated_mira_grippers_are_independent_and_home_resets_them(monkeypatc
 
 
 def test_simulated_mira_home_waits_for_tools_and_stop_holds_measured_pose():
-    from telesurgery_robots.mira.poses import MIRA_HOME
+    from telesurgery_robots.mira.poses import MIRA_SIM_HOME
 
     sim = SimRobot()
     initial = {arm: list(pose) for arm, pose in sim.pose.items()}
@@ -424,7 +424,7 @@ def test_simulated_mira_home_waits_for_tools_and_stop_holds_measured_pose():
     assert not sim.apply({"method": "get_state"})["home_active"]
     sim.apply({"method": "set_home"})
     for arm in initial:
-        sim.feedback["joints_deg"][arm][:4] = MIRA_HOME
+        sim.feedback["joints_deg"][arm][:4] = MIRA_SIM_HOME[arm]
     assert sim.apply({"method": "get_state"})["home_active"]
     for arm in initial:
         sim.feedback["joints_deg"][arm][4] = 0

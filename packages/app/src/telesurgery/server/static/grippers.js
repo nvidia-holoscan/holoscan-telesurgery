@@ -150,10 +150,15 @@ export function gripperControls(robot, send, stop, speed) {
         feedback,
         gamepad(velocity) { gamepadVelocity = velocity; },
         update(enabled, keyboardEnabled, gamepad) {
+            enabled = enabled && !gamepad?.haply;
             if ((allowed && !enabled) || keyboard !== keyboardEnabled) halt();
             allowed = enabled;
             keyboard = keyboardEnabled;
             heading.hidden = !!panel.querySelector(".speed-control");
+            panel.tabIndex = gamepad?.haply ? -1 : 0;
+            panel.title = gamepad?.haply
+                ? "Measured opening · 0% closed · 100% open"
+                : "Hold to open or close · Release to stop";
             const toggleGrip = single && !keyboard && (gamepad?.toggleGrip ?? !holdGrip);
             toggle.hidden = !toggleGrip;
             if (single) {
@@ -161,9 +166,10 @@ export function gripperControls(robot, send, stop, speed) {
                 toggle.title = `Press ${gamepad?.n || "□"} to toggle the gripper · Stop / Esc interrupts motion`;
             }
             for (const [key, control] of buttons) {
+                control.hidden = !!gamepad?.haply;
                 control.disabled = !allowed;
                 const cap = control.querySelector("kbd");
-                cap.hidden = toggleGrip;
+                cap.hidden = toggleGrip || gamepad?.haply;
                 const binding = single ? (key === "z" ? "n" : "m") : key;
                 const label = keyboard ? key.toUpperCase() : gamepad?.[binding] || "";
                 if (cap.dataset.binding !== label) {
@@ -174,7 +180,7 @@ export function gripperControls(robot, send, stop, speed) {
                 }
                 control.title = keyboard
                     ? `Hold ${key.toUpperCase()} or this button to ${bindings.get(key).sign < 0 ? "close" : "open"}`
-                    : toggleGrip ? "Hold this button · Release to stop"
+                    : toggleGrip || gamepad?.haply ? "Hold this button · Release to stop"
                     : `Hold ${(gamepad?.enableRequired ?? !single) ? `${gamepad?.enable || "LB/L1"} + ` : ""}${label}, or hold this on-screen button · Release to stop`;
             }
         },

@@ -79,7 +79,7 @@ class NativeController:
             try:
                 # The SDK's managed Python ships Tk without Xft on Linux.
                 # Use the desktop Python/Tk build for antialiased system fonts;
-                # this process needs only the standard library and SDL2.
+                # Haply uses the distribution's python3-websocket package.
                 python = "/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable
                 environment = dict(os.environ)
                 environment["PYTHONPATH"] = os.pathsep.join(

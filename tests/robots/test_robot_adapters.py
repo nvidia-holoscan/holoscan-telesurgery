@@ -98,6 +98,31 @@ def test_initial_non_transport_failure_is_reported_immediately():
     assert robot.report()["error"] == "invalid robot feedback"
 
 
+@pytest.mark.parametrize("hold_fails", [False, True])
+def test_rejected_simulation_move_keeps_lease_only_after_successful_hold(hold_fails):
+    from telesurgery_core.transport.rpc import RequestRejected
+
+    class Rejected(Gantry):
+        def jog(self, command):
+            self.fail = hold_fails
+            raise RequestRejected("tool tracking error")
+
+    adapter = Rejected({})
+    robot = Controller(adapter, lambda: {}, lambda: 0)
+    robot.prepare("surgeon")
+    with pytest.raises(ConnectionError if hold_fails else RequestRejected):
+        robot.move("surgeon", 1, {"axis": [0.1, 0]}, time.time())
+    assert adapter.holds == 1
+    if hold_fails:
+        assert robot.report()["status"] == "offline"
+        assert robot.report()["stale"]
+    else:
+        assert robot.report()["status"] == "online"
+        assert not robot.report()["stale"]
+        assert robot.active and robot.token == "surgeon"
+        robot.renew("surgeon")
+
+
 def test_franka_adjustable_steps_and_jogs_enforce_the_controller_limit():
     from types import SimpleNamespace
 
@@ -157,6 +182,28 @@ def test_generic_validation_expiry_and_failed_hold():
     robot.prepare("next")
     robot.close()
     assert adapter.closed == 1
+
+
+def test_hold_retains_exclusive_lease_and_watchdog_still_releases():
+    adapter = Gantry({})
+    robot = Controller(adapter, lambda: {}, lambda: 0)
+    robot.prepare("owner")
+    with pytest.raises(PermissionError):
+        robot.hold("another")
+    assert adapter.holds == 0
+    robot.move("owner", 1, {"axis": [0.1, 0]}, time.time())
+    robot.hold("owner")
+    assert adapter.holds == 1 and robot.active and robot.token == "owner"
+    with pytest.raises(PermissionError, match="owned"):
+        robot.prepare("another")
+    robot.renew("owner")
+    robot.move("owner", 2, {"axis": [0.1, 0]}, time.time())
+    assert adapter.position == pytest.approx([0.2, 0])
+    robot.expires = 0
+    robot.tick()
+    assert not robot.active and robot.token is None
+    robot.prepare("another")
+    robot.close()
 
 
 def test_closed_controller_does_not_reopen_feedback_connection():
@@ -242,6 +289,10 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
             self.position = [0, 0]
             return self.read()
 
+        def reset(self):
+            self.position = [0, 0]
+            return {**self.read(), "scene_restored": True}
+
         def step(self, command, *, speed_deg_s):
             self.speed = speed_deg_s
             self.stepped = True
@@ -280,6 +331,10 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
         async with asyncio.timeout(5):
             while not surgeon.remote_status.get("robot"):
                 await asyncio.sleep(0.05)
+        with pytest.raises(RuntimeError, match="Acquire robot control first"):
+            await surgeon.action("robot.move", {"id": key, "command": {"axis": [0.1, 0]}})
+        assert key not in surgeon.tokens
+        await surgeon.action("robot.acquire", {"id": key})
         result = await surgeon.action(
             "robot.move",
             {"id": key, "command": {"axis": [0.2, 0]}, "mode": "step", "speed_deg_s": 3.5},
@@ -287,9 +342,21 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
         assert result["joints_deg"]["axis"] == [0.2, 23]
         assert node.node.robots.devices["gantry"].adapter.stepped
         assert node.node.robots.devices["gantry"].adapter.speed == 3.5
+        token = surgeon.tokens[key]
+        await surgeon.action("robot.hold", {"id": key})
+        assert surgeon.tokens[key] == token
+        assert patient.owners[key].owner is not None
+        assert node.node.robots.devices["gantry"].token == token
+        assert node.node.robots.devices["gantry"].adapter.holds == 1
+        with pytest.raises(PermissionError, match="another surgeon"):
+            patient.owners[key].acquire("another surgeon")
+        await surgeon.action("robot.renew", {"id": key})
         result = await surgeon.action("robot.move", {"id": key, "command": {}, "mode": "home"})
         assert result["joints_deg"]["axis"] == [0, 0]
         assert node.node.robots.devices["gantry"].adapter.speed == 2
+        assert robot["controls"]["reset_scene"]
+        result = await surgeon.action("robot.move", {"id": key, "command": {}, "mode": "reset"})
+        assert result["scene_restored"] and result["joints_deg"]["axis"] == [0, 0]
         await surgeon.action("robot.release", {"id": key})
         assert key not in surgeon.tokens
         patient.faults[key] = "Previous Home timed out"
@@ -300,12 +367,14 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
         assert not node.node.robots.devices["gantry"].active
         # A rejected move must retain the credential needed to stop/release it;
         # otherwise the original error becomes a misleading ownership failure.
+        await surgeon.action("robot.acquire", {"id": key})
         with pytest.raises(RuntimeError):
             await surgeon.action("robot.move", {"id": key, "command": {"axis": [1, 0]}})
         assert key in surgeon.tokens
         await surgeon.action("robot.release", {"id": key})
         assert patient.owners[key].owner is None
         assert not node.node.robots.devices["gantry"].active
+        await surgeon.action("robot.acquire", {"id": key})
         await surgeon.action(
             "robot.move", {"id": key, "command": {"axis": [0.1, 0]}, "mode": "step"}
         )
@@ -315,7 +384,10 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
                 "robot.move", {"id": key, "command": {"axis": [0.1, 0]}, "mode": "step"}
             )
         assert key not in surgeon.tokens
-        # A fresh user input can acquire a new lease; the failed command was not replayed.
+        # Force release preserves access, but movement cannot reacquire implicitly.
+        with pytest.raises(RuntimeError, match="Acquire robot control first"):
+            await surgeon.action("robot.move", {"id": key, "command": {"axis": [0.1, 0]}})
+        await surgeon.action("robot.acquire", {"id": key})
         result = await surgeon.action(
             "robot.move", {"id": key, "command": {"axis": [0.1, 0]}, "mode": "step"}
         )
@@ -459,7 +531,7 @@ def test_mira_simulation_home_restores_both_arms_and_tools():
     from telesurgery_robots.adapters.base import controls
     from telesurgery_robots.adapters.simulation import MiraSimulation
     from telesurgery_robots.mira.adapter import MiraAdapter
-    from telesurgery_robots.mira.poses import MIRA_HOME
+    from telesurgery_robots.mira.poses import MIRA_HOME, MIRA_SIM_HOME
     from telesurgery_robots.simulation.state import SimRobot
 
     sim = SimRobot("mira")
@@ -467,7 +539,7 @@ def test_mira_simulation_home_restores_both_arms_and_tools():
     adapter.request = lambda method, params=None: sim.apply({"method": method, "params": params})
     capabilities = controls(adapter, {})
     assert capabilities["default_step_deg"] == 1
-    assert capabilities["home_deg"] == {"left": MIRA_HOME, "right": MIRA_HOME}
+    assert capabilities["home_deg"] == MIRA_SIM_HOME
     for arm in sim.pose:
         sim.pose[arm][4:] = [12, 34]
     controller = Controller(adapter, lambda: {}, lambda: 0)
@@ -477,16 +549,20 @@ def test_mira_simulation_home_restores_both_arms_and_tools():
     moved = controller.move(
         "owner", 1, {"left": [1, 1, 1, 1, 0], "right": [1, 1, 1, 1, 0]}, time.time()
     )
-    assert all(pose[:4] != list(MIRA_HOME) for pose in moved["targets_deg"].values())
+    assert all(pose[:4] != list(MIRA_SIM_HOME[arm]) for arm, pose in moved["targets_deg"].items())
     restored = controller.move("owner", 2, {}, time.time(), mode="home")
     assert restored["targets_deg"] == {
-        arm: [*MIRA_HOME, 0, limits[0]] for arm, limits in sim.gripper_ranges.items()
+        arm: [*MIRA_SIM_HOME[arm], 0, limits[0]] for arm, limits in sim.gripper_ranges.items()
     }
     with pytest.raises(ValueError, match="configured pose"):
         sim.apply({"method": "set_home", "params": {"left": [0] * 4}})
     # Physical controls require patient motion permission.
     physical = MiraAdapter({"uri": "unused"})
     assert "home_deg" not in controls(physical, {})
+    assert controls(physical, {"motion_enabled": True})["home_deg"] == {
+        "left": MIRA_HOME,
+        "right": MIRA_HOME,
+    }
     assert controls(physical, {"motion_enabled": True})["default_step_deg"] == 1
 
 
@@ -621,6 +697,7 @@ async def test_node_clock_excludes_slow_discovery(tmp_path, monkeypatch, enrolle
         async with asyncio.timeout(10):
             while surgeon.remote_status.get("status") != "approved":
                 await asyncio.sleep(0.05)
+        await surgeon.action("robot.acquire", {"id": f"{node_id}:arm"})
         result = await surgeon.action(
             "robot.move",
             {
@@ -766,3 +843,31 @@ def test_held_franka_key_promotes_active_step_and_stops(monkeypatch, joint, endi
     sim.apply({"method": "set_home"})
     with pytest.raises(ValueError, match="moving home"):
         move()  # Home cannot be promoted into manual control.
+
+
+def test_scene_reset_requires_simulation_capability_and_fresh_owned_command():
+    from telesurgery_robots.adapters.base import controls
+    from telesurgery_robots.adapters.simulation import MiraSimulation
+    from telesurgery_robots.mira.adapter import MiraAdapter
+
+    adapter = MiraSimulation({"uri": "unused"})
+    calls = []
+    adapter.request = lambda method, **kwargs: calls.append(method) or {"reset": True}
+    assert controls(adapter, {})["reset_scene"]
+    physical = MiraAdapter({"uri": "unused"})
+    assert "reset_scene" not in controls(physical, {"motion_enabled": True})
+    controller = Controller(adapter, lambda: {}, lambda: 0)
+    controller.prepare("owner")
+    with pytest.raises(PermissionError):
+        controller.move("other", 1, {}, time.time(), mode="reset")
+    with pytest.raises(ValueError, match="expired"):
+        controller.move("owner", 1, {}, time.time() - 1, mode="reset")
+    with pytest.raises(ValueError, match="initial environment"):
+        controller.move("owner", 1, {"left": []}, time.time(), mode="reset")
+    controller.move("owner", 1, {}, time.time(), mode="reset")
+    assert calls[-1] == "reset_scene"
+    adapter.simulation = False
+    controller.specification = lambda: {"motion_enabled": True}
+    assert "reset_scene" not in controls(adapter, {"motion_enabled": True})
+    with pytest.raises(ValueError, match="not supported"):
+        controller.move("owner", 2, {}, time.time(), mode="reset")
