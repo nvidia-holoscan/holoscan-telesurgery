@@ -50,7 +50,7 @@ def run(app, args):
     physics.CreateBroadphaseTypeAttr("MBP")
     physics.CreateEnableCCDAttr(True)
     (args.directory / "progress").write_text("Building Versius arms from supplied URDFs")
-    rigs = build(stage, args.versius_assets)
+    rigs = build(stage, args.versius_assets, material_cache=args.directory / "materials")
     robots = {arm: SimRobot("versius") for arm in rigs}
     robots["endoscope"].gripper_ranges = {}
     feedback, tools = {}, {}

@@ -89,14 +89,11 @@ Replace `PATIENT_IP` below with the patient hostname or IP.
 
 ### CMR Versius simulation
 
-Extract the supplied CMR URDF archive on the simulation host into this layout:
+Extract `CMR_Versius_All_Assets.zip` on the simulation host, preserving its folders:
 
-```text
-workspace/assets/versius/
-├── BSU.urdf
-├── needle_holder_platform.urdf
-├── fenestrated_grasper_platform.urdf
-└── meshes/
+```bash
+mkdir -p workspace/assets/versius
+unzip CMR_Versius_All_Assets.zip -d workspace/assets/versius
 ```
 
 Start the simulation node:

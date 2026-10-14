@@ -67,9 +67,10 @@ class Simulation:
         assets = []
         asset_args = []
         if self.environment == "versius":
+            from telesurgery_sim.environments.versius import asset_files
+
             source = workspace / "assets" / "versius"
-            if not (source / "BSU.urdf").is_file():
-                raise FileNotFoundError(f"Extract the supplied CMR Versius archive into {source}")
+            asset_files(source)
             assets = ["-v", f"{source}:/workspace/versius-assets:ro"]
             asset_args = ["--versius-assets", "/workspace/versius-assets"]
         with socket.socket() as reservation:
