@@ -344,7 +344,7 @@ class FeedbackPlayback(Playback):
 
 
 class Rendezvous:
-    """Patient-side start barrier. Each surgeon can prepare only its own arm."""
+    """Coordinate owned replay arms at their recorded handoff checkpoints."""
 
     def __init__(self, catalog, clock=time.monotonic):
         self.catalog, self.clock = catalog, clock
@@ -357,12 +357,15 @@ class Rendezvous:
         run = self.runs.get(key)
         now = self.clock()
         if run and (
-            all(m.get("done") for m in run["members"].values())
+            (
+                set(run["members"]) == run["roles"]
+                and all(m.get("done") for m in run["members"].values())
+            )
             or any(now - member["seen"] > 0.5 for member in run["members"].values())
         ):
             del self.runs[key]
             run = None
-        if run and run["started"] is not None:
+        if run and run["started"] is not None and not run["independent"]:
             raise RuntimeError("Stop the previous replay before preparing another")
         if run is None:
             run = {
@@ -370,6 +373,8 @@ class Rendezvous:
                 "members": {},
                 "started": None,
                 "barriers": manifest.get("barriers", 0),
+                "roles": set(manifest["streams"]),
+                "independent": manifest["version"] == 2,
             }
             self.runs[key] = run
         if role in run["members"]:
@@ -379,7 +384,11 @@ class Rendezvous:
         ):
             raise PermissionError("Use a separate surgeon for each Versius arm")
         run["members"][role] = {"peer": peer, "token": token, "key": robot["id"], "seen": now}
-        if set(run["members"]) == set(manifest["streams"]):
+        # Feedback-paced streams can begin independently. A surgeon joining
+        # later shares the existing handoff barriers, without restarting it.
+        if run["independent"] and run["started"] is None:
+            run["started"] = now
+        elif not run["independent"] and set(run["members"]) == run["roles"]:
             run["started"] = now + 1.0
         return run["id"]
 
@@ -414,12 +423,14 @@ class Rendezvous:
                 raise RuntimeError(
                     "Replay stopped because a participant lost control or disconnected"
                 )
+        joined = set(run["members"]) == run["roles"]
         return {
             "checkpoint": min(m.get("checkpoint", 0) for m in run["members"].values())
-            if run["started"] is not None
+            if joined and run["started"] is not None
             else 0,
             "elapsed": None if run["started"] is None else now - run["started"],
-            "done": run["started"] is not None
+            "done": joined
+            and run["started"] is not None
             and all(m.get("done") for m in run["members"].values()),
         }
 

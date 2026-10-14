@@ -95,7 +95,7 @@ class Control:
         self.error = ""
         return self._send("robot.acquire", {"id": robot})
 
-    def move(self, robot, mode, command, speed):
+    def move(self, robot, mode, command, speed, *, replay_run=None):
         if not self.ready or self.owned != robot:
             return False
         self.error = ""
@@ -109,6 +109,7 @@ class Control:
                 "mode": mode,
                 "command": command,
                 **({"speed_deg_s": speed} if speed is not None else {}),
+                **({"replay": True, "replay_run": replay_run} if replay_run is not None else {}),
             },
         )
 

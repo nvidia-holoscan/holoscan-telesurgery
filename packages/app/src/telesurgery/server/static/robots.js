@@ -898,7 +898,14 @@ export function robotControls(refresh, openMetrics) {
                 if (card.stop) card.stop.disabled = !allowed;
                 card.replay?.update(state.replays || [], card.mode?.value, allowed);
                 if (card.mode) card.mode.disabled = !!card.replay?.active;
-                if (card.reset) card.reset.disabled = !allowed || card.replay?.active || stepping.has(robot.id) || current?.id === robot.id;
+                if (card.reset) {
+                    card.reset.disabled = !allowed || !!robot.reset_scene_blocked || card.replay?.active || stepping.has(robot.id) || current?.id === robot.id;
+                    card.reset.title = ({
+                        "mira-sim": "Reset both arms and the needle.",
+                        "franka-sim": "Reset the arm and probe to their starting positions.",
+                        "versius-sim": "Reset all four arms and the needle.",
+                    }[robot.kind] || "Reset scene") + (robot.reset_scene_blocked ? ` ${robot.reset_scene_blocked}` : "");
+                }
                 if (allowed && robot.state?.stopping) refreshStop(card);
                 else {
                     clearTimeout(card.stopTimer);

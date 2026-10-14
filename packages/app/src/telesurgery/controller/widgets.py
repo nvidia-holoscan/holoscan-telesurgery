@@ -448,6 +448,19 @@ class Button(tk.Canvas):
                 capstyle="round",
                 joinstyle="round",
             )
+        elif self.icon == "replay":
+            self.create_polygon(
+                width / 2 - px(5),
+                px(9),
+                width / 2 + px(7),
+                px(17),
+                width / 2 - px(5),
+                px(25),
+                fill="",
+                outline=color,
+                width=px(2),
+                joinstyle="round",
+            )
         elif self.shortcut:
             left = (width - self.label_font.measure(self.text) - px(23)) / 2
             self.create_rectangle(
