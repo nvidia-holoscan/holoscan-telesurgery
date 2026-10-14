@@ -206,3 +206,62 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             gate.set()
             move_gate.set()
             await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["left", "right"])
+async def test_handoff_status_explains_which_arm_and_action_is_pending(role):
+    from telesurgery.controller.replay import Catalog
+
+    _, manifest = Catalog().recordings["versius/gamepad"]
+    message = manifest["handoff_waits"][role]["1"]
+    done = False
+
+    async def route(request):
+        path = urlsplit(request.request.url).path
+        if path == "/api/action":
+            result = (
+                {
+                    "request": None,
+                    "feedback_paced": True,
+                    "waiting_peer": True,
+                    "waiting_reason": message,
+                    "done": done,
+                    "elapsed": 0,
+                }
+                if request.request.post_data_json["action"] == "replay.read"
+                else True
+            )
+            await request.fulfill(json={"result": result})
+        elif path == "/":
+            await request.fulfill(
+                content_type="text/html",
+                body="""<script type="module">
+                    import {replayControls} from './static/replay.js';
+                    const role = new URLSearchParams(location.search).get('role');
+                    const controls = replayControls(
+                        {id:'node:'+role,kind:'versius-sim',simulation:true},
+                        async()=>{}, async()=>{throw Error('Unexpected motion')},
+                        async()=>{}, async()=>{}, ()=>{});
+                    controls.update([{id:'versius/gamepad',environment:'versius',
+                        device:'gamepad',streams:[role],task:'Handoff'}], 'gamepad', true);
+                    document.body.append(controls.button, controls.status);
+                </script>""",
+            )
+        else:
+            await request.fulfill(path=STATIC / path.removeprefix("/static/"))
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context()
+            await context.add_init_script("document.hasFocus = () => true")
+            await context.route("http://localhost:8777/**", route)
+            page = await context.new_page()
+            await page.goto(f"http://localhost:8777/?role={role}")
+            await page.get_by_role("button", name="Replay inputs", exact=True).click()
+            await expect(page.locator(".replay-status")).to_have_text(message)
+            done = True
+            await expect(page.locator(".replay-status")).to_have_text("Replay complete")
+        finally:
+            await browser.close()

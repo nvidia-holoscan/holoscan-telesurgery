@@ -193,5 +193,18 @@
     "sha256": "a0de8cac372313f52ef804d82951ec87ca7477df09be2f1dc51b5e462bb68810",
     "layout": "nvidia-cmr/assets/URDF",
     "embedded_glb_materials": true
+  },
+  "handoff_group": "versius-needle-handoff-v1",
+  "handoff_waits": {
+    "left": {
+      "1": "Needle ready · waiting for right-arm replay to join",
+      "2": "Holding needle · waiting for right arm to grasp it",
+      "3": "Left arm clear · waiting for right arm to be ready to lift"
+    },
+    "right": {
+      "1": "Waiting for left arm to pick up and lift the needle",
+      "2": "Right grasp ready · waiting for left arm to be ready to release",
+      "3": "Holding needle · waiting for left arm to withdraw"
+    }
   }
 }

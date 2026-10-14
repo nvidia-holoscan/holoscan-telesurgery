@@ -80,11 +80,19 @@ def test_native_replay_waits_sends_exact_run_and_holds_without_releasing(playbac
     read.side_effect = [
         reply(waiting=True),
         reply(waiting_peer=True),
+        reply(
+            waiting_peer=True, waiting_reason="Holding needle · waiting for right arm to grasp it"
+        ),
         reply(request=("grip", {"hand": -0.4}), speed_deg_s=8),
         reply(request=("release", {}), done=True, elapsed=12),
     ]
     pump(control, replay, lambda: replay.status == "Waiting for the other surgeon…")
     pump(control, replay, lambda: replay.status == "Waiting at handoff checkpoint…")
+    pump(
+        control,
+        replay,
+        lambda: replay.status == "Holding needle · waiting for right arm to grasp it",
+    )
     pump(control, replay, lambda: not replay.busy and control.ready)
     assert replay.status == "Replay complete"
     moves = [params for method, params in calls if method == "robot.move"]
