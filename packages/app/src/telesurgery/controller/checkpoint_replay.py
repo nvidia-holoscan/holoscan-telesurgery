@@ -107,6 +107,7 @@ class CheckpointPlayback(FeedbackPlayback):
         self.environment = robot["kind"].removesuffix("-sim")
         validate_checkpoints(self.rows, environment=self.environment, device=self.mapping.device)
         self.synchronized = 0
+        self.handoff_waits = manifest.get("handoff_waits", {}).get(self.role, {})
         self.feedback_at = None
         self.feedback_period = 0.05
 
@@ -207,7 +208,13 @@ class CheckpointPlayback(FeedbackPlayback):
         result["speed_deg_s"] = inputs.speed
         if "barrier" in row:
             if self.synchronized < row["barrier"]:
-                return {**result, "waiting_peer": True}
+                return {
+                    **result,
+                    "waiting_peer": True,
+                    "waiting_reason": self.handoff_waits.get(
+                        str(row["barrier"]), "Waiting at handoff checkpoint…"
+                    ),
+                }
             self.index += 1
             return {**result, "done": self.finished}
         if self.pending is None:

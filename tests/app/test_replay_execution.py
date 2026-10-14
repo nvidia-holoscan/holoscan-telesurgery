@@ -6,6 +6,7 @@
 import asyncio
 import gzip
 import json
+import shutil
 import threading
 import time
 
@@ -292,8 +293,11 @@ async def test_remote_feedback_replay_reaches_grip_goal_and_stops(
             thread.join(timeout=2)
 
 
+@pytest.mark.parametrize(
+    "left_device,right_device", [("haply", "haply"), ("gamepad", "keyboard"), ("keyboard", "haply")]
+)
 async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_barrier(
-    tmp_path, enrolled_node
+    tmp_path, enrolled_node, left_device, right_device
 ):
     robots = {role: SimRobot("versius") for role in ("left", "right")}
     for robot in robots.values():
@@ -330,11 +334,18 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
                 "device": "haply",
                 "barriers": 1,
                 "task": "Handoff fixture",
+                "handoff_group": "handoff-fixture",
                 "replay_verified": True,
                 "streams": streams,
             }
         )
     )
+    for device in ("keyboard", "gamepad"):
+        destination = directory.parent / device
+        shutil.copytree(directory, destination)
+        manifest = json.loads((destination / "manifest.json").read_text())
+        manifest["device"] = device
+        (destination / "manifest.json").write_text(json.dumps(manifest))
     with serve(handle, "127.0.0.1", 0) as controller:
         thread = threading.Thread(target=controller.serve_forever, daemon=True)
         thread.start()
@@ -383,7 +394,8 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
 
             async def play(role, surgeon):
                 params = {"id": f"{node}:{role}"}
-                await surgeon.action("replay.start", {**params, "recording": "versius/haply"})
+                device = left_device if role == "left" else right_device
+                await surgeon.action("replay.start", {**params, "recording": f"versius/{device}"})
                 while True:
                     await surgeon.action("replay.heartbeat", params)
                     result = await surgeon.action("replay.read", params)

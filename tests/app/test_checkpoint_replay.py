@@ -508,3 +508,56 @@ def test_joint_preparation_uses_advertised_step_bound_and_waits_for_completion(m
 def test_joint_preparation_rejects_incomplete_or_out_of_bounds_targets(target):
     with pytest.raises(ValueError):
         validate_checkpoints([row(joint_pose=target)], environment="versius", device="haply")
+
+
+@pytest.mark.parametrize("role", ["left", "right"])
+def test_handoff_messages_identify_the_other_arm_and_next_action(role):
+    from telesurgery.controller.replay import Catalog
+
+    _, manifest = Catalog().recordings["versius/gamepad"]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        manifest,
+        role,
+        [row(barrier=i) for i in (1, 2, 3)],
+        "run",
+    )
+    for checkpoint in (1, 2, 3):
+        waiting = playback.read(0, {})
+        assert waiting["waiting_peer"] and waiting["request"] is None
+        assert waiting["waiting_reason"] == manifest["handoff_waits"][role][str(checkpoint)]
+        assert ("right" if role == "left" else "left") in waiting["waiting_reason"]
+        playback.synchronized = checkpoint
+        playback.read(0, {})
+    assert playback.finished
+
+
+def test_grouped_device_recordings_share_handoff_geometry_and_starting_scene():
+    from telesurgery.controller.replay import Catalog, read_rows
+
+    definitions = []
+    for path, manifest in Catalog().recordings.values():
+        if manifest.get("handoff_group") != "versius-needle-handoff-v1":
+            continue
+        definitions.append(
+            {
+                "streams": {
+                    role: {
+                        "initial": spec["initial"],
+                        "checkpoints": [
+                            {
+                                k: v
+                                for k, v in row.items()
+                                if k not in {"keys", "buttons", "axes", "sample", "speeds", "t"}
+                            }
+                            for row in read_rows(path.parent / spec["file"])
+                        ],
+                    }
+                    for role, spec in manifest["streams"].items()
+                },
+                "barriers": manifest["barriers"],
+                "handoff_waits": manifest["handoff_waits"],
+            }
+        )
+    assert len(definitions) == 3
+    assert all(definition == definitions[0] for definition in definitions)

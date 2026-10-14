@@ -133,7 +133,7 @@ class NativeReplay:
             self.status = (
                 "Waiting for the other surgeon…"
                 if result.get("waiting")
-                else "Waiting at handoff checkpoint…"
+                else result.get("waiting_reason", "Waiting at handoff checkpoint…")
                 if result.get("waiting_peer")
                 else f"Replaying · {int(result['elapsed'])} s"
                 + (" · waiting for feedback" if result.get("waiting_feedback") else "")

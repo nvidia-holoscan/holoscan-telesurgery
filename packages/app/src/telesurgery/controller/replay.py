@@ -353,7 +353,10 @@ class Rendezvous:
     def join(self, recording, robot, peer, token):
         _, manifest, role = self.catalog.get(recording, robot)
         node = robot["id"].split(":", 1)[0]
-        key = node, recording
+        # Device recordings of one checkpoint task share the same handoff.
+        # Legacy timed streams still require their exact recording and clock.
+        group = manifest.get("handoff_group", recording) if manifest["version"] == 2 else recording
+        key = node, manifest["environment"], manifest["version"], group
         run = self.runs.get(key)
         now = self.clock()
         if run and (
@@ -367,6 +370,11 @@ class Rendezvous:
             run = None
         if run and run["started"] is not None and not run["independent"]:
             raise RuntimeError("Stop the previous replay before preparing another")
+        if run and (
+            run["roles"] != set(manifest["streams"])
+            or run["barriers"] != manifest.get("barriers", 0)
+        ):
+            raise ValueError("Recordings have incompatible handoff checkpoints")
         if run is None:
             run = {
                 "id": secrets.token_urlsafe(16),
