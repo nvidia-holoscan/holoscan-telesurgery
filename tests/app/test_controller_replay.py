@@ -193,9 +193,9 @@ async def test_checkpoint_cli_recomputes_only_after_known_admission_rejection(me
     if message.startswith("Robot input expired"):
         await replay.play_checkpoints(client, robot, rows, replay.time.monotonic())
         assert client.attempts == 2
-        assert client.renewals == 1
+        assert client.renewals >= 3
     else:
         with pytest.raises(RuntimeError, match=message):
             await replay.play_checkpoints(client, robot, rows, replay.time.monotonic())
         assert client.attempts == 1
-        assert client.renewals == 0
+        assert client.renewals == 1

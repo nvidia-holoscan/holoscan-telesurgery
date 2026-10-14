@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "environment": "franka",
   "device": "keyboard",
   "task": "Ultrasound probe approach and torso swipe",
-  "source": "Synthetic device input through production controller mappings",
+  "source": "Measured tool checkpoints from the reference keyboard approach and scan through production Cartesian controls; normalized for each selected device",
   "starting_scene": "Fresh Franka scene at Home",
-  "duration_s": 57.321339,
+  "duration_s": 60,
   "streams": {
     "franka": {
       "file": "franka.jsonl.gz",
@@ -26,17 +26,46 @@
     }
   },
   "observed": {
-    "contact_frames": 1945,
-    "total_frames": 1946,
-    "contact_fraction": 0.9994861253854059,
-    "span_m": 0.13092004470288351,
-    "peak_force_n": 6.149323955732427
+    "task": "Probe approach and torso scan checkpoints reached in Isaac physics",
+    "scan_endpoint_distance_m": 0.142783
   },
   "scan_start_s": 21.680080972029828,
   "replay_verified": true,
   "replayed": {
-    "device": "keyboard",
-    "contact_fraction": 1.0,
-    "span_m": 0.13317007109956186
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 80,
+    "elapsed_s": 80.85,
+    "checkpoints_reached": 18,
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false,
+    "measured_final_tool_pose": {
+      "frame": "base",
+      "end_effector": "TCP",
+      "position_m": [
+        0.6653413772583008,
+        0.0720672756433487,
+        0.15711897611618042
+      ],
+      "orientation_matrix": [
+        [
+          -0.9999816417694092,
+          0.00597646227106452,
+          0.001089254510588944
+        ],
+        [
+          0.005980192217975855,
+          0.9999761581420898,
+          0.0034538470208644867
+        ],
+        [
+          -0.001068586832843721,
+          0.0034602973610162735,
+          -0.9999935626983643
+        ]
+      ]
+    }
   }
 }

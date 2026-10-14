@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "environment": "versius",
   "device": "gamepad",
   "task": "Left pickup, handoff, left withdrawal and right lift",
-  "source": "Synthetic device input through production controller mappings and two surgeon sessions",
+  "source": "Reference two-surgeon keyboard handoff with raised joint preparation, calibrated grasp endpoints, measured tool/gripper feedback and handoff barriers; normalized for each selected device",
   "starting_scene": "Fresh Versius scene with both arms at Home and the needle on its raised rest",
-  "duration_s": 192.417296,
+  "duration_s": 192,
   "streams": {
     "left": {
       "file": "left.jsonl.gz",
@@ -13,42 +13,42 @@
       "initial": {
         "joints_deg": {
           "joints": [
-            -1.8323793871122263e-10,
-            -29.99944305419922,
-            9.078177098942319e-10,
-            119.99946594238281,
-            -2.2376701380721897e-08,
-            0.00011933662608498707,
-            2.769659224188814e-10,
-            90.00038146972656
+            -5.710609762843433e-10,
+            -29.999414443969727,
+            2.89102852768508e-09,
+            119.99850463867188,
+            -6.995272627818849e-08,
+            0.0001199285252369009,
+            8.298811637885706e-10,
+            90.00119018554688
           ]
         },
         "grippers": {
-          "hand": 0.9999998977286939
+          "hand": 1.0
         },
         "tool_pose": {
           "frame": "base",
           "end_effector": "TCP",
           "position_m": [
-            0.9210530519485474,
-            -1.8998980522155762e-07,
-            0.5295355319976807
+            0.9210524559020996,
+            -2.123415470123291e-07,
+            0.5295531153678894
           ],
           "orientation_matrix": [
             [
-              2.562999725341797e-06,
-              -2.528906861698488e-07,
+              -1.3589859008789062e-05,
+              -2.9488728614524007e-07,
               1.0
             ],
             [
-              -6.827789547969587e-06,
+              -2.1031273718108423e-05,
               -1.0,
-              -2.5287272364948876e-07
+              -2.9517286748159677e-07
             ],
             [
               1.0,
-              -6.827788638474885e-06,
-              -2.6226043701171875e-06
+              -2.103127735608723e-05,
+              1.3530254364013672e-05
             ]
           ]
         }
@@ -60,14 +60,14 @@
       "initial": {
         "joints_deg": {
           "joints": [
-            6.051295020625957e-10,
-            -29.999332427978516,
-            -3.1261400135207396e-09,
-            119.99817657470703,
-            7.438543292437316e-08,
-            0.00012009754573227838,
-            -8.428902575907671e-10,
-            89.99872589111328
+            5.948555537038658e-10,
+            -29.999431610107422,
+            -3.0764470970723323e-09,
+            119.99846649169922,
+            7.318870132166921e-08,
+            0.00011996221292065457,
+            -8.280931496074118e-10,
+            89.99874877929688
           ]
         },
         "grippers": {
@@ -77,25 +77,25 @@
           "frame": "base",
           "end_effector": "TCP",
           "position_m": [
-            0.921052873134613,
+            0.9210524559020996,
             -1.8998980522155762e-07,
-            0.5295581221580505
+            0.5295543670654297
           ],
           "orientation_matrix": [
             [
-              -1.7762184143066406e-05,
-              -2.53075995715335e-07,
-              1.0000001192092896
+              -1.4722347259521484e-05,
+              -2.530387064325623e-07,
+              1.0
             ],
             [
-              2.20006586459931e-05,
+              2.1663479856215417e-05,
               -1.0,
-              -2.5268218450946733e-07
+              -2.5271947379224e-07
             ],
             [
-              1.0000001192092896,
-              2.200065500801429e-05,
-              1.7762184143066406e-05
+              1.0,
+              2.166347621823661e-05,
+              1.4722347259521484e-05
             ]
           ]
         }
@@ -103,39 +103,46 @@
     }
   },
   "observed": {
-    "initial": [
-      6.984919309616089e-10,
-      -0.040000006556510925,
+    "needle_start_m": [
+      0.0,
+      -0.03999999910593033,
       0.5045161247253418
     ],
-    "left_lift": [
-      9.617162868380547e-05,
-      -0.04055607691407204,
-      0.5351659059524536
+    "needle_after_left_lift_m": [
+      -0.00019179657101631165,
+      -0.04038511961698532,
+      0.5352648496627808
     ],
-    "right_only": [
-      0.00019990629516541958,
-      -0.04056216776371002,
-      0.5367397665977478
+    "needle_final_m": [
+      0.00014695955906063318,
+      -0.04043767228722572,
+      0.5547344088554382
     ],
-    "right_lift": [
-      0.0004096283810213208,
-      -0.0406855009496212,
-      0.5563636422157288
-    ]
+    "left_lift_m": 0.030749,
+    "final_lift_m": 0.050218,
+    "retention_observed_s": 3,
+    "left_final_gripper": 0.5982702468956826,
+    "right_final_gripper": 0.11231367922906968
   },
   "replay_verified": true,
   "replayed": {
-    "device": "gamepad",
-    "needle": [
-      0.00011059781536459923,
-      -0.040610115975141525,
-      0.5552334189414978
-    ],
-    "right_tool": [
-      0.0035468769073486728,
-      -0.03482876360416412,
-      0.5588439297676087
-    ]
-  }
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 160,
+    "elapsed_s": 251.77,
+    "checkpoints_reached": {
+      "left": 18,
+      "right": 15
+    },
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false
+  },
+  "barriers": 3,
+  "barrier_labels": [
+    "Left pickup and lift complete",
+    "Right grasp complete before left release",
+    "Left withdrawal complete before right lift"
+  ]
 }

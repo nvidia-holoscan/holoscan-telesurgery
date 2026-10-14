@@ -10,26 +10,33 @@ from urllib.parse import urlsplit
 import pytest
 from playwright.async_api import async_playwright, expect
 from telesurgery_robots.adapters.base import controls
-from telesurgery_robots.adapters.simulation import FrankaSimulation, MiraSimulation
+from telesurgery_robots.adapters.simulation import (
+    FrankaSimulation,
+    MiraSimulation,
+    VersiusSimulation,
+)
 
 STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
 @pytest.mark.parametrize("ending", ["escape", "complete", "blur", "hidden", "error"])
 @pytest.mark.parametrize(
     "environment,name,adapter,width",
     [
         ("franka", "Franka", FrankaSimulation, 1280),
+        ("versius", "Versius left", VersiusSimulation, 1280),
         ("mira", "MIRA", MiraSimulation, 1280),
         ("mira", "MIRA", MiraSimulation, 360),
     ],
 )
 async def test_replay_requires_matching_recording_and_ownership_and_escape_discards_reply(
-    environment, name, adapter, width, ending, tmp_path
+    environment, name, adapter, width, ending, device, tmp_path
 ):
+    role = "left" if environment == "versius" else environment
     robot = {
-        "id": f"node:{environment}",
+        "id": f"node:{role}",
         "name": name,
         "kind": f"{environment}-sim",
         "simulation": True,
@@ -40,6 +47,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
     state = {
         "role": "surgeon",
         "sdk": "5",
+        "haply_available": True,
         "selected": [],
         "native_views": {},
         "native_controller": {"status": "closed"},
@@ -108,7 +116,9 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 bypass_csp=True, viewport={"width": width, "height": 900}
             )
             await context.add_init_script(
-                "document.hasFocus = () => true; navigator.getGamepads = () => [];"
+                "document.hasFocus = () => true; navigator.getGamepads = () => [{"
+                "id:'Test standard gamepad', index:0, mapping:'standard', connected:true,"
+                "axes:[0,0,0,0], buttons:Array.from({length:17},()=>({pressed:false,value:0}))}];"
             )
             await context.route("http://localhost:8777/**", route)
             page = await context.new_page()
@@ -118,16 +128,18 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await expect(control).to_be_hidden()
             state["replays"] = [
                 {
-                    "id": f"{environment}/keyboard",
+                    "id": f"{environment}/{device}",
                     "environment": environment,
-                    "device": "keyboard",
+                    "device": device,
                     "task": "Scan",
-                    "streams": [environment],
+                    "streams": [role],
                 }
             ]
             await page.wait_for_timeout(1100)
             await expect(control).to_be_hidden()
             await page.get_by_role("button", name="Acquire control", exact=True).click()
+            selector = page.get_by_label(f"{name} input", exact=True)
+            await selector.select_option("0" if device == "gamepad" else device)
             await expect(control).to_be_visible()
             await control.click()
             await asyncio.wait_for(reading.wait(), 3)

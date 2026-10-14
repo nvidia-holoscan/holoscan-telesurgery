@@ -162,3 +162,244 @@ def test_display_progress_does_not_reset_between_scheduled_commands():
     between = playback.read(now[0], state([0, 0, 0, 0, 5]))
     assert between["elapsed"] == halfway["elapsed"]
     assert not between["waiting_feedback"]
+
+
+def cartesian_robot(environment):
+    from telesurgery_robots.adapters.simulation import FrankaSimulation, VersiusSimulation
+
+    adapter = (FrankaSimulation if environment == "franka" else VersiusSimulation)(
+        {"uri": "unused"}
+    )
+    return {"kind": environment + "-sim", "controls": controls(adapter, {})}
+
+
+def tool_state(position, *, rotation=None, velocity=0):
+    return {
+        "tool_pose": {
+            "frame": "base",
+            "end_effector": "TCP",
+            "position_m": position,
+            "orientation_matrix": rotation or [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        },
+        "velocity_deg_s": {"joints": [velocity] * 7},
+        "control_active": velocity != 0,
+    }
+
+
+@pytest.mark.parametrize("environment", ["franka", "versius"])
+@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
+@pytest.mark.parametrize("delay", [0.05, 0.12, 0.24])
+def test_cartesian_checkpoints_follow_measured_pose_under_delayed_delivery(
+    environment, device, delay
+):
+    import numpy as np
+
+    now = [0.0]
+    goal = tool_state([0.04, -0.02, 0.01])["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot(environment),
+        {"device": device},
+        "arm",
+        [row(tool_pose=goal)],
+        "run",
+        lambda: now[0],
+    )
+    actual = np.zeros(3)
+    for _ in range(400):
+        result = playback.read(now[0], tool_state(actual.tolist()))
+        if result["done"]:
+            assert np.linalg.norm(actual - goal["position_m"]) <= 0.00025
+            break
+        mode, command = result["request"]
+        assert mode == "jog"
+        assert np.linalg.norm(command["translation"]) <= 1 + 1e-9
+        assert np.linalg.norm(command["rotation"]) <= 1 + 1e-9
+        playback.validate_request(mode, command)
+        # Delivery/servo speed changes do not change the recorded destination.
+        actual += np.array(command["translation"]) * 0.1 * delay * 0.7
+        playback.acknowledge(tool_state(actual.tolist()))
+        now[0] += delay
+    else:
+        pytest.fail("Tool checkpoint was not reached")
+
+
+def test_cartesian_arrival_waits_for_braking_and_corrects_stop_drift():
+    now = [0.0]
+    goal = tool_state([0.01, 0, 0])["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot("franka"),
+        {"device": "keyboard"},
+        "franka",
+        [row(tool_pose=goal), row(hold_s=1)],
+        "run",
+        lambda: now[0],
+    )
+    moving = tool_state([0.01, 0, 0], velocity=1)
+    assert playback.read(0, moving)["request"] == ("release", {})
+    assert playback.index == 0
+    now[0] = 0.1
+    result = playback.read(0.1, tool_state([0.011, 0, 0]))
+    assert result["request"][1]["translation"][0] < 0
+    assert playback.index == 0
+
+
+def test_stalled_tool_checkpoint_times_out_and_invalid_feedback_is_rejected():
+    now = [0.0]
+    playback = CheckpointPlayback(
+        cartesian_robot("franka"),
+        {"device": "haply"},
+        "franka",
+        [row(tool_pose=tool_state([0.1, 0, 0])["tool_pose"])],
+        "run",
+        lambda: now[0],
+    )
+    with pytest.raises(ValueError, match="tool pose feedback"):
+        playback.read(0, {})
+    for _ in range(21):
+        playback.read(now[0], tool_state([0, 0, 0]))
+        playback.acknowledge({})
+        now[0] += 0.25
+    with pytest.raises(TimeoutError, match="checkpoint"):
+        playback.read(now[0], tool_state([0, 0, 0]))
+
+
+def test_handoff_waits_for_peer_checkpoint_without_using_recorded_time():
+    now = [0.0]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "gamepad"},
+        "left",
+        [row(barrier=1), row(grip={"hand": 1})],
+        "run",
+        lambda: now[0],
+    )
+    for _ in range(50):
+        result = playback.read(1000, {})
+        assert result.get("waiting_peer") and not result["request"]
+        assert playback.checkpoint == 1 and playback.index == 0
+        now[0] += 0.2
+    playback.synchronized = 1
+    playback.read(1000, {})
+    assert playback.index == 1
+
+
+@pytest.mark.parametrize("environment", ["mira", "franka", "versius"])
+def test_catalog_has_checkpoints_for_every_device(environment):
+    from telesurgery.controller.replay import Catalog, read_rows
+
+    catalog = Catalog()
+    for device in ("keyboard", "gamepad", "haply"):
+        path, manifest = catalog.recordings[f"{environment}/{device}"]
+        assert manifest["version"] == 2
+        for spec in manifest["streams"].values():
+            validate_checkpoints(
+                read_rows(path.parent / spec["file"]), environment=environment, device=device
+            )
+
+
+def test_mira_rebases_after_delayed_delivery_outlives_jog_watchdog():
+    now = [0.0]
+    playback = player([row(pose={"right": [1, 0, 0, 0, 0]})], now)
+    feedback = state([0, 0, 0, 0, 0])
+    feedback.update(control_active=False)
+    feedback["cartesian_target_mm_deg"]["right"][0] = 1
+    result = playback.read(0, feedback)
+    # The next ordinary jog starts from measured joints after the watchdog has
+    # held the robot. The old drive target is not pending travel anymore.
+    assert result["request"][1]["right"][0] == 1
+
+
+def test_mira_reobserves_pending_travel_before_final_correction_and_grasp():
+    now = [0.0]
+    playback = player([row(pose={"right": [1, 0, 0, 0, 0]}), row(grip={"right": 0})], now)
+    feedback = state([0.88, 0, 0, 0, 0])
+    feedback["control_active"] = True
+    feedback["cartesian_target_mm_deg"]["right"][0] = 1
+    # At a high RTT the pending target may expire before the next jog arrives.
+    # Hold and re-observe rather than subtracting travel that will be discarded.
+    assert playback.read(0, feedback)["request"] == ("release", {})
+    assert playback.index == 0
+    now[0] = 0.2
+    feedback["control_active"] = False
+    correction = playback.read(0.2, feedback)["request"]
+    assert correction[0] == "cartesian"
+    assert correction[1]["right"][0] == pytest.approx(0.12)
+    playback.acknowledge(feedback)
+    now[0] = 0.4
+    feedback = state([1, 0, 0, 0, 0])
+    feedback["control_active"] = True
+    assert playback.read(0.4, feedback)["request"] == ("release", {})
+    assert playback.index == 1
+
+
+@pytest.mark.parametrize("angle", [0.7, 3.141592653589793])
+def test_tool_orientation_converges_with_delayed_feedback_including_half_turn(angle):
+    import numpy as np
+
+    def rotation(theta):
+        return np.array(
+            [[np.cos(theta), -np.sin(theta), 0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]]
+        )
+
+    now = [0.0]
+    goal = tool_state([0, 0, 0], rotation=rotation(angle).tolist())["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "haply"},
+        "left",
+        [row(tool_pose=goal)],
+        "run",
+        lambda: now[0],
+    )
+    actual = 0.0
+    for _ in range(400):
+        result = playback.read(now[0], tool_state([0, 0, 0], rotation=rotation(actual).tolist()))
+        if result["done"]:
+            assert np.linalg.norm(rotation(actual) - rotation(angle)) < 0.008
+            break
+        mode, command = result["request"]
+        assert mode == "jog"
+        assert command["translation"] == [0, 0, 0]
+        assert np.linalg.norm(command["rotation"]) <= 1 + 1e-9
+        actual += command["rotation"][2] * np.deg2rad(30) * 0.2 * 0.7
+        playback.acknowledge({})
+        now[0] += 0.2
+    else:
+        pytest.fail("Orientation checkpoint was not reached")
+
+
+def test_versius_joint_preparation_waits_for_measured_arrival_and_settles():
+    now = [0.0]
+    goal = [0, -40, 10, 100, -20, 20, -20, 110]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "gamepad"},
+        "left",
+        [row(joint_pose=goal)],
+        "run",
+        lambda: now[0],
+    )
+    feedback = {
+        "joints_deg": {"joints": [v + 1 for v in goal]},
+        "targets_deg": {"joints": [v + 1 for v in goal]},
+        "control_active": True,
+    }
+    result = playback.read(0, feedback)
+    assert result["request"] == ("step", {"joints": [-1] * 8})
+    playback.acknowledge({})
+    now[0] = 0.1
+    assert playback.read(0.1, feedback)["waiting_feedback"]
+    now[0] = 0.2
+    feedback["control_active"] = False
+    feedback["targets_deg"]["joints"] = goal
+    assert playback.read(0.2, feedback)["request"] is None
+    assert not playback.finished
+    now[0] = 0.3
+    feedback["joints_deg"]["joints"] = goal
+    assert playback.read(0.3, feedback)["done"]
+
+
+@pytest.mark.parametrize("target", [[0] * 7, [0] * 9, [0, -40, 10, 100, -20, 30, -20, 110]])
+def test_joint_preparation_rejects_incomplete_or_out_of_bounds_targets(target):
+    with pytest.raises(ValueError):
+        validate_checkpoints([row(joint_pose=target)], environment="versius", device="haply")

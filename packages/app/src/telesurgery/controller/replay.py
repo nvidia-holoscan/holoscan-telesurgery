@@ -104,11 +104,6 @@ class Catalog:
                 continue
             if not all((path.parent / s["file"]).is_file() for s in manifest["streams"].values()):
                 continue
-            if manifest["version"] == 2 and (manifest["environment"], manifest["device"]) != (
-                "mira",
-                "keyboard",
-            ):
-                continue
             key = str(path.parent.relative_to(root))
             self.recordings[key] = path, manifest
 
@@ -370,7 +365,12 @@ class Rendezvous:
         if run and run["started"] is not None:
             raise RuntimeError("Stop the previous replay before preparing another")
         if run is None:
-            run = {"id": secrets.token_urlsafe(16), "members": {}, "started": None}
+            run = {
+                "id": secrets.token_urlsafe(16),
+                "members": {},
+                "started": None,
+                "barriers": manifest.get("barriers", 0),
+            }
             self.runs[key] = run
         if role in run["members"]:
             raise RuntimeError("This arm is already ready for replay")
@@ -383,7 +383,7 @@ class Rendezvous:
             run["started"] = now + 1.0
         return run["id"]
 
-    def poll(self, run_id, peer, key, owners, *, finished=False):
+    def poll(self, run_id, peer, key, owners, *, finished=False, checkpoint=None):
         found = next(((k, v) for k, v in self.runs.items() if v["id"] == run_id), None)
         if found is None:
             raise RuntimeError("Replay stopped")
@@ -393,6 +393,13 @@ class Rendezvous:
             raise PermissionError("This replay belongs to another surgeon")
         now = self.clock()
         member["seen"] = now
+        if checkpoint is not None:
+            if (
+                type(checkpoint) is not int
+                or not member.get("checkpoint", 0) <= checkpoint <= run["barriers"]
+            ):
+                raise ValueError("Invalid replay handoff checkpoint")
+            member["checkpoint"] = checkpoint
         member["done"] = finished
         for item in run["members"].values():
             owner = owners.get(item["key"])
@@ -408,6 +415,9 @@ class Rendezvous:
                     "Replay stopped because a participant lost control or disconnected"
                 )
         return {
+            "checkpoint": min(m.get("checkpoint", 0) for m in run["members"].values())
+            if run["started"] is not None
+            else 0,
             "elapsed": None if run["started"] is None else now - run["started"],
             "done": run["started"] is not None
             and all(m.get("done") for m in run["members"].values()),

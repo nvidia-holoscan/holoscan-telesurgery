@@ -110,25 +110,43 @@ async def play(surgeon, robot, rows, device, environment, start):
             raise RuntimeError(surgeon.state.get("stop_reason", "Robot stopped"))
 
 
-async def play_checkpoints(surgeon, robot, rows, start):
+async def play_checkpoints(surgeon, robot, rows, start, device="keyboard", checkpoints=None):
     await asyncio.sleep(max(0, start - time.monotonic()))
-    playback = CheckpointPlayback(robot, {"device": "keyboard"}, "mira", rows, "cli")
-    while True:
-        result = playback.read(time.monotonic() - start, surgeon.state)
-        try:
-            await surgeon.send(result["request"], playback.mapping.inputs)
-        except RuntimeError as exc:
-            if not result["request"] or str(exc) != "Robot input expired in transit":
-                raise
-            # Admission rejection confirms no motion was dispatched. Refresh
-            # feedback and recompute; an unknown command outcome still fails.
+    role = robot.get("id", "mira").split(":")[-1]
+    playback = CheckpointPlayback(robot, {"device": device}, role, rows, "cli")
+
+    async def heartbeat():
+        while True:
+            playback.read_at = playback.clock()
+            await asyncio.sleep(0.1)
+
+    alive = asyncio.create_task(heartbeat())
+    try:
+        while True:
+            if checkpoints is not None:
+                checkpoints[role] = playback.checkpoint
+                playback.synchronized = min(checkpoints.values())
+            # Accepted targets are not measured arrival. Query after the last
+            # command, including when its acknowledgement took a full RTT.
             await surgeon.action("robot.renew")
-            playback.read_at = time.monotonic()
-        if result["request"]:
-            playback.acknowledge(surgeon.state)
-        if result["done"]:
-            return
-        await asyncio.sleep(0.01)
+            result = playback.read(time.monotonic() - start, surgeon.state)
+            try:
+                if result["request"]:
+                    await surgeon.send(result["request"], playback.mapping.inputs)
+            except RuntimeError as exc:
+                if not result["request"] or str(exc) != "Robot input expired in transit":
+                    raise
+                # Admission rejection confirms no motion was dispatched. Refresh
+                # feedback and recompute; an unknown command outcome still fails.
+                await surgeon.action("robot.renew")
+            if result["request"]:
+                playback.acknowledge(surgeon.state)
+            if result["done"]:
+                return
+            await asyncio.sleep(0.01)
+    finally:
+        alive.cancel()
+        await asyncio.gather(alive, return_exceptions=True)
 
 
 async def run(manifest_path, bindings):
@@ -143,8 +161,6 @@ async def run(manifest_path, bindings):
     if device not in {"keyboard", "gamepad", "haply"}:
         raise ValueError("Unknown input device")
     checkpoint = manifest["version"] == 2
-    if checkpoint and (environment, device) != ("mira", "keyboard"):
-        raise ValueError("Pose checkpoints require MIRA simulation keyboard inputs")
     roles = manifest["streams"]
     if len(bindings) != len(roles) or {b[0] for b in bindings} != set(roles):
         raise ValueError(f"Bind each recorded stream exactly once: {', '.join(roles)}")
@@ -154,7 +170,12 @@ async def run(manifest_path, bindings):
     rows = {role: read_rows(manifest_path.parent / spec["file"]) for role, spec in roles.items()}
     if checkpoint:
         for stream_rows in rows.values():
-            validate_checkpoints(stream_rows)
+            validate_checkpoints(stream_rows, environment=environment, device=device)
+            if max((row.get("barrier", 0) for row in stream_rows), default=0) != manifest.get(
+                "barriers", 0
+            ):
+                raise ValueError("Replay stream has incomplete handoff barriers")
+    checkpoints = {role: 0 for role in roles}
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as http:
         surgeons = {role: Surgeon(http, url, robot) for role, url, robot in bindings}
         inventory = {
@@ -172,7 +193,9 @@ async def run(manifest_path, bindings):
                 async def stream(role, surgeon):
                     renew = asyncio.create_task(surgeon.renew())
                     motion = asyncio.create_task(
-                        play_checkpoints(surgeon, inventory[role], rows[role], start)
+                        play_checkpoints(
+                            surgeon, inventory[role], rows[role], start, device, checkpoints
+                        )
                         if checkpoint
                         else play(surgeon, inventory[role], rows[role], device, environment, start)
                     )

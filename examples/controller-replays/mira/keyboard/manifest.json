@@ -70,5 +70,30 @@
         -0.11646360158920288
       ]
     }
+  },
+  "regression_replayed": {
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 80,
+    "elapsed_s": 170.75,
+    "checkpoints_reached": {
+      "mira": 8
+    },
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false,
+    "needle_start_cm": [
+      50.211509704589844,
+      102.1107177734375,
+      0.006087802350521088
+    ],
+    "needle_final_cm": [
+      49.888851165771484,
+      107.77362823486328,
+      0.23458442091941833
+    ],
+    "needle_lift_cm": 5.6629,
+    "retention_observed_s": 3
   }
 }

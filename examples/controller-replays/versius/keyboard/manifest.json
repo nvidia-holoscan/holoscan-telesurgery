@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "environment": "versius",
   "device": "keyboard",
   "task": "Left pickup, handoff, left withdrawal and right lift",
-  "source": "Synthetic device input through production controller mappings and two surgeon sessions",
+  "source": "Reference two-surgeon keyboard handoff with raised joint preparation, calibrated grasp endpoints, measured tool/gripper feedback and handoff barriers; normalized for each selected device",
   "starting_scene": "Fresh Versius scene with both arms at Home and the needle on its raised rest",
-  "duration_s": 191.15892,
+  "duration_s": 192,
   "streams": {
     "left": {
       "file": "left.jsonl.gz",
@@ -103,35 +103,46 @@
     }
   },
   "observed": {
-    "initial": [
+    "needle_start_m": [
       1.3969838619232178e-09,
-      -0.04000000283122063,
-      0.504516065120697
+      -0.03999999910593033,
+      0.5045161247253418
     ],
-    "left_lift": [
-      4.9842288717627525e-05,
-      -0.040515970438718796,
-      0.535110354423523
+    "needle_after_left_lift_m": [
+      -6.106344517320395e-05,
+      -0.040633197873830795,
+      0.5359395742416382
     ],
-    "right_only": [
-      0.0003628176636993885,
-      -0.04070868715643883,
-      0.5361161231994629
+    "needle_final_m": [
+      0.00031752779614180326,
+      -0.040601328015327454,
+      0.5550094842910767
     ],
-    "right_lift": [
-      0.0005626555066555738,
-      -0.04081667214632034,
-      0.5557443499565125
-    ]
+    "left_lift_m": 0.031423,
+    "final_lift_m": 0.050493,
+    "retention_observed_s": 3,
+    "left_final_gripper": 0.5868380226241118,
+    "right_final_gripper": 0.11433018281061857
   },
   "replay_verified": true,
   "replayed": {
-    "device": "keyboard",
-    "needle": [
-      0.00015307869762182236,
-      -0.040484387427568436,
-      0.5544686317443848
-    ],
-    "interface": "two surgeon dashboards"
-  }
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
+    "added_round_trip_delay_ms": 80,
+    "elapsed_s": 207.14,
+    "checkpoints_reached": {
+      "left": 18,
+      "right": 15
+    },
+    "post_replay_hold_s": 3,
+    "cameras_enabled": false
+  },
+  "barriers": 3,
+  "barrier_labels": [
+    "Left pickup and lift complete",
+    "Right grasp complete before left release",
+    "Left withdrawal complete before right lift"
+  ]
 }

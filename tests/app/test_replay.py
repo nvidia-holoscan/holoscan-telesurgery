@@ -144,3 +144,24 @@ def test_playback_preserves_each_button_edge_when_two_samples_are_due():
     assert movement["request"][0] == "jog"
     assert not movement["done"]
     assert instance.read(0.12, {})["request"] == ("release", {})
+
+
+def test_handoff_barrier_tracks_each_owner_and_survives_motion_acknowledgements(catalog):
+    path, manifest = catalog.recordings["versius/keyboard"]
+    manifest["barriers"] = 2
+    barrier = Rendezvous(catalog)
+    owners = {f"node:{role}": Ownership() for role in ("left", "right")}
+    for role, peer in (("left", "X"), ("right", "Y")):
+        run = barrier.join(
+            "versius/keyboard", robot(role), peer, owners[f"node:{role}"].acquire(peer)
+        )
+    assert barrier.poll(run, "X", "node:left", owners, checkpoint=1)["checkpoint"] == 0
+    assert barrier.poll(run, "Y", "node:right", owners, checkpoint=1)["checkpoint"] == 1
+    # A normal robot.move also polls the barrier, without declaring a new stage.
+    assert barrier.poll(run, "X", "node:left", owners)["checkpoint"] == 1
+    assert barrier.poll(run, "Y", "node:right", owners, checkpoint=2)["checkpoint"] == 1
+    with pytest.raises(ValueError, match="checkpoint"):
+        barrier.poll(run, "X", "node:left", owners, checkpoint=0)
+    with pytest.raises(PermissionError):
+        barrier.poll(run, "X", "node:right", owners, checkpoint=2)
+    assert barrier.poll(run, "X", "node:left", owners, checkpoint=2)["checkpoint"] == 2
