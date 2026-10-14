@@ -8,23 +8,41 @@ from pathlib import Path
 
 import numpy as np
 from telesurgery_robots.versius import HOME, LIMITS
+from telesurgery_sim.environments.materials import bind_mesh_material
 
 
-def build(stage, directory):
+def asset_files(directory):
+    """Locate either the complete vendor archive or the earlier flat URDF bundle."""
+    directory = Path(directory)
+    names = ("BSU.urdf", "needle_holder_platform.urdf", "fenestrated_grasper_platform.urdf")
+    for root in (directory / "nvidia-cmr/assets/URDF", directory / "URDF", directory):
+        if (root / "IBSU/BSU.urdf").is_file():
+            files = {
+                name: root / ("IBSU" if name == "BSU.urdf" else "Instruments") / name
+                for name in names
+            }
+            break
+    else:
+        files = {name: directory / name for name in names}
+    for path in files.values():
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Extract the supplied CMR Versius archive into {directory}: missing {path}"
+            )
+    return files
+
+
+def build(stage, directory, *, material_cache):
     import trimesh
     from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics, UsdShade, Vt
 
     directory = Path(directory)
+    sources = asset_files(directory)
     material = UsdShade.Material.Define(stage, "/World/JawContactMaterial")
     physics = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
     physics.CreateStaticFrictionAttr(1.0)
     physics.CreateDynamicFrictionAttr(0.8)
     physics.CreateRestitutionAttr(0)
-    for name in ("BSU.urdf", "needle_holder_platform.urdf", "fenestrated_grasper_platform.urdf"):
-        if not (directory / name).is_file():
-            raise FileNotFoundError(
-                f"Extract the supplied CMR Versius URDF archive into {directory}: missing {name}"
-            )
 
     def rotation(rpy):
         r, p, y = np.rad2deg(rpy)
@@ -54,7 +72,8 @@ def build(stage, directory):
 
     def model(root, source, initial, *, parent=None, attachment=None):
         # Only locally installed vendor URDFs are accepted; no network XML input.
-        xml = ET.parse(directory / source).getroot()  # nosec B314
+        source = sources[source]
+        xml = ET.parse(source).getroot()  # nosec B314
         joints = list(xml.findall("joint"))
         transforms = {"world": Gf.Matrix4d(1)}
         # URDF's frame-only links remain in the chain, including zero-mass J7.
@@ -94,7 +113,7 @@ def build(stage, directory):
                 base = f"{root}/{name}/visual_{index}"
                 place(base, origin(visual.find("origin")))
                 mesh = visual.find("geometry/mesh")
-                path = (directory / mesh.get("filename")).resolve()
+                path = (source.parent / mesh.get("filename")).resolve()
                 if not path.is_relative_to(directory.resolve()):
                     raise ValueError(
                         "Versius mesh path must stay within the supplied asset directory"
@@ -119,7 +138,7 @@ def build(stage, directory):
                         Vt.IntArray.FromNumpy(np.asarray(data.faces, np.int32).ravel())
                     )
                     surface.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
-                    surface.CreateDisplayColorAttr([Gf.Vec3f(*rgba[:3])])
+                    bind_mesh_material(stage, surface, data, material_cache, rgba)
                     surface.CreateNormalsAttr(
                         Vt.Vec3fArray.FromNumpy(np.asarray(data.vertex_normals, np.float32))
                     )
