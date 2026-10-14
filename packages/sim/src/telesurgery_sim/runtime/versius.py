@@ -33,6 +33,7 @@ def run(app, args):
     from telesurgery_sim.environments.versius import build
     from telesurgery_sim.runtime.feedback import JointFeedback
     from telesurgery_sim.runtime.franka import FrankaFeedback
+    from telesurgery_sim.runtime.reset import SceneReset
     from websockets.sync.server import serve
 
     context = omni.usd.get_context()
@@ -167,6 +168,21 @@ def run(app, args):
         from omni.kit.viewport.utility import get_active_viewport
 
         get_active_viewport().camera_path = manifests[0]["prim_path"]
+    scene_resets = {
+        arm: SceneReset(
+            stage,
+            feedback[arm],
+            rig["drives"],
+            robots[arm].pose,
+            ["/World/TrainingNeedle"] if arm == "left" else [],
+            joint_positions={
+                str(rig["fingers"][name].GetPath()): np.deg2rad(sign * 35)
+                for name, sign in (("yoke_jaw_left", 1), ("yoke_jaw_right", -1))
+                if name in rig["fingers"]
+            },
+        )
+        for arm, rig in rigs.items()
+    }
     (args.directory / "progress").write_text("Warming up Versius camera rendering")
     lock, pending = threading.Lock(), queue.Queue(maxsize=8)
     observed, sequence, commands = time.monotonic(), 0, 0
@@ -183,9 +199,11 @@ def run(app, args):
                 if request.get("method") == "get_scene_state":
                     with lock:
                         result = dict(scene_state)
-                elif request.get("method") == "camera.configure":
+                elif request.get("method") in {"camera.configure", "reset_scene"}:
+                    if request["method"] == "reset_scene" and arm not in robots:
+                        raise ValueError("Choose a Versius arm endpoint")
                     future = Future()
-                    pending.put_nowait((time.monotonic(), request["params"], future))
+                    pending.put_nowait((time.monotonic(), arm, request, future))
                     result = future.result(timeout=10)
                 else:
                     if arm not in robots:
@@ -219,12 +237,34 @@ def run(app, args):
     try:
         while app.is_running() and not (args.directory / "stop").exists():
             started = time.monotonic()
+            reset_replies = []
             for _ in range(8):
                 try:
-                    received, params, future = pending.get_nowait()
+                    received, arm, request, future = pending.get_nowait()
                 except queue.Empty:
                     break
                 try:
+                    params = request.get("params", {})
+                    if request["method"] == "reset_scene":
+                        if time.monotonic() - received > 1:
+                            raise ValueError("Expired simulator command")
+                        if params:
+                            raise ValueError(
+                                "Scene reset uses the initial environment without parameters"
+                            )
+                        with lock:
+                            for robot in robots.values():
+                                robot.apply({"method": "hold"})
+                            try:
+                                for reset in scene_resets.values():
+                                    reset.restore()
+                            except (AssertionError, RuntimeError) as exc:
+                                raise ValueError(f"Scene reset failed: {exc}") from exc
+                            robots = {key: SimRobot("versius") for key in rigs}
+                            robots["endoscope"].gripper_ranges = {}
+                            commands += 1
+                        reset_replies.append((future, arm))
+                        continue
                     size = (params["width"], params["height"])
                     if time.monotonic() - received > 5 or size not in RESOLUTIONS:
                         raise ValueError("Expired or unsupported camera configuration")
@@ -281,6 +321,8 @@ def run(app, args):
                     .numpy()[0]
                     .tolist()
                 }
+                for future, arm in reset_replies:
+                    future.set_result(robots[arm].apply({"method": "get_state"}))
             for index, camera in enumerate(cameras):
                 pixels, _ = camera.get_data("rgb")
                 if pixels is None:

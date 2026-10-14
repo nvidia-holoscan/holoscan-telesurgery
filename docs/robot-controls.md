@@ -4,6 +4,8 @@ The patient connects robots and grants surgeon access. Choose **Acquire** to tak
 
 The surgeon lists connected robots automatically. Use the panel's pop-out icon to open the native controller beside Holoviz; keep that window focused for keyboard or gamepad input. The icon changes to **Dock robot controls**; click it or close the window to return controls and speed settings to the dashboard. **Pop out all**, beside Fullscreen, opens selected live or stale streams in Holoviz and opens the native robot controller. **Dock all** returns browser-compatible views and controls to the dashboard and closes the native windows. You can also launch controls with `./run.sh controller --server http://127.0.0.1:8002`. The window runs on the surgeon service's desktop, using its existing approved session; native setup installs Python Tk and SDL2 for keyboard and gamepad input.
 
+Every simulation has a **Reset scene** icon beside Home in the browser and native controller. After acquiring control, use it to restore the robot and movable task objects to their starting positions and clear motion. The node and camera streams stay running. In CMR Versius, resetting from any arm restores all four arms and the shared needle. Haply stays paused until you press Start again.
+
 ## Keyboard and gamepad
 
 **Arm-base directions:** Franka and CMR tool movement uses the selected arm’s fixed base: forward is +X, left is +Y, and up is +Z. These directions stay fixed when the tool or camera rotates. CMR arms face different directions, so the same input can move opposing arms in opposite directions on screen. “Left arm” identifies an arm; it does not define the movement direction. MIRA tool mode uses its robot-base X/Y/Z axes; joint mode increases or decreases the labeled joint.
@@ -117,7 +119,7 @@ Click **Connect** on the patient dashboard. Physical tool jogging uses the confi
 
 The simulation starts with both tool tips approximately 5 cm above the suture pad and 10 cm apart. **Home** returns to this simulation pose. The mounted endoscope aims at the pad center, framing the needle and both tools. The needle rests on a raised support above the pad for left-arm pickup and lift practice; physical MIRA retains its vendor home pose.
 
-**Reset scene**, beside Home in the browser and native controller, restores the MIRA simulation robot and needle to their starting positions and clears motion. Use it when the needle falls off the pad; the node and camera streams stay running. Haply stays stopped until you press Start again. The square **Stop** icon stops motion; **Esc** does the same.
+Use **Reset scene** when the needle falls off the pad. The square **Stop** icon stops motion; **Esc** does the same.
 
 **Home** on physical MIRA returns both arms to `[15.7, 80.6, 45, 98.9]°`, resets tool roll to 0°, and closes both grippers. Both physical and simulated Home block manual input until arms and tools reach their targets; **Stop** cancels Home and holds measured positions. Physical Home also requests a hold after a timeout or failed tool command.
 

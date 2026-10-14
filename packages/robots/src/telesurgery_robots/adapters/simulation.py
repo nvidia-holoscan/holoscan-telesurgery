@@ -39,6 +39,9 @@ class SimulationAdapter:
     def hold(self):
         return self.request("hold")
 
+    def reset(self):
+        return self.request("reset_scene", timeout=1.5)
+
     def close(self):
         if self.client:
             self.client.close()
@@ -59,9 +62,6 @@ class MiraSimulation(SimulationAdapter):
 
     def home(self):
         return self.request("set_home")
-
-    def reset(self):
-        return self.request("reset_scene", timeout=1.5)
 
     def grip(self, command):
         return self.request("jog_gripper", command)

@@ -314,18 +314,8 @@ def main():
         cartesian_feedback = None
         if args.sim == "mira":
             from telesurgery_sim.runtime.mira import MiraFeedback
-            from telesurgery_sim.runtime.reset import SceneReset
 
             cartesian_feedback = MiraFeedback(stage, drives)
-            scene_reset = SceneReset(
-                stage,
-                feedback,
-                drives,
-                robot.pose,
-                [f"/Telesurgery/{name}" for name in preset.get("dynamic_props", [])],
-            )
-        else:
-            scene_reset = None
         if args.sim == "franka":
             from telesurgery_sim.runtime.franka import FrankaFeedback
 
@@ -333,6 +323,20 @@ def main():
                 raise RuntimeError("Incomplete Franka finger drives")
             robot.gripper_ranges = {"hand": (0.0, 0.04)} if fingers else {}
             cartesian_feedback = FrankaFeedback(feedback, fingers)
+        from telesurgery_sim.runtime.reset import SceneReset
+
+        initial_pose = {arm: list(pose) for arm, pose in robot.pose.items()}
+        initial_grippers = dict(robot.gripper_ranges)
+        scene_reset = SceneReset(
+            stage,
+            feedback,
+            drives,
+            initial_pose,
+            [f"/Telesurgery/{name}" for name in preset.get("dynamic_props", [])],
+            joint_positions={
+                str(drive.GetPath()): robot.finger_target for drive in fingers.values()
+            },
+        )
         timeline = omni.timeline.get_timeline_interface()
         if args.sim in {"franka", "mira"}:
             import carb.settings
@@ -350,7 +354,7 @@ def main():
                     physics = PhysxSchema.PhysxSceneAPI.Apply(prim)
                     physics.CreateTimeStepsPerSecondAttr(60)
         timeline.play()
-        if scene_reset is not None:
+        if args.sim == "mira":
             # Initialize physics before restoring the recorded starting scene.
             # Driving from the asset's authored pose can leave the right arm
             # blocked by contact even though its targets already match Home.
@@ -414,8 +418,10 @@ def main():
                     ):
                         raise ValueError("Expired simulator command")
                     if request.get("method") == "reset_scene":
-                        if scene_reset is None or request.get("params"):
-                            raise ValueError("Scene reset is supported for MIRA without parameters")
+                        if request.get("params"):
+                            raise ValueError(
+                                "Scene reset uses the initial environment without parameters"
+                            )
                         with robot_lock:
                             robot.apply({"method": "hold"})
                             try:
@@ -423,6 +429,8 @@ def main():
                             except (AssertionError, RuntimeError) as exc:
                                 raise ValueError(f"Scene reset failed: {exc}") from exc
                             robot = SimRobot(args.sim)
+                            robot.pose = {arm: list(pose) for arm, pose in initial_pose.items()}
+                            robot.gripper_ranges = dict(initial_grippers)
                             command_sequence += 1
                         reset_replies.append(future)
                         continue

@@ -192,15 +192,17 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
             assert any(c["action"] == "haply.read" and not c["params"]["enabled"] for c in calls)
             await page.evaluate("window.focused = true")
             result.update(request=None, paused=True)
-            if kind == "mira":
-                async with page.expect_request(
-                    lambda r: (
-                        r.url.endswith("/api/action")
-                        and r.post_data_json.get("action") == "robot.move"
-                        and r.post_data_json["params"].get("mode") == "reset"
-                    )
-                ):
-                    await page.get_by_role("button", name="Reset scene", exact=True).click()
+            reset = page.get_by_role("button", name="Reset scene", exact=True)
+            await expect(reset).to_be_visible()
+            assert await reset.locator("svg").count() == 1
+            async with page.expect_request(
+                lambda r: (
+                    r.url.endswith("/api/action")
+                    and r.post_data_json.get("action") == "robot.move"
+                    and r.post_data_json["params"].get("mode") == "reset"
+                )
+            ):
+                await reset.click()
             stop_button = page.get_by_role("button", name="Stop", exact=True)
             assert await stop_button.locator("svg").count() == 1
             assert await stop_button.locator("kbd").count() == 0

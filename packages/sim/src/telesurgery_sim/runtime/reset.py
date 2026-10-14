@@ -1,26 +1,28 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Restore a MIRA scene on the physics thread without rebuilding cameras."""
+"""Restore simulation robots and props without rebuilding cameras."""
 
 import numpy as np
 
 
 class SceneReset:
-    def __init__(self, stage, feedback, drives, initial, dynamic_roots):
+    def __init__(self, stage, feedback, drives, initial, dynamic_roots, *, joint_positions=None):
         from isaacsim.core.experimental.prims import RigidPrim
         from pxr import Usd, UsdPhysics
 
         self.articulations = []
         # Preserve auxiliary DOFs such as MIRA's coupled second jaw. They do
         # not have an independent controller drive, but PhysX still lists them.
-        self.positions = {
-            str(prim.GetPath()): np.deg2rad(
-                prim.GetAttribute("state:angular:physics:position").Get() or 0.0
-            )
-            for prim in stage.Traverse()
-            if prim.IsA(UsdPhysics.RevoluteJoint)
-        }
+        self.positions = {}
+        for prim in stage.Traverse():
+            if prim.IsA(UsdPhysics.RevoluteJoint):
+                value = prim.GetAttribute("state:angular:physics:position").Get() or 0.0
+                self.positions[str(prim.GetPath())] = np.deg2rad(value)
+            elif prim.IsA(UsdPhysics.PrismaticJoint):
+                self.positions[str(prim.GetPath())] = (
+                    prim.GetAttribute("state:linear:physics:position").Get() or 0.0
+                )
         self.positions.update(
             {
                 str(drive.GetPath()): np.deg2rad(initial[arm][index])
@@ -28,6 +30,8 @@ class SceneReset:
                 for index, drive in joints.items()
             }
         )
+        # Extra DOFs use physics units: radians for jaws, metres for fingers.
+        self.positions.update(joint_positions or {})
         for view in feedback.views:
             pose = tuple(value.numpy().copy() for value in view.get_world_poses())
             self.articulations.append((view, pose))
