@@ -5,7 +5,7 @@
   "task": "Right-arm needle pickup from above and lift",
   "source": "Synthetic keyboard actions with measured pose checkpoints through production jog controls",
   "starting_scene": "Reset scene",
-  "duration_s": 59.88,
+  "duration_s": 12.39,
   "streams": {
     "mira": {
       "file": "mira.jsonl.gz",
@@ -35,65 +35,65 @@
   },
   "replay_verified": true,
   "observed": {
-    "initial_needle_cm": [
-      50.211639404296875,
+    "needle_start_cm": [
+      50.211517333984375,
       102.11071014404297,
-      0.006087254732847214
+      0.006073810160160065
     ],
-    "final_needle_cm": [
-      50.23963165283203,
-      108.02159881591797,
-      -0.11646360158920288
+    "needle_final_cm": [
+      50.373722076416016,
+      104.45541381835938,
+      -0.208797886967659
     ],
-    "lift_cm": 5.911,
-    "held_after_close_key_release_s": 10,
-    "left_arm_park_cm": [
-      53,
-      105,
-      -8
-    ],
-    "minimum_sampled_left_tool_clearance_cm": 1.066,
-    "clearance_measurement": "Lower bound from separation of world-space tool and needle mesh bounds during lift"
+    "needle_lift_cm": 2.3447,
+    "retention_observed_s": 10
   },
   "replayed": {
-    "device": "keyboard",
-    "same_host_uni": {
-      "passed": true,
-      "elapsed_s": 59.88
-    },
-    "laptop_to_uni": {
-      "passed": true,
-      "elapsed_s": 69.71,
-      "needle_cm": [
-        50.23963165283203,
-        108.02159881591797,
-        -0.11646360158920288
-      ]
-    }
-  },
-  "regression_replayed": {
     "date": "2026-10-14",
     "patient_host": "UNI",
     "surgeon_host": "UNI",
-    "path": "Surgeon Application \u2192 TLS patient \u2192 NodeClient \u2192 Isaac simulation",
-    "added_round_trip_delay_ms": 80,
-    "elapsed_s": 170.75,
-    "checkpoints_reached": {
-      "mira": 8
+    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
+    "local": {
+      "added_round_trip_delay_ms": 0,
+      "replay_elapsed_s": 12.39,
+      "elapsed_including_setup_and_retention_s": 31.16,
+      "checkpoints_reached": {
+        "mira": 9
+      },
+      "retention_observed_s": 10,
+      "cameras_enabled": true,
+      "needle_start_cm": [
+        50.211517333984375,
+        102.11071014404297,
+        0.006073810160160065
+      ],
+      "needle_final_cm": [
+        50.373722076416016,
+        104.45541381835938,
+        -0.208797886967659
+      ],
+      "needle_lift_cm": 2.3447
     },
-    "post_replay_hold_s": 3,
-    "cameras_enabled": false,
-    "needle_start_cm": [
-      50.211509704589844,
-      102.1107177734375,
-      0.006087802350521088
-    ],
-    "needle_final_cm": [
-      49.888851165771484,
-      107.77362823486328,
-      0.23458442091941833
-    ],
-    "needle_lift_cm": 5.6629,
-    "retention_observed_s": 3
+    "delayed": {
+      "added_round_trip_delay_ms": 80,
+      "replay_elapsed_s": 28.61,
+      "elapsed_including_setup_and_retention_s": 49.29,
+      "checkpoints_reached": {
+        "mira": 9
+      },
+      "retention_observed_s": 10,
+      "cameras_enabled": true,
+      "needle_start_cm": [
+        50.21150588989258,
+        102.11071014404297,
+        0.006119448691606522
+      ],
+      "needle_final_cm": [
+        50.31373977661133,
+        104.62553405761719,
+        -0.2102031111717224
+      ],
+      "needle_lift_cm": 2.5148
+    }
   }
 }

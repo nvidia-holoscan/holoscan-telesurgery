@@ -343,7 +343,7 @@ class MiraHaply:
             elbow = (target_elbow - planned[3] + 180) % 360 - 180
         linear = config["linear_step_mm"] * inputs.arm_percent / 100
         angular = config["angular_step_deg"] * inputs.arm_percent / 100
-        roll = config["angular_step_deg"] * inputs.roll_percent / 100
+        roll = config.get("roll_step_deg", config["angular_step_deg"]) * inputs.roll_percent / 100
         length = math.hypot(*translation)
         values = [0.0] * 5
         if length > 0.05:

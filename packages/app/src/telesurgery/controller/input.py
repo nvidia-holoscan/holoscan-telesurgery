@@ -130,7 +130,13 @@ class Inputs:
         result = {}
         for group, values in command.items():
             values = [
-                v / maximum * config["linear_step_mm" if i < 3 else "angular_step_deg"]
+                v
+                / maximum
+                * (
+                    config.get("roll_step_deg", config["angular_step_deg"])
+                    if i == 4
+                    else config["linear_step_mm" if i < 3 else "angular_step_deg"]
+                )
                 for i, v in enumerate(values)
             ]
             scale = max(1, math.hypot(*values[:3]) / config["linear_step_mm"])

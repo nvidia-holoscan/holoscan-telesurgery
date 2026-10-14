@@ -18,6 +18,15 @@ def validate_checkpoints(rows, *, environment="mira", device="keyboard"):
         if len(kinds) != 1:
             raise ValueError("Each checkpoint requires one pose, grip, hold, or barrier")
         kind = kinds.pop()
+        if "position_tolerance_mm" in row:
+            tolerance = row["position_tolerance_mm"]
+            if (
+                kind != "pose"
+                or type(tolerance) not in (int, float)
+                or not math.isfinite(tolerance)
+                or not 0.1 <= tolerance <= 0.25
+            ):
+                raise ValueError("MIRA pose tolerance must be between 0.1 and 0.25 mm")
         squeeze = row.get("squeeze", [])
         if (
             not isinstance(squeeze, list)
@@ -98,6 +107,8 @@ class CheckpointPlayback(FeedbackPlayback):
         self.environment = robot["kind"].removesuffix("-sim")
         validate_checkpoints(self.rows, environment=self.environment, device=self.mapping.device)
         self.synchronized = 0
+        self.feedback_at = None
+        self.feedback_period = 0.05
 
     @property
     def checkpoint(self):
@@ -134,8 +145,13 @@ class CheckpointPlayback(FeedbackPlayback):
         reached = distance <= position_tolerance and angle <= angle_tolerance
         error_size = distance / position_tolerance + angle / angle_tolerance
         scale = self.mapping.inputs.speed / 20
-        linear = linear * 2 / max(1e-9, 0.1 * scale)
-        angular = angular * 2 / max(1e-9, math.radians(30) * scale)
+        # A fast jog must decelerate before a delayed observation crosses the
+        # endpoint. Retain the local response, but lower the correction gain
+        # when command/feedback round trips take longer. Heartbeats do not
+        # count as observations, and a single fast poll cannot erase the delay.
+        gain = min(2.0, 0.35 / self.feedback_period)
+        linear = linear * gain / max(1e-9, 0.1 * scale)
+        angular = angular * gain / max(1e-9, math.radians(30) * scale)
         linear /= max(1, np.linalg.norm(linear))
         angular /= max(1, np.linalg.norm(angular))
         return (
@@ -182,6 +198,9 @@ class CheckpointPlayback(FeedbackPlayback):
         }
         if self.finished or elapsed < 0:
             return result
+        if self.feedback_at is not None:
+            self.feedback_period = max(now - self.feedback_at, self.feedback_period * 0.9, 0.05)
+        self.feedback_at = now
         row = self.rows[self.index]
         inputs = self.mapping.inputs
         inputs.arm_percent, inputs.roll_percent, inputs.grip_percent = row["speeds"]
@@ -217,18 +236,19 @@ class CheckpointPlayback(FeedbackPlayback):
         reached = True
         fraction = 0.0
         if "pose" in row:
+            position_tolerance = row.get("position_tolerance_mm", 0.1)
             # A target still in flight at observation can expire before the
             # next packet arrives. Near the endpoint, stop and observe again
             # so the final correction starts from a settled, measured pose.
             # MIRA's hold rebases the drive target to measured joints, so
             # arrival is measured before that release's static load deflection.
             near = all(
-                abs(goal - actual) <= (0.2 if i < 3 else 0.3)
+                abs(goal - actual) <= (position_tolerance * 2 if i < 3 else 0.3)
                 for arm, goals in row["pose"].items()
                 for i, (goal, actual) in enumerate(zip(goals, self.pose(state, arm), strict=True))
             )
             arrived = all(
-                abs(goal - actual) <= (0.1 if i < 3 else 0.15)
+                abs(goal - actual) <= (position_tolerance if i < 3 else 0.15)
                 for arm, goals in row["pose"].items()
                 for i, (goal, actual) in enumerate(zip(goals, self.pose(state, arm), strict=True))
             )
@@ -236,7 +256,7 @@ class CheckpointPlayback(FeedbackPlayback):
                 self.due_at = now + 0.05
                 return {**result, "request": ("release", {}), "waiting_feedback": True}
             error = sum(
-                abs(goal - actual) / (0.1 if i < 3 else 0.15)
+                abs(goal - actual) / (position_tolerance if i < 3 else 0.15)
                 for arm, goals in row["pose"].items()
                 for i, (goal, actual) in enumerate(zip(goals, self.pose(state, arm), strict=True))
             )
@@ -256,7 +276,7 @@ class CheckpointPlayback(FeedbackPlayback):
                     else self.pose(state, arm, planned=True)
                 )
                 for i, goal in enumerate(goals):
-                    tolerance = 0.1 if i < 3 else 0.15
+                    tolerance = position_tolerance if i < 3 else 0.15
                     if abs(goal - actual[i]) > tolerance:
                         reached = False
                     remaining = goal - planned[i]
@@ -287,9 +307,12 @@ class CheckpointPlayback(FeedbackPlayback):
                 self.due_at = now + 0.05
                 return {**result, "request": ("release", {}), "waiting_feedback": True}
             if not reached:
+                # A discrete step runs to completion at the configured speed.
+                # Use its advertised bound instead of a 50 ms jog increment;
+                # delayed acknowledgements must not stretch joint preparation.
+                limit = inputs.controls["max_step_deg"] * inputs.arm_percent / 100
                 command = [
-                    max(-inputs.increment(i, 0.05), min(inputs.increment(i, 0.05), g - p))
-                    for i, (g, p) in enumerate(zip(goal, planned, strict=True))
+                    max(-limit, min(limit, g - p)) for g, p in zip(goal, planned, strict=True)
                 ]
                 if any(abs(v) > 0.001 for v in command):
                     request = "step", {"joints": command}
@@ -315,16 +338,28 @@ class CheckpointPlayback(FeedbackPlayback):
                     raise ValueError("Replay requires measured gripper feedback")
                 error += abs(goal - actual)
                 previous, progressed = pending["progress"].setdefault(arm, (actual, now))
-                if abs(actual - previous) > 0.001:
+                # At contact a compliant object can spread the jaws slightly
+                # under closing load. Only further closure resets this timer;
+                # opening drift must not keep squeezing until the watchdog trips.
+                movement = previous - actual if goal == 0 else abs(actual - previous)
+                if movement > 0.001:
                     pending["progress"][arm] = actual, now
                     progressed = now
-                contact = goal == 0 and now - pending["started"] >= 1.2 and now - progressed >= 0.3
+                contact = (
+                    goal == 0
+                    and actual <= (0.25 if self.environment == "versius" else 0.1)
+                    and now - pending["started"] >= 1.2
+                    and now - progressed >= 0.3
+                )
                 if abs(goal - actual) > 0.002 and not contact:
                     reached = False
                     rate = (
                         inputs.grip_speed
                         if goal == 0
-                        else min(inputs.grip_speed, abs(goal - actual) / 0.15)
+                        else min(
+                            inputs.grip_speed,
+                            abs(goal - actual) / max(0.15, 2 * self.feedback_period),
+                        )
                     )
                     rates[arm] = math.copysign(rate, goal - actual)
             fraction = self.progress(error / 0.002, now)

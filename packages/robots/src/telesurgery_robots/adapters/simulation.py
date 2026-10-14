@@ -112,5 +112,4 @@ class FrankaSimulation(SimulationAdapter):
 class VersiusSimulation(FrankaSimulation):
     groups = {"joints": 8}
     home_deg = {"joints": VERSIUS_HOME}
-    max_step_deg = 1.0
     grippers = ("hand",)

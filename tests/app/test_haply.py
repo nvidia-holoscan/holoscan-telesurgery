@@ -340,7 +340,9 @@ def test_decode_validates_readiness_and_finite_tracking(frame):
             decode(frame, 1)
 
 
-def test_orientation_decoding_drives_selected_tool_roll_only(robot, frame):
+@pytest.mark.parametrize("roll_step", [1, 5])
+def test_orientation_decoding_drives_selected_tool_roll_only(robot, frame, roll_step, monkeypatch):
+    monkeypatch.setitem(robot["controls"]["mira_cartesian"], "roll_step_deg", roll_step)
     driver = Driver(robot)
     driver.tick()
     driver.tick(buttons=frozenset("b"))
@@ -357,7 +359,7 @@ def test_orientation_decoding_drives_selected_tool_roll_only(robot, frame):
     mode, command = driver.tick(orientation=orientation)
     assert mode == "cartesian"
     assert command["left"] == [0] * 5
-    assert command["right"] == [0, 0, 0, 0, 0.5]
+    assert command["right"] == [0, 0, 0, 0, 0.5 * roll_step]
 
 
 @pytest.mark.parametrize("arm, sign", [("left", -1), ("right", -1)])
