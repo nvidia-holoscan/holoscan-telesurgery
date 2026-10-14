@@ -72,6 +72,9 @@ def prepare(sdk, environment, *, dependencies_only=False):
         *(["--no-install-workspace"] if dependencies_only else []),
         "--inexact",
         "--no-dev",
+        # The codec builder installs our patched wheel after the SDK build.
+        "--no-install-package",
+        "pynvvideocodec",
         "--extra",
         "codecs-cu13",
         *([] if tegra else ["--extra", "tokenizer-cu13"]),

@@ -406,6 +406,48 @@ class Button(tk.Canvas):
                 capstyle="round",
                 joinstyle="round",
             )
+        elif self.icon == "release":
+            for points in ((9, 4, 4, 4, 4, 20, 9, 20), (8, 12, 21, 12), (16, 7, 21, 12, 16, 17)):
+                self.create_line(
+                    *[
+                        width / 2 + px(-10 + value * 5 / 6)
+                        if index % 2 == 0
+                        else px(7 + value * 5 / 6)
+                        for index, value in enumerate(points)
+                    ],
+                    fill=color,
+                    width=1.5 * px.factor,
+                    capstyle="round",
+                    joinstyle="round",
+                )
+        elif self.icon == "stop":
+            self.create_rectangle(
+                width / 2 - px(6), px(11), width / 2 + px(6), px(23), fill=color, outline=""
+            )
+        elif self.icon == "reset":
+            self.create_arc(
+                width / 2 - px(8),
+                px(9),
+                width / 2 + px(8),
+                px(25),
+                start=135,
+                extent=-300,
+                style="arc",
+                outline=color,
+                width=px(2),
+            )
+            self.create_line(
+                width / 2 - px(8),
+                px(9),
+                width / 2 - px(8),
+                px(15),
+                width / 2 - px(2),
+                px(15),
+                fill=color,
+                width=px(2),
+                capstyle="round",
+                joinstyle="round",
+            )
         elif self.shortcut:
             left = (width - self.label_font.measure(self.text) - px(23)) / 2
             self.create_rectangle(

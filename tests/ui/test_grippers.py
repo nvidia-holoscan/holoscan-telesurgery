@@ -115,7 +115,8 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             await request.fulfill(json=state)
         elif path == "api/action":
             call = request.request.post_data_json
-            calls.append(call)
+            if call["action"] != "robot.renew":
+                calls.append(call)
             if reject and call["action"] == "robot.move":
                 await request.fulfill(
                     status=400, json={"error": "Controller rejected request: Tools not homed"}
@@ -132,6 +133,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             await expect(page.get_by_label("MIRA arm speed", exact=True)).to_have_value("20")
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
             speed = page.get_by_label("MIRA grip speed", exact=True)
@@ -158,7 +160,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
                                 }
                             },
                         }
-                    assert calls[-1]["action"] == "robot.release"
+                    assert calls[-1]["action"] == "robot.hold"
                     count = len(calls)
                     await page.wait_for_timeout(250)
                     assert not [c for c in calls[count:] if c["action"] == "robot.move"]
@@ -179,7 +181,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             }
             await page.keyboard.up("n")
             await page.wait_for_timeout(100)
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             # A focus loss stops motion; repeated keydown cannot restart it.
             await page.keyboard.down("x")
             await page.wait_for_timeout(100)
@@ -198,6 +200,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             await expect(page.locator("#robots .status")).to_contain_text("Other")
             await expect(page.get_by_role("button", name="Open right gripper")).to_be_disabled()
             robot["owner"] = robot["owner_id"] = None
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             await expect(page.get_by_role("button", name="Open right gripper")).to_be_enabled()
             reject = True
             before = len([c for c in calls if c["action"] == "robot.move"])
@@ -208,11 +211,16 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             assert len([c for c in calls if c["action"] == "robot.move"]) == before + 1
             await page.keyboard.up("m")
             reject = False
+            await expect(
+                page.get_by_role("button", name="Release control", exact=True)
+            ).to_be_visible()
+            await expect(page.get_by_role("button", name="Open right gripper")).to_be_enabled()
+            await page.locator(".gripper-controls").focus()
             await page.keyboard.down("m")
             await page.wait_for_timeout(150)
             await page.keyboard.up("m")
             await page.wait_for_timeout(100)
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             await page.locator("#robots-panel").screenshot(path=str(tmp_path / "mira-grippers.png"))
             state["session"]["robot"] = False
             await expect(page.locator(".gripper-controls")).to_have_count(0)
@@ -232,6 +240,7 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
         "state": {"sequence": 1},
     }
     state = {
+        "haply_available": True,
         "role": "surgeon",
         "sdk": "5",
         "selected": [],
@@ -250,7 +259,9 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
         if path.startswith("api/status"):
             await request.fulfill(json=state)
         elif path == "api/action":
-            calls.append(request.request.post_data_json)
+            call = request.request.post_data_json
+            if call["action"] != "robot.renew":
+                calls.append(call)
             await request.fulfill(json={"result": robot["state"]})
         else:
             await request.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
@@ -267,8 +278,11 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
             """)
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             selector = page.get_by_label("MIRA input", exact=True)
-            await expect(selector.locator("option")).to_have_text(["Keyboard", "Sony DualSense"])
+            await expect(selector.locator("option")).to_have_text(
+                ["Keyboard", "Haply Inverse3", "Sony DualSense"]
+            )
             badges = page.locator(".gripper-control kbd")
             await expect(badges).to_have_text(["Z", "X", "N", "M"])
             await expect(page.locator(".keyboard-controls .gripper-controls")).to_be_visible()
@@ -276,7 +290,7 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
             await expect(badges).to_have_text(["←", "→", "□", "○"])
             await expect(page.locator(".gamepad-controls .gripper-controls")).to_be_visible()
             await expect(selector).to_have_attribute("title", await page.evaluate("pad.id"))
-            await expect(page.locator(".gamepad-status")).to_have_text(
+            await expect(page.locator(".gamepad-controls:visible .gamepad-status")).to_have_text(
                 "Hold L1 for arms, roll & grip"
             )
             await page.locator(".gripper-controls").focus()
@@ -295,7 +309,7 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
             )
             await selector.select_option("keyboard")
             await expect(badges).to_have_text(["Z", "X", "N", "M"])
-            assert calls[-1]["action"] == "robot.release"
+            assert calls[-1]["action"] == "robot.hold"
             count = len([c for c in calls if c["action"] == "robot.move"])
             await page.wait_for_timeout(180)
             assert len([c for c in calls if c["action"] == "robot.move"]) == count
@@ -303,16 +317,18 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
                 pad.buttons.forEach(b=>b.pressed=false);
                 pad.id='Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
             }""")
-            await expect(selector.locator("option")).to_have_text(["Keyboard", "Xbox controller"])
+            await expect(selector.locator("option")).to_have_text(
+                ["Keyboard", "Haply Inverse3", "Xbox controller"]
+            )
             await selector.select_option("0")
             await expect(badges).to_have_text(["←", "→", "X", "B"])
-            await expect(page.locator(".gamepad-status")).to_have_text(
+            await expect(page.locator(".gamepad-controls:visible .gamepad-status")).to_have_text(
                 "Hold LB for arms, roll & grip"
             )
             # Two devices with the same friendly name remain distinguishable.
             await page.evaluate("navigator.getGamepads=()=>[pad,{...pad,index:1}]")
             await expect(selector.locator("option")).to_have_text(
-                ["Keyboard", "Xbox controller · 1", "Xbox controller · 2"]
+                ["Keyboard", "Haply Inverse3", "Xbox controller · 1", "Xbox controller · 2"]
             )
             # Both shortcuts use the same Home action as the on-screen button.
             await expect(page.get_by_role("button", name="Home", exact=True)).to_have_attribute(
@@ -322,7 +338,9 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
             )
             for count, (button, label) in enumerate([(16, "Xbox button"), (9, "Menu")], 1):
                 await page.evaluate("i=>pad.buttons[i].pressed=true", button)
-                await expect(page.locator(".gamepad-status")).to_contain_text(f"Hold {label}")
+                await expect(
+                    page.locator(".gamepad-controls:visible .gamepad-status")
+                ).to_contain_text(f"Hold {label}")
                 for _ in range(40):
                     homes = [c for c in calls if c.get("params", {}).get("mode") == "home"]
                     if len(homes) == count:
@@ -333,7 +351,7 @@ async def test_gamepad_selection_updates_bindings_and_routes_gripper_commands():
                 await page.wait_for_timeout(1100)
                 assert len([c for c in calls if c.get("params", {}).get("mode") == "home"]) == count
                 await page.evaluate("i=>pad.buttons[i].pressed=false", button)
-                await expect(page.locator(".gamepad-controls")).to_have_attribute(
+                await expect(page.locator(".gamepad-controls:visible")).to_have_attribute(
                     "data-state", "ready"
                 )
         finally:

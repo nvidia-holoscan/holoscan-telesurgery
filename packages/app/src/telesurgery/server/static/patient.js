@@ -270,7 +270,34 @@ export function patientPages(changed, removeNode, refresh) {
                 activity.replaceChildren();
                 const directory = $("#nodes");
                 directory.replaceChildren();
-                for (const node of state.nodes || []) {
+                const nodes = [...(state.nodes || [])].sort((a, b) =>
+                    nodeName(a).localeCompare(nodeName(b), undefined, {
+                        numeric: true,
+                        sensitivity: "base",
+                    }),
+                );
+                const groups = {};
+                for (const [status, label] of [
+                    ["online", "Online"],
+                    ["offline", "Offline"],
+                ]) {
+                    const count = nodes.filter((node) =>
+                        status === "online"
+                            ? node.status === "online"
+                            : node.status !== "online",
+                    ).length;
+                    if (!count) continue;
+                    const group = element("section", undefined, "node-group");
+                    group.dataset.status = status;
+                    const heading = element("h2", label);
+                    heading.id = `nodes-${status}-heading`;
+                    heading.append(element("span", count, "node-group-count"));
+                    group.setAttribute("aria-labelledby", heading.id);
+                    groups[status] = element("div", undefined, "node-card-grid");
+                    group.append(heading, groups[status]);
+                    directory.append(group);
+                }
+                for (const node of nodes) {
                     const cameras = (state.cameras || []).filter(
                         (c) => (c.node || c.id.split(":")[0]) === node.id,
                     );
@@ -359,7 +386,7 @@ export function patientPages(changed, removeNode, refresh) {
                                 "error-text",
                             ),
                         );
-                    directory.append(card);
+                    groups[node.status === "online" ? "online" : "offline"].append(card);
                     const roomNode = link("", `#node/${node.id}`);
                     roomNode.classList.add("room-node");
                     const roomIdentity = element("div");

@@ -50,6 +50,7 @@ def controls(adapter: Adapter, spec: dict) -> dict:
         "max_step_deg": adapter.max_step_deg,
         **({"step_mode": True} if hasattr(adapter, "step") else {}),
         **({"home_deg": adapter.home_deg} if enabled and hasattr(adapter, "home") else {}),
+        **({"reset_scene": True} if adapter.simulation and hasattr(adapter, "reset") else {}),
         **(
             {"grippers": adapter.grippers, "grip_speed_pct_s": adapter.grip_speed}
             if enabled and hasattr(adapter, "grip") and adapter.grippers

@@ -49,15 +49,54 @@ def joint_velocity(jacobian, position, translation, rotation, speed, limits=JOIN
     velocity = np.rad2deg(
         jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + 0.03**2 * np.eye(6), twist)
     )
-    velocity *= min(1, speed / max(1e-9, np.max(np.abs(velocity))))
-    room = np.where(velocity > 0, limits[:, 1] - position, position - limits[:, 0])
-    moving = np.abs(velocity) > 1e-8
-    if moving.any():
-        # Match the native planner's 0.02 rad reserve and 0.15 rad taper:
-        # jerk-limited braking needs room before reaching the position clamp.
-        reserve, taper = np.rad2deg([0.02, 0.15])
-        velocity *= np.clip((np.min(room[moving]) - reserve) / taper, 0, 1)
-    return velocity.tolist()
+    scale = min(1, speed / max(1e-9, np.max(np.abs(velocity))))
+    velocity *= scale
+    # Reserve braking room per joint. Stopping the whole arm when one joint
+    # reaches its limit wastes the remaining joints of a redundant arm.
+    reserve, taper = np.rad2deg([0.02, 0.15])
+    limits = np.asarray(limits)
+    lower = -speed * np.clip((position - limits[:, 0] - reserve) / taper, 0, 1)
+    upper = speed * np.clip((limits[:, 1] - position - reserve) / taper, 0, 1)
+    if np.all(velocity >= lower) and np.all(velocity <= upper):
+        return velocity.tolist()
+    return np.rad2deg(
+        bounded_velocity(jacobian, twist * scale, np.deg2rad(lower), np.deg2rad(upper))
+    ).tolist()
+
+
+def bounded_velocity(jacobian, twist, lower, upper):
+    """Solve the small damped least-squares problem with joint velocity bounds."""
+    count = len(lower)
+    hessian = jacobian.T @ jacobian + 0.03**2 * np.eye(count)
+    rhs = jacobian.T @ twist
+    velocity = np.zeros(count)  # Always a feasible initial point.
+    active = np.zeros(count, dtype=int)
+    for _ in range(4 * count * count):
+        gradient = hessian @ velocity - rhs
+        free = active == 0
+        direction = np.zeros(count)
+        if free.any():
+            direction[free] = np.linalg.solve(hessian[np.ix_(free, free)], -gradient[free])
+        if np.max(np.abs(direction)) < 1e-10:
+            # At a bound, release a joint if moving back into its range would
+            # reduce the objective; otherwise the constrained solution is done.
+            violation = np.where(active != 0, active * gradient, -np.inf)
+            index = int(np.argmax(violation))
+            if violation[index] <= 1e-10:
+                return np.clip(velocity, lower, upper)
+            active[index] = 0
+            continue
+        ratios = np.full(count, np.inf)
+        positive, negative = direction > 1e-12, direction < -1e-12
+        ratios[positive] = (upper[positive] - velocity[positive]) / direction[positive]
+        ratios[negative] = (lower[negative] - velocity[negative]) / direction[negative]
+        index = int(np.argmin(ratios))
+        fraction = max(0.0, min(1.0, ratios[index]))
+        velocity += fraction * direction
+        if fraction < 1:
+            active[index] = 1 if direction[index] > 0 else -1
+    # Do not send an unconverged solution to the motion planner.
+    return np.zeros(count)
 
 
 class CartesianTrajectory:

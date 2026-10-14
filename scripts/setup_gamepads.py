@@ -127,30 +127,64 @@ def connected_devices():
         yield f"/dev/bus/usb/{bus:03d}/{address:03d}"
 
 
+def helper_matches(source, target):
+    """Compare the installed --device helper, ignoring its bundled installer.
+
+    Older installs contain this whole script. Changes to setup's own checks
+    must not require replacing an otherwise identical root-owned USB helper.
+    Parse the installed file without importing or executing it.
+    """
+    import ast
+
+    def device_code(path):
+        tree = ast.parse(path.read_text())
+        tree.body = [
+            node
+            for node in tree.body
+            if not (
+                isinstance(node, ast.FunctionDef)
+                and node.name in {"install", "connected_devices", "helper_matches"}
+            )
+        ]
+        return ast.dump(tree)
+
+    try:
+        return device_code(source) == device_code(target)
+    except (OSError, SyntaxError, UnicodeError):
+        return False
+
+
 def install():
     source = Path(__file__).resolve()
     rule = source.parent / "udev" / RULE.name
-    current = all(
-        target.exists() and target.read_bytes() == origin.read_bytes()
-        for origin, target in ((source, HELPER), (rule, RULE))
-    )
-    devices = list(connected_devices())
-    if current and not devices:
+    helper_current = helper_matches(source, HELPER)
+    rule_current = RULE.exists() and RULE.read_bytes() == rule.read_bytes()
+    usb_available = bool(find_library("usb-1.0"))
+    if helper_current and rule_current and usb_available:
         print("Automatic Nintendo USB startup is configured.")
         return
     if os.geteuid() != 0:
-        print("Installing gamepad USB support; sudo is needed once.", flush=True)
+        changes = [
+            str(path)
+            for path, current in ((HELPER, helper_current), (RULE, rule_current))
+            if not current
+        ]
+        if not usb_available:
+            changes.append("libusb-1.0-0")
+        print("Gamepad setup needs sudo to install/update: " + ", ".join(changes), flush=True)
         subprocess.run(["sudo", sys.executable, str(source)], check=True)
         return
-    if not find_library("usb-1.0"):
+    if not usb_available:
         subprocess.run(["apt-get", "update"], check=True)
         subprocess.run(["apt-get", "install", "-y", "libusb-1.0-0"], check=True)
-    if not current:
+    if not helper_current:
         subprocess.run(["install", "-D", "-m", "644", str(source), str(HELPER)], check=True)
+    if not rule_current:
         subprocess.run(["install", "-D", "-m", "644", str(rule), str(RULE)], check=True)
         subprocess.run(["udevadm", "control", "--reload-rules"], check=True)
-    # Also initialize controllers already connected when setup is run.
-    for device in devices:
+    # Initialize controllers already connected during installation. On later
+    # setup runs, leave active devices alone; udev handles each new connection.
+    for device in connected_devices():
         initialize(device)
     print("Nintendo controllers will initialize automatically when connected.")
 

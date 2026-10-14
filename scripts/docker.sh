@@ -181,6 +181,16 @@ if [[ "${1:-}" == surgeon && -d /dev/input ]]; then
     done
     if [[ -d /run/udev ]]; then args+=(--volume /run/udev:/run/udev:ro); fi
 fi
+if [[ "${1:-}" == surgeon || "${1:-}" == controller ]]; then
+    # Grant only Haply serial endpoints, leaving unrelated ACM devices alone.
+    for device in /dev/serial/by-id/usb-Teensyduino_Haply_inverse3_* \
+                  /dev/serial/by-id/usb-ZEPHYR_Haply_USB_Transceiver_*; do
+        if [[ -c "$device" ]]; then
+            endpoint="$(readlink -f -- "$device")"
+            args+=(--device "$endpoint" --group-add "$(stat -c %g "$endpoint")")
+        fi
+    done
+fi
 # Simulation and managed physical MIRA controllers use the host Docker service.
 if [[ "${1:-}" == node ]]; then
     args+=(--volume /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)")

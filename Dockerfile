@@ -76,6 +76,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps --no-deps \
     'trimesh==5.1.0'
 
+# Keep the optional input service independent of SDK rebuilds.
+FROM dependencies AS haply
+COPY scripts/setup_haply.py ./scripts/
+RUN python3.12 scripts/setup_haply.py --extract /opt/haply
+
 FROM native-build AS application
 COPY packages ./packages
 # Keep editable package metadata separate from the large, cached dependency environment.
@@ -89,7 +94,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
     PATH=/opt/telesurgery/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12-venv python3-tk libsdl2-2.0-0 xvfb xauth \
+    python3.12-venv python3-tk python3-websocket libsdl2-2.0-0 xvfb xauth \
     ca-certificates chrony docker.io \
     libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
     libvulkan1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6 \
@@ -105,9 +110,12 @@ COPY --from=native-build /opt/hololink /opt/hololink
 COPY --from=native-build /opt/sdk4-development /opt/sdk4-development
 COPY --from=native-build /opt/franka /opt/franka
 COPY --from=native-build /opt/sim-deps /opt/sim-deps
+COPY --from=haply /opt/haply/haply-inverse-service /usr/local/bin/haply-inverse-service
+COPY --from=haply /opt/haply/doc /usr/share/doc/haply-inverse-service
 # Application-only rebuilds replace just these small layers.
 COPY --from=application /opt/application/ /opt/telesurgery/
 COPY --from=application /app/packages ./packages
+COPY examples/controller-replays ./examples/controller-replays
 COPY pyproject.toml uv.lock README.md LICENSE NOTICE SECURITY.md ./
 ENTRYPOINT ["python", "-m", "telesurgery"]
 CMD ["--help"]

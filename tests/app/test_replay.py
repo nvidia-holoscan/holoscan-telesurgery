@@ -1,0 +1,132 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Replay admission, independent owners and cancellation use the normal control lease."""
+
+import gzip
+import json
+
+import pytest
+from telesurgery.controller.replay import Catalog, Playback, Rendezvous
+from telesurgery_core.control.access import Ownership
+
+
+@pytest.fixture
+def catalog(tmp_path):
+    directory = tmp_path / "versius/keyboard"
+    directory.mkdir(parents=True)
+    for role in ("left", "right"):
+        with gzip.open(directory / f"{role}.jsonl.gz", "wt") as output:
+            output.write(json.dumps({"t": 0, "keys": [], "speeds": [20, 50, 40]}))
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "environment": "versius",
+                "device": "keyboard",
+                "task": "Handoff",
+                "replay_verified": True,
+                "streams": {role: {"file": f"{role}.jsonl.gz"} for role in ("left", "right")},
+            }
+        )
+    )
+    return Catalog(tmp_path)
+
+
+def robot(role="left", kind="versius-sim"):
+    return {"id": f"node:{role}", "kind": kind, "simulation": kind.endswith("-sim")}
+
+
+def test_catalog_requires_verified_recording_and_matching_simulation(catalog):
+    assert len(catalog.list()) == 1
+    with pytest.raises(ValueError, match="matching simulation"):
+        catalog.get("versius/keyboard", robot(kind="versius"))
+    with pytest.raises(ValueError, match="this arm"):
+        catalog.get("versius/keyboard", robot("assistant"))
+    path, manifest = catalog.recordings["versius/keyboard"]
+    manifest["replay_verified"] = False
+    path.write_text(json.dumps(manifest))
+    assert not Catalog(path.parents[2]).list()
+
+
+def test_two_surgeons_start_together_and_wait_for_both_to_finish(catalog):
+    now = [10.0]
+
+    def clock():
+        return now[0]
+
+    barrier = Rendezvous(catalog, clock)
+    owners = {f"node:{role}": Ownership(clock) for role in ("left", "right")}
+    tokens = {
+        role: owners[f"node:{role}"].acquire(peer) for role, peer in [("left", "X"), ("right", "Y")]
+    }
+    run = barrier.join("versius/keyboard", robot(), "X", tokens["left"])
+    assert barrier.poll(run, "X", "node:left", owners)["elapsed"] is None
+    assert barrier.join("versius/keyboard", robot("right"), "Y", tokens["right"]) == run
+    assert barrier.poll(run, "Y", "node:right", owners)["elapsed"] == -1
+    assert not barrier.poll(run, "X", "node:left", owners, finished=True)["done"]
+    assert barrier.poll(run, "Y", "node:right", owners, finished=True)["done"]
+
+
+@pytest.mark.parametrize("failure", ["cancel", "release", "silent"])
+def test_one_participant_stopping_cancels_the_other(catalog, failure):
+    now = [10.0]
+    barrier = Rendezvous(catalog, lambda: now[0])
+    owners = {f"node:{role}": Ownership(lambda: now[0]) for role in ("left", "right")}
+    run = None
+    for role, peer in [("left", "X"), ("right", "Y")]:
+        run = barrier.join(
+            "versius/keyboard", robot(role), peer, owners[f"node:{role}"].acquire(peer)
+        )
+    with pytest.raises(PermissionError):
+        barrier.cancel(run, "Y", "node:left")
+    if failure == "cancel":
+        barrier.cancel(run, "X", "node:left")
+    elif failure == "release":
+        owners["node:left"].release()
+    else:
+        now[0] += 0.51
+    with pytest.raises(RuntimeError, match="Replay stopped"):
+        barrier.poll(run, "Y", "node:right", owners)
+
+
+def test_same_surgeon_cannot_prepare_both_versius_arms(catalog):
+    barrier = Rendezvous(catalog)
+    barrier.join("versius/keyboard", robot(), "X", "left-token")
+    with pytest.raises(PermissionError, match="separate surgeon"):
+        barrier.join("versius/keyboard", robot("right"), "X", "right-token")
+
+
+def test_delayed_dashboard_discards_replay_instead_of_catching_up():
+    now = [1.0]
+    instance = Playback(
+        {"kind": "franka-sim", "controls": {"cartesian": {"linear_speed_m_s": 0.1}}},
+        {"device": "keyboard"},
+        "franka",
+        [{"t": 0, "keys": ["w"], "speeds": [20, 50, 40]}],
+        "run",
+        lambda: now[0],
+    )
+    now[0] += 0.31
+    with pytest.raises(TimeoutError, match="stopped polling"):
+        instance.read(0, {})
+    assert instance.index == 0
+
+
+def test_playback_preserves_each_button_edge_when_two_samples_are_due():
+    instance = Playback(
+        {"kind": "franka-sim", "controls": {"cartesian": {"linear_speed_m_s": 0.1}}},
+        {"device": "keyboard"},
+        "franka",
+        [
+            {"t": 0, "keys": [], "speeds": [20, 50, 40]},
+            {"t": 0.05, "keys": ["w"], "speeds": [20, 50, 40]},
+            {"t": 0.10, "keys": [], "speeds": [20, 50, 40]},
+        ],
+        "run",
+    )
+    instance.read(0, {})
+    movement = instance.read(0.11, {})
+    assert movement["request"][0] == "jog"
+    assert not movement["done"]
+    assert instance.read(0.12, {})["request"] == ("release", {})

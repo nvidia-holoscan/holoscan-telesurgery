@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "environment": "mira",
+  "device": "gamepad",
+  "task": "Left needle pickup and lift",
+  "source": "Synthetic device input through production controller mappings",
+  "starting_scene": "Reset scene",
+  "duration_s": 68.414211,
+  "streams": {
+    "mira": {
+      "file": "mira.jsonl.gz",
+      "initial": {
+        "joints_deg": {
+          "left": [
+            -1.6425440311431885,
+            82.72921752929688,
+            32.45859146118164,
+            128.929443359375,
+            -0.005165684036910534
+          ],
+          "right": [
+            1.3892267942428589,
+            82.50299835205078,
+            31.898517608642578,
+            127.06092071533203,
+            3.696684871101752e-05
+          ]
+        },
+        "grippers": {
+          "left": 0.0002317841397598386,
+          "right": 0.0
+        }
+      }
+    }
+  },
+  "observed": {
+    "initial": [
+      50.21164,
+      102.11071,
+      0.00609
+    ],
+    "left_lift": [
+      50.13798,
+      110.64619,
+      -1.59939
+    ],
+    "lowest_needle_y_cm": 106.69849518788382
+  },
+  "replay_verified": true,
+  "replayed": {
+    "device": "gamepad",
+    "needle_cm": [
+      49.92311,
+      110.78766,
+      -1.80799
+    ]
+  }
+}

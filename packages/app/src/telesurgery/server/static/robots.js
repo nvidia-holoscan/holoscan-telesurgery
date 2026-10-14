@@ -3,6 +3,8 @@
 
 import { $, element, button, action, notice, hasSelection } from "./ui.js";
 import { gamepadInput } from "./gamepad.js";
+import { haplyInput, supportsHaply } from "./haply.js";
+import { replayControls } from "./replay.js";
 import { keyboardInput } from "./keyboard.js";
 import { gripperControls } from "./grippers.js";
 import { jogGroups, pairedArms, gripSpeed, armSpeed, rollSpeed, jointStep, jointSpeed } from "./robot-input.js";
@@ -18,10 +20,10 @@ export function robotLabel(robot) {
 export function robotStatus(robot) {
     const [label, status] = deviceStatus(robot, true);
     if (status !== "online") return label;
-    if (robot.owner) return `Controlled by ${robot.owner}`;
+    if (robot.owner) return `Active · ${robot.owner}`;
     if (robot.controls?.read_only) return "State only";
     if (!jogGroups(robot).length) return "Motion disabled";
-    return label;
+    return "Available";
 }
 
 function renderFeedback(container, robot) {
@@ -124,14 +126,20 @@ export function robotControls(refresh, openMetrics) {
         visible = [],
         signature,
         selectedInput = null,
-        current = null;
+        current = null,
+        generation = 0;
     const cards = new Map(),
         restoredInputs = new Map(),
         acknowledgements = new Map(),
         stepping = new Map(),
         releasing = new Map(),
+        acquiring = new Set(),
+        holding = new Map(),
+        moving = new Set(),
         held = new Set();
     function stopInputs(card) {
+        card?.replay?.stop();
+        card?.haply?.stop();
         card?.gamepad?.stop();
         card?.keyboard?.stop();
         card?.grippers?.stop();
@@ -145,12 +153,14 @@ export function robotControls(refresh, openMetrics) {
     function acknowledgedRobot(robot) {
         const reply = acknowledgements.get(robot.id);
         // Ownership follows the accepted command too. A cached inventory
-        // must not briefly show Connected after control was acquired.
+        // must not briefly show Available after control was acquired.
         const newer = reply && reply.sequence > (robot.state?.sequence ?? -1);
         return {
             ...robot,
             ...(newer && (!robot.owner || robot.owner_id === state.session?.id)
                 ? {owner: reply.owner, owner_id: reply.owner_id} : {}),
+            ...(held.has(robot.id) && (!robot.owner || robot.owner_id === state.session?.id)
+                ? {owner: state.session?.name || "you", owner_id: state.session?.id} : {}),
             state: motionState(robot),
         };
     }
@@ -172,11 +182,16 @@ export function robotControls(refresh, openMetrics) {
         });
         const card = cards.get(id);
         if (card) card.status.textContent = robotStatus(acknowledgedRobot(card.robot));
+        if (card?.release && state.role === "surgeon") {
+            card.release.hidden = !owned;
+            card.acquire.hidden = owned;
+        }
         card?.grippers?.feedback(result);
         if (card && (result.stopping || result.home_active)) {
             card.keyboard?.feedback(result);
             card.keyboard?.update(card.mode?.value === "keyboard", false);
-            card.gamepad?.update(card.mode?.value !== "keyboard", false);
+            card.gamepad?.update(!["keyboard", "haply"].includes(card.mode?.value), false);
+            card.haply?.update(card.mode?.value === "haply", false);
             card.grippers?.update(false, card.mode?.value === "keyboard", card.gamepad?.bindings());
             if (result.stopping) {
                 // Show fresh stop feedback promptly instead of leaving the
@@ -212,7 +227,7 @@ export function robotControls(refresh, openMetrics) {
             : "Connect to the robot controller";
         return control;
     }
-    function permitted(robot) {
+    function eligible(robot) {
         return (
             state.role === "surgeon" &&
             !["starting", "running"].includes(state.native_controller?.status) &&
@@ -224,10 +239,33 @@ export function robotControls(refresh, openMetrics) {
             (!robot.owner || robot.owner_id === state.session.id)
         );
     }
+    function permitted(robot) {
+        return eligible(robot) && held.has(robot.id) && !releasing.has(robot.id);
+    }
+    async function acquire(robot) {
+        if (!eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id)) return;
+        acquiring.add(robot.id);
+        const started = generation;
+        stopInputs(cards.get(robot.id));
+        cards.get(robot.id)?.acquire.blur();
+        try {
+            const result = await action("robot.acquire", {id: robot.id});
+            held.add(robot.id);
+            acknowledge(robot.id, result, true);
+            if (started !== generation || !eligible(cards.get(robot.id)?.robot || robot))
+                await release(robot.id);
+        } catch (error) {
+            notice(error);
+        } finally {
+            acquiring.delete(robot.id);
+            await refresh();
+        }
+    }
     async function release(id) {
         if (releasing.has(id)) return releasing.get(id);
         if (current?.id === id) current.cancelled = true;
         held.delete(id);
+        moving.delete(id);
         const pending = action("robot.release", { id });
         releasing.set(id, pending);
         try {
@@ -239,6 +277,22 @@ export function robotControls(refresh, openMetrics) {
             releasing.delete(id);
         }
     }
+    async function hold(id) {
+        if (holding.has(id)) return holding.get(id);
+        if (!held.has(id) || !moving.has(id) || releasing.has(id)) return;
+        moving.delete(id);
+        const pending = action("robot.hold", { id });
+        holding.set(id, pending);
+        try {
+            acknowledge(id, await pending, true);
+            stepping.delete(id);
+        } catch (error) {
+            notice(error);
+            await release(id);
+        } finally {
+            holding.delete(id);
+        }
+    }
     async function stop() {
         const pending = current;
         if (pending) {
@@ -246,8 +300,8 @@ export function robotControls(refresh, openMetrics) {
             await pending.done;
         }
     }
-    async function send(robot, command, mode = "jog") {
-        if (current || releasing.has(robot.id) || !permitted(robot)) return;
+    async function send(robot, command, mode = "jog", replaySpeed) {
+        if (current || releasing.has(robot.id) || holding.has(robot.id) || !permitted(robot)) return;
         const feedback = motionState(robot);
         if (feedback.stopping || feedback.home_active) {
             stopInputs(cards.get(robot.id));
@@ -262,6 +316,7 @@ export function robotControls(refresh, openMetrics) {
             }),
         };
         current = input;
+        moving.add(robot.id);
         try {
             const card = cards.get(robot.id);
             const speed = robot.controls.speed_deg_s && (card?.armSpeed || card?.speed);
@@ -269,28 +324,33 @@ export function robotControls(refresh, openMetrics) {
                 id: robot.id,
                 command,
                 mode,
-                ...(speed ? { speed_deg_s: speed.value() } : {}),
+                ...(speed ? { speed_deg_s: replaySpeed ?? speed.value() } : {}),
             });
             acknowledge(robot.id, result, true);
             if (mode === "jog") stepping.delete(robot.id);
-            // Only sent input claims a local lease. Status is shared by every
-            // tab; observing it must not let idle tabs renew or release motion.
-            held.add(robot.id);
+            moving.add(robot.id);
             return result;
         } catch (error) {
             input.cancelled = true;
+            input.failed = true;
             stopInputs(cards.get(robot.id));
             notice(error);
         } finally {
-            if (input.cancelled || !permitted(robot)) await release(robot.id);
+            if (!eligible(robot)) await release(robot.id);
+            else if (input.cancelled) await hold(robot.id);
             current = null;
             complete();
         }
     }
     async function endInput(id) {
         await stop();
-        if (held.has(id)) await release(id);
+        await hold(id);
         if (releasing.has(id)) await releasing.get(id);
+    }
+    async function pauseAll() {
+        for (const card of cards.values()) stopInputs(card);
+        await stop();
+        for (const id of held) await hold(id);
     }
     async function step(robot, command, mode = "step") {
         if (current || releasing.has(robot.id)) return;
@@ -300,21 +360,23 @@ export function robotControls(refresh, openMetrics) {
         else stepping.delete(robot.id);
     }
     async function releaseAll() {
+        generation++;
         if (current) current.cancelled = true;
         for (const card of cards.values()) stopInputs(card);
         await stop();
         for (const id of [...held]) await release(id);
         await Promise.allSettled([...releasing.values()]);
     }
-    window.addEventListener("blur", releaseAll);
+    window.addEventListener("blur", pauseAll);
     window.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") releaseAll();
+        if (event.key === "Escape") pauseAll();
     });
     document.addEventListener("visibilitychange", () => {
-        if (document.hidden) releaseAll();
+        if (document.hidden) pauseAll();
     });
     window.addEventListener("pagehide", () => {
-        for (const id of new Set([...held, ...(current ? [current.id] : [])])) {
+        generation++;
+        for (const id of new Set([...held, ...acquiring, ...(current ? [current.id] : [])])) {
             fetch("/api/action", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -330,6 +392,8 @@ export function robotControls(refresh, openMetrics) {
         for (const card of cards.values()) {
             clearTimeout(card.stopTimer);
             card.gamepad?.destroy();
+            card.haply?.destroy();
+            card.replay?.destroy();
             card.keyboard?.destroy();
             card.grippers?.destroy();
         }
@@ -402,12 +466,13 @@ export function robotControls(refresh, openMetrics) {
                     actions.append(card.logs);
                 }
                 card.release = button(
-                    "Revoke control",
+                    "Force release robot control",
                     async () => {
                         await action("robot.revoke", { id: robot.id });
                         await refresh();
                     },
-                    "danger small",
+                    "danger small icon-button robot-force-release",
+                    "leave",
                 );
                 actions.append(card.release);
                 element_.append(actions);
@@ -451,25 +516,40 @@ export function robotControls(refresh, openMetrics) {
                             run: () => goHome().catch(notice),
                         } : null,
                         gripFeedback: velocity => card.grippers?.gamepad(velocity),
+                        haplyAvailable: () => state.haply_available === true,
                     },
                 );
                 const mode = card.gamepad.select;
                 card.mode = mode;
-                card.release = button(
+                if (supportsHaply(robot)) card.haply = haplyInput(
+                    robot, (command, motionMode) => send(card.robot, command, motionMode),
+                    () => endInput(robot.id), () => ({
+                        arm: card.armSpeed.percent(), roll: card.rollSpeed?.percent() ?? 50,
+                        grip: card.gripSpeed?.percent() ?? 40,
+                    }),
+                );
+                card.stop = button(
                     "Stop",
                     async () => {
                         stopInputs(card);
-                        await stop();
-                        await release(robot.id);
+                        await endInput(robot.id);
                         await refresh();
                     },
-                    "danger small",
+                    "secondary icon-button",
+                    "stop",
                 );
-                card.release.title =
-                    "Esc: stop motion and release control; keep the controller connected";
-                const shortcut = element("kbd", "Esc", "control-shortcut");
-                shortcut.setAttribute("aria-hidden", "true");
-                card.release.append(shortcut);
+                card.stop.title = "Stop motion · Esc";
+                card.acquire = button("Acquire", () => acquire(card.robot), "secondary small acquire-control");
+                card.acquire.setAttribute("aria-label", "Acquire control");
+                card.acquire.title = "Acquire control";
+                card.release = button("Release control", async () => {
+                    stopInputs(card);
+                    await stop();
+                    await release(robot.id);
+                    await refresh();
+                }, "secondary small icon-button", "leave");
+                card.release.hidden = true;
+                statusLine.append(card.acquire, card.release);
                 const actions = element("div", undefined, "robot-toolbar");
                 const inputLabel = element("label", undefined, "robot-input-choice");
                 inputLabel.append(mode);
@@ -484,7 +564,29 @@ export function robotControls(refresh, openMetrics) {
                     card.home.title = `Move to home: ${Object.values(robot.controls.home_deg).flat().join(", ")}°`;
                     actions.append(card.home);
                 }
-                actions.append(card.release);
+                if (robot.simulation && robot.controls.reset_scene) {
+                    card.reset = button("Reset scene", async () => {
+                        if (card.reset.disabled) return;
+                        card.reset.disabled = true;
+                        card.reset.blur();
+                        stopInputs(card);
+                        await endInput(robot.id);
+                        await refresh();
+                        await step(card.robot, {}, "reset");
+                        await refresh();
+                    }, "secondary icon-button", "reset");
+                    card.reset.title = "Reset scene";
+                    actions.append(card.reset);
+                }
+                card.replay = replayControls(
+                    robot,
+                    async () => { stopInputs(card); await endInput(robot.id); },
+                    (command, mode, speed) => send(card.robot, command, mode, speed),
+                    () => endInput(robot.id),
+                    refresh,
+                    result => acknowledge(robot.id, result, true),
+                );
+                actions.append(card.replay.button, card.stop, card.replay.status);
                 element_.append(actions, card.gamepad.discovery);
                 if (card.step) {
                     const settings = element("div", undefined, "motion-settings");
@@ -502,10 +604,15 @@ export function robotControls(refresh, openMetrics) {
                     increment,
                 );
                 const placeControls = () => {
-                    const input = mode.value === "keyboard" ? card.keyboard : card.gamepad;
+                    const input = mode.value === "keyboard" ? card.keyboard
+                        : mode.value === "haply" ? card.haply : card.gamepad;
                     if (card.armSpeed) input.arms.prepend(card.armSpeed.element);
                     if (card.rollSpeed) input.roll.prepend(card.rollSpeed.element);
                     if (card.grippers) input.element.append(card.grippers.element);
+                    if (card.grippers && card.haply) {
+                        card.gripSpeed.element.after(card.haply.grip);
+                        card.haply.grip.hidden = mode.value !== "haply";
+                    }
                 };
                 card.gamepad.element.addEventListener("change", () => {
                     const available = permitted(card.robot) &&
@@ -516,26 +623,28 @@ export function robotControls(refresh, openMetrics) {
                 });
                 mode.onchange = async () => {
                     selectedInput = card.gamepad.selection();
-                    await releaseAll();
+                    await pauseAll();
                     const available = permitted(card.robot) &&
                         !motionState(card.robot).home_active && !motionState(card.robot).stopping;
                     card.gamepad.update(
-                        mode.value !== "keyboard",
+                        !["keyboard", "haply"].includes(mode.value),
                         available,
                     );
                     card.keyboard.update(
                         mode.value === "keyboard",
                         available,
                     );
+                    card.haply?.update(mode.value === "haply", available);
                     card.grippers?.update(available, mode.value === "keyboard", card.gamepad.bindings());
                     placeControls();
                     renderFeedback(card.pose, card.robot);
-                    if (mode.value === "keyboard" ? card.keyboard.inlineFeedback : card.gamepad.inlineFeedback)
+                    if (mode.value === "keyboard" ? card.keyboard.inlineFeedback : mode.value !== "haply" && card.gamepad.inlineFeedback)
                         card.pose.hidden = true;
                 };
                 card.gamepad.update(false, permitted(robot));
                 card.keyboard.update(true, permitted(robot));
                 element_.append(card.keyboard.element, card.gamepad.element);
+                if (card.haply) element_.append(card.haply.element);
                 if (robot.controls.grippers?.length) {
                     card.grippers = gripperControls(
                         robot,
@@ -544,6 +653,9 @@ export function robotControls(refresh, openMetrics) {
                         card.gripSpeed.value,
                     );
                     card.grippers.element.prepend(card.gripSpeed.element);
+                    card.grippers.element.addEventListener("pointerdown", () => {
+                        if (mode.value === "haply") card.haply.stop();
+                    }, true);
                 }
                 placeControls();
                 card.gamepad.restore(restoredInputs.has(robot.id)
@@ -586,7 +698,8 @@ export function robotControls(refresh, openMetrics) {
                     acknowledge(id, await action("robot.renew", { id }), true);
                 } catch {
                     stopInputs(cards.get(id));
-                    await endInput(id);
+                    await stop();
+                    await release(id);
                 }
             }
         } finally {
@@ -658,6 +771,14 @@ export function robotControls(refresh, openMetrics) {
                 status.disabled = true;
                 actions.append(status);
             }
+            if (robot.owner) {
+                const force = button("Force release robot control", async () => {
+                    await action("robot.revoke", {id: robot.id});
+                    await refresh();
+                }, "danger small icon-button robot-force-release", "leave");
+                force.disabled = robot.status !== "online";
+                actions.append(force);
+            }
             const metrics = button(
                 "Metrics",
                 () => openMetrics(robot.id),
@@ -684,7 +805,10 @@ export function robotControls(refresh, openMetrics) {
                 state.session?.robot,
             ]);
             if (key !== signature) {
-                releaseAll();
+                // Presentation changes pause motion without surrendering the lease.
+                pauseAll();
+                for (const id of held)
+                    if (!visible.some(robot => robot.id === id)) release(id);
                 render();
                 signature = key;
             }
@@ -744,20 +868,27 @@ export function robotControls(refresh, openMetrics) {
                         state.role === "patient"
                             ? !robot.owner &&
                               !(robot.error && robot.status === "online")
-                            : false;
+                            : !mine;
                     card.release.disabled =
                         state.role === "patient"
                             ? robot.status !== "online"
-                            : robot.node_online === false ||
+                            : !mine || releasing.has(robot.id) || robot.node_online === false ||
                               robot.status === "disconnected" ||
                               state.session?.status !== "approved" ||
                               (!!robot.owner && !mine);
                     if (state.role === "patient")
-                        card.release.textContent = robot.error
-                            ? "Retry hold"
-                            : "Revoke control";
+                        setIcon(card.release, robot.error ? "reset" : "leave",
+                            robot.error ? "Retry hold" : "Force release robot control");
+                }
+                if (card.acquire) {
+                    card.acquire.hidden = !!robot.owner || held.has(robot.id);
+                    card.acquire.disabled = !eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id);
                 }
                 const allowed = permitted(robot);
+                if (card.stop) card.stop.disabled = !allowed;
+                card.replay?.update(state.replays || [], card.mode?.value, allowed);
+                if (card.mode) card.mode.disabled = !!card.replay?.active;
+                if (card.reset) card.reset.disabled = !allowed || card.replay?.active || stepping.has(robot.id) || current?.id === robot.id;
                 if (allowed && robot.state?.stopping) refreshStop(card);
                 else {
                     clearTimeout(card.stopTimer);
@@ -766,6 +897,7 @@ export function robotControls(refresh, openMetrics) {
                 if (card.home) {
                     card.home.disabled =
                         !allowed ||
+                        card.replay?.active ||
                         !!robot.state?.control_active ||
                         stepping.has(robot.id);
                     setIcon(
@@ -776,7 +908,7 @@ export function robotControls(refresh, openMetrics) {
                     let homeHint = card.armSpeed
                         ? "Home · Return to starting pose"
                         : `Home · ${Object.values(robot.controls.home_deg).flat().join(", ")}°`;
-                    if (card.mode?.value !== "keyboard") {
+                    if (!["keyboard", "haply"].includes(card.mode?.value)) {
                         const bindings = card.gamepad.bindings();
                         homeHint += ` · Hold ${bindings.home} or ${bindings.homeFallback} for 1s`;
                         homeHint += bindings.enableRequired
@@ -789,9 +921,9 @@ export function robotControls(refresh, openMetrics) {
                 }
                 const inputAllowed =
                     allowed &&
+                    !card.replay?.active &&
                     !robot.state?.home_active &&
                     !robot.state?.stopping;
-                if (card.mode) card.mode.disabled = !inputAllowed;
                 card.armSpeed?.update(inputAllowed);
                 card.rollSpeed?.update(inputAllowed);
                 card.step?.update(inputAllowed);
@@ -804,23 +936,24 @@ export function robotControls(refresh, openMetrics) {
                 );
                 card.grippers?.feedback(robot.stale || robot.status !== "online" ? null : robot.state);
                 card.gamepad?.update(
-                    card.mode?.value !== "keyboard",
+                    !["keyboard", "haply"].includes(card.mode?.value),
                     inputAllowed,
                 );
+                card.haply?.update(card.mode?.value === "haply", inputAllowed);
                 card.keyboard?.update(
                     card.mode?.value === "keyboard",
                     inputAllowed,
                 );
                 card.keyboard?.feedback(robot.state);
                 card.gamepad?.feedback(robot.state);
-                if (card.keyboard && (card.mode.value === "keyboard" ? card.keyboard.inlineFeedback : card.gamepad.inlineFeedback)) {
+                if (card.keyboard && (card.mode.value === "keyboard" ? card.keyboard.inlineFeedback : card.mode.value !== "haply" && card.gamepad.inlineFeedback)) {
                     card.pose.hidden = true;
                 }
                 if (
-                    !allowed &&
+                    !eligible(robot) &&
                     (held.has(robot.id) || current?.id === robot.id)
                 )
-                    endInput(robot.id);
+                    release(robot.id);
             }
         },
     };

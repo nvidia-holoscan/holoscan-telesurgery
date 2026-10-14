@@ -9,6 +9,10 @@ import time
 import websocket
 
 
+class RequestRejected(RuntimeError):
+    """The controller replied with a JSON-RPC error, rather than losing transport."""
+
+
 class RpcClient:
     """One bounded request/reply at a time; never replay a motion after failure."""
 
@@ -52,7 +56,7 @@ class RpcClient:
                     reason = (
                         error.get("message", "Unknown error") if isinstance(error, dict) else error
                     )
-                    raise RuntimeError(f"Controller rejected request: {reason}")
+                    raise RequestRejected(f"Controller rejected request: {reason}")
                 if self.broadcast and isinstance(reply, dict) and reply.get("id") != self.sequence:
                     continue
                 if not isinstance(reply, dict) or reply.get("id") != self.sequence:
@@ -62,7 +66,7 @@ class RpcClient:
                     reason = (
                         error.get("message", "Unknown error") if isinstance(error, dict) else error
                     )
-                    raise RuntimeError(f"Controller rejected request: {reason}")
+                    raise RequestRejected(f"Controller rejected request: {reason}")
                 return reply.get("result")
             raise TimeoutError("Controller did not reply")
         except (OSError, websocket.WebSocketException) as exc:

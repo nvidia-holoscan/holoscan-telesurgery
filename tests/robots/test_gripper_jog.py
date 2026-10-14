@@ -76,3 +76,31 @@ def test_idle_arm_is_not_commanded_when_only_other_gripper_moves(monkeypatch):
     targets = jog.advance(measured)
     assert targets["left"] == measured["left"]
     assert "left" not in jog.rates
+
+
+@pytest.mark.parametrize("release", ["hold", "zero", "timeout"])
+def test_simulated_grasp_retains_only_bounded_closing_load(monkeypatch, release):
+    clock = [0.0]
+    monkeypatch.setattr(
+        "telesurgery_robots.mira.gripper.time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    jog = GripperJog(retain_closing_load=True)
+    measured = {"left": 0.1, "right": 0.4}
+    for _ in range(20):
+        jog.command({"left": -0.2, "right": 0.2}, measured)
+        clock[0] += 0.05
+        jog.advance(measured)
+    # Contact blocks closure: releasing retains the bounded preload, while an
+    # opening jaw stops at its measured aperture. Neither command keeps moving.
+    if release == "hold":
+        stopped = jog.stop(measured)
+    else:
+        if release == "zero":
+            jog.command({"left": 0, "right": 0}, measured)
+        else:
+            clock[0] += 0.3
+        stopped = jog.advance(measured)
+    assert stopped == pytest.approx({"left": 0.08, "right": 0.4})
+    clock[0] += 1
+    assert jog.advance(measured) == {}
+    assert not jog.rates

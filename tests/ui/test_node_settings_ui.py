@@ -113,16 +113,36 @@ async def test_node_grid_alignment_at_different_counts_and_widths(tmp_path):
                 state["nodes"] = [
                     {
                         "id": "host" if i == 0 else str(i),
-                        "name": "Host" if i == 0 else f"Node {i} with a long descriptive room name",
+                        "name": "Host"
+                        if i == 0
+                        else f"{'Node' if i % 2 else 'node'} {i} with a long descriptive room name",
                         "status": ["online", "offline", "unpaired", "error"][i % 4],
                         "connection": "service",
                         "paired": i % 4 != 2,
                         "error": "Long deployment error\n" * 100 if i % 4 == 3 else "",
                     }
-                    for i in range(count)
+                    for i in reversed(range(count))
                 ]
                 await page.goto("http://localhost:8777/#nodes")
                 await expect(page.locator("#nav-node-count")).to_have_text(str(count))
+                if count > 1:
+                    await expect(page.locator("#nodes .node-group")).to_have_count(2)
+                    assert await page.locator("#nodes .node-group").evaluate_all(
+                        "groups => groups.map(group => group.dataset.status)"
+                    ) == ["online", "offline"]
+                    for status in ("online", "offline"):
+                        expected = [
+                            node["name"]
+                            for node in reversed(state["nodes"])
+                            if (node["status"] == "online") == (status == "online")
+                        ]
+                        group = page.locator(f'.node-group[data-status="{status}"]')
+                        await expect(group.locator(".node-group-count")).to_have_text(
+                            str(len(expected))
+                        )
+                        await expect(group.locator(".node-card-identity strong")).to_have_text(
+                            expected
+                        )
                 for width in (1600, 1024, 390):
                     await page.set_viewport_size({"width": width, "height": 1000})
                     assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -134,15 +154,32 @@ async def test_node_grid_alignment_at_different_counts_and_widths(tmp_path):
                         const box=card.getBoundingClientRect();
                         const title=card.querySelector('.node-card-identity');
                         const link=title.getBoundingClientRect();
-                        return {width:box.width,height:box.height,header:link.y-box.y};
+                        return {width:box.width,height:box.height,header:link.y-box.y,
+                            group:card.closest('.node-group').dataset.status};
                     })""")
                     assert len(boxes) == count
                     assert all(box["width"] <= 480 for box in boxes)
-                    for key in ("width", "height", "header"):
+                    for key in ("width", "header"):
                         assert max(box[key] for box in boxes) - min(box[key] for box in boxes) < 1
+                    for status in ("online", "offline"):
+                        heights = [box["height"] for box in boxes if box["group"] == status]
+                        assert max(heights) - min(heights) < 1
                     if count in (2, 4, 9) and width != 1024:
                         await page.screenshot(
                             path=str(tmp_path / f"nodes-{count}-{width}.png"), full_page=True
                         )
+            # A host coming back online moves groups on the next status update.
+            reconnected = state["nodes"][0]
+            reconnected["status"] = "online"
+            online = page.locator('.node-group[data-status="online"]')
+            offline = page.locator('.node-group[data-status="offline"]')
+            await expect(online.locator(".node-card-identity strong")).to_contain_text(
+                [reconnected["name"]]
+            )
+            await expect(offline.locator(".node-card-identity strong")).not_to_contain_text(
+                [reconnected["name"]]
+            )
+            await expect(online.locator(".node-group-count")).to_have_text("5")
+            await expect(offline.locator(".node-group-count")).to_have_text("11")
         finally:
             await browser.close()

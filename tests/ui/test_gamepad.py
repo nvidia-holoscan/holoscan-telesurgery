@@ -56,7 +56,9 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
         if path.startswith("api/status"):
             await request.fulfill(json=state)
         elif path == "api/action":
-            actions.append(json.loads(request.request.post_data))
+            call = json.loads(request.request.post_data)
+            if call["action"] != "robot.renew":
+                actions.append(call)
             await request.fulfill(json={"result": True})
         else:
             await request.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
@@ -69,6 +71,7 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             await page.get_by_label("Robot input", exact=True).select_option("0")
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
             # Sticks do not move without the deadman; small drift stays in the dead zone.
@@ -109,7 +112,7 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
                 await page.evaluate("pad.buttons[5].pressed=true")
                 await expect(page.locator(".gamepad-status")).to_contain_text("Release")
                 await expect(enabled_badges).to_have_count(0)
-                assert actions[-1]["action"] == "robot.release"
+                assert actions[-1]["action"] == "robot.hold"
                 count = len([a for a in actions if a["action"] == "robot.move"])
                 await page.wait_for_timeout(150)
                 assert len([a for a in actions if a["action"] == "robot.move"]) == count
@@ -155,7 +158,7 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
             count = len([a for a in actions if a["action"] == "robot.move"])
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
-            assert actions[-1]["action"] == "robot.release"
+            assert actions[-1]["action"] == "robot.hold"
             await page.evaluate("pad.buttons[4].pressed=false; pad.axes.fill(0)")
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
             await page.evaluate("pad.buttons[4].pressed=true; pad.axes[0]=-0.575")
@@ -166,13 +169,13 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
             moves = [a for a in actions if a["action"] == "robot.move"]
             assert len(moves) > count
             assert moves[count]["params"]["command"][key][0] == pytest.approx(-0.2)
-            # Releasing cancels motion and releases the remote lock.
+            # Releasing the deadman cancels motion while keeping the remote lock.
             await page.evaluate("pad.buttons[4].pressed=false; pad.axes.fill(0)")
             for _ in range(40):
-                if actions[-1]["action"] == "robot.release":
+                if actions[-1]["action"] == "robot.hold":
                     break
                 await page.wait_for_timeout(50)
-            assert actions[-1]["action"] == "robot.release"
+            assert actions[-1]["action"] == "robot.hold"
             count = len([a for a in actions if a["action"] == "robot.move"])
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
@@ -373,7 +376,9 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
         if path.startswith("api/status"):
             await request.fulfill(json=state)
         elif path == "api/action":
-            actions.append(json.loads(request.request.post_data))
+            call = json.loads(request.request.post_data)
+            if call["action"] != "robot.renew":
+                actions.append(call)
             await request.fulfill(json={"result": True})
         else:
             await request.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
@@ -385,6 +390,7 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             await page.add_init_script(PAD)
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             await page.get_by_label("First input", exact=True).select_option("0")
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
             await page.evaluate("pad.buttons[4].pressed=true;pad.axes[0]=1")
@@ -399,6 +405,7 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
             await page.evaluate("pad.buttons[4].pressed=false;pad.axes.fill(0)")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
             actions.clear()
             await expect(page.locator(".gamepad-controls:visible")).to_have_attribute(
                 "data-state", "ready"
@@ -417,7 +424,7 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             count = len([a for a in actions if a["action"] == "robot.move"])
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
-            assert actions[-1]["action"] == "robot.release"
+            assert actions[-1]["action"] == "robot.hold"
             await page.get_by_label("Second input", exact=True).select_option("keyboard")
             await page.locator("#robot-selector").select_option("First")
             await expect(page.get_by_label("First input", exact=True)).to_have_value("keyboard")

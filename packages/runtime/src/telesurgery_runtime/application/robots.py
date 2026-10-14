@@ -10,6 +10,7 @@ import time
 from concurrent.futures import Future
 from threading import RLock
 
+from telesurgery_core.transport.rpc import RequestRejected
 from telesurgery_robots.adapters.base import (
     Adapter,
     controls,
@@ -37,7 +38,7 @@ class Controller:
     def permitted(self):
         return self.adapter.simulation or self.specification().get("motion_enabled") is True
 
-    def record(self, function):
+    def record(self, function, *, motion=False):
         if self.closing:
             raise RuntimeError("Robot controller is disconnected")
         try:
@@ -45,6 +46,12 @@ class Controller:
             if not isinstance(state, dict):
                 raise RuntimeError("Controller returned invalid state")
         except Exception as exc:
+            if motion and self.adapter.simulation and isinstance(exc, RequestRejected):
+                # A rejected simulation movement is not a lost connection.
+                # Confirm a hold before preserving the lease. Failure to hold
+                # still marks feedback offline through the ordinary path.
+                self.record(self.adapter.hold)
+                raise
             # A freshly started vendor API may still be loading its lookup table.
             # Only initial transport failures get this bounded startup window.
             starting = (
@@ -108,7 +115,7 @@ class Controller:
         self.expires = time.monotonic() + 2
 
     def move(self, token, sequence, command, sent_at, mode="jog", speed_deg_s=None):
-        if mode not in {"step", "jog", "home", "grip", "cartesian"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if type(sent_at) not in (float, int) or not math.isfinite(sent_at):
             raise ValueError("Invalid controller timestamp")
@@ -127,27 +134,34 @@ class Controller:
             options["speed_deg_s"] = speed_value(speed_deg_s, self.adapter.speed_limits)
         elif speed_deg_s is not None:
             raise ValueError("Adjustable speed is not supported by this robot")
+        if mode == "reset":
+            if not self.adapter.simulation or not hasattr(self.adapter, "reset"):
+                raise ValueError("Scene reset is not supported by this robot")
+            if command != {}:
+                raise ValueError("Scene reset uses the initial environment")
+            self.sequence = sequence
+            return self.record(self.adapter.reset, motion=True)
         if mode == "home":
             if command != {}:
                 raise ValueError("Home uses the configured pose")
             if not hasattr(self.adapter, "home"):
                 raise ValueError("Home is not supported by this robot")
             self.sequence = sequence
-            return self.record(lambda: self.adapter.home(**options))
+            return self.record(lambda: self.adapter.home(**options), motion=True)
         if mode == "grip":
             if not hasattr(self.adapter, "grip"):
                 raise ValueError("Gripper control is not supported by this robot")
             gripper_rates(command, self.adapter.grippers)
             self.sequence = sequence
-            return self.record(lambda: self.adapter.grip(command))
+            return self.record(lambda: self.adapter.grip(command), motion=True)
         if mode == "cartesian":
             from telesurgery_robots.mira.cartesian import command as tool_command
 
             if not hasattr(self.adapter, "jog_cartesian"):
                 raise ValueError("MIRA Cartesian jogging is not supported by this robot")
-            command = tool_command(command)
+            command = tool_command(command, self.adapter.mira_cartesian)
             self.sequence = sequence
-            return self.record(lambda: self.adapter.jog_cartesian(command))
+            return self.record(lambda: self.adapter.jog_cartesian(command), motion=True)
         if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
             from telesurgery_robots.adapters.base import cartesian_command
 
@@ -162,11 +176,16 @@ class Controller:
         move = (
             getattr(self.adapter, "step", self.adapter.jog) if mode == "step" else self.adapter.jog
         )
-        return self.record(lambda: move(command, **options))
+        return self.record(lambda: move(command, **options), motion=True)
 
     def renew(self, token):
         self.validate(token)
         return self.state()
+
+    def hold(self, token):
+        """Stop motion while preserving this surgeon's lease."""
+        self.validate(token)
+        return self.record(self.adapter.hold)
 
     def release(self, token=None):
         if not self.active:

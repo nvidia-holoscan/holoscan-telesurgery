@@ -19,7 +19,7 @@ class MiraFeedback:
     """Use USD joint frames, including the asset's scale, without duplicating vendor IK."""
 
     def __init__(self, stage, drives):
-        from pxr import Gf, UsdGeom, UsdPhysics
+        from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
         cache = UsdGeom.XformCache()
         mm = UsdGeom.GetStageMetersPerUnit(stage) * 1000
@@ -61,13 +61,35 @@ class MiraFeedback:
                     self.limits[arm].append(
                         (joint.GetLowerLimitAttr().Get(), joint.GetUpperLimitAttr().Get())
                     )
+            # Control a grasp point near the distal jaws, not the jaw hinge.
+            # The asset scales its tools and reverses the right tool's pointing
+            # axis. Derive both distance and sign from its inner jaw surfaces.
+            roll = UsdPhysics.RevoluteJoint(joints[4].GetPrim())
+            roll_frame = frame(roll, 1)
+            axis = "XYZ".index(roll.GetAxisAttr().Get())
+            tool = stage.GetPrimAtPath(roll.GetBody1Rel().GetTargets()[0]).GetParent()
+            distances = []
+            for prim in Usd.PrimRange(tool):
+                if not prim.IsA(UsdGeom.Mesh) or not prim.GetName().endswith("_inner"):
+                    continue
+                points = np.asarray(UsdGeom.Mesh(prim).GetPointsAttr().Get())
+                world = np.c_[points, np.ones(len(points))] @ np.asarray(
+                    cache.GetLocalToWorldTransform(prim)
+                )
+                local = (world[:, :3] * mm - roll_frame[:3, 3]) @ roll_frame[:3, :3]
+                distances.extend((local[:, axis].min(), local[:, axis].max()))
+            if not distances:
+                raise RuntimeError(f"MIRA {arm} tool has no inner jaw geometry")
+            offset = np.eye(4)
+            offset[axis, 3] = 0.97 * max(distances, key=abs)
+            self.chains[arm][-1] = offset, axis
 
     def pose(self, arm, joints):
         transform = np.eye(4)
         for index, (offset, axis) in enumerate(self.chains[arm]):
             transform = transform @ offset
             if index == 5:
-                break  # Jaw pivot, independent of jaw opening.
+                break  # Grasp point on the tool centerline, independent of jaw opening.
             angle = np.deg2rad(joints[index])
             direction = np.eye(3)[axis]
             skew = np.array(

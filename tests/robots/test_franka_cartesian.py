@@ -37,6 +37,22 @@ def test_singular_and_near_limit_solutions_remain_bounded():
     assert joint_velocity(np.eye(6, 7), position, [1, 0, 0], [0, 0, 0], 4) == [0] * 7
 
 
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_redundant_joint_can_continue_when_another_reaches_its_limit(direction):
+    jacobian = np.eye(6, 7)
+    jacobian[0, 6] = 1
+    position = JOINT_LIMITS.mean(axis=1)
+    position[0] = JOINT_LIMITS[0, int(direction > 0)]
+    velocity = np.array(joint_velocity(jacobian, position, [direction, 0, 0], [0, 0, 0], 4))
+    assert velocity[0] == pytest.approx(0)
+    assert velocity[6] * direction > 1
+    assert np.max(np.abs(velocity)) <= 4
+    assert np.linalg.norm((jacobian @ velocity)[1:]) < 1e-8
+    # Reversal can use the first joint again immediately.
+    reverse = joint_velocity(jacobian, position, [-direction, 0, 0], [0, 0, 0], 4)
+    assert reverse[0] * direction < 0
+
+
 @pytest.mark.parametrize(
     "command",
     [
