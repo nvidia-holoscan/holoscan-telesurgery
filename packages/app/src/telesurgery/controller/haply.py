@@ -158,7 +158,10 @@ class Haply:
                         self.done.wait(0.01)
                 except ConnectionRefusedError:
                     executable = shutil.which("haply-inverse-service")
-                    self.latest = None, "Haply service unavailable; run setup.sh on this host."
+                    self.latest = (
+                        None,
+                        "Haply service unavailable; open Haply Hub or run setup.sh on this host.",
+                    )
                     if executable and self.process is None:
                         self.log = tempfile.TemporaryFile()
                         self.process = subprocess.Popen(

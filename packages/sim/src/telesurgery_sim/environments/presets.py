@@ -20,12 +20,17 @@ PRESETS = {
             ("assistant", "Versius assistant arm view"),
             ("endoscope", "Versius endoscope arm view"),
         ],
-        # Fixed operator viewpoints just behind and beside each bedside unit.
-        "arm_views": {
-            "left": (-1.25, -0.27, 1.55),
-            "right": (1.25, 0.27, 1.55),
-            "assistant": (0.29, 1.37, 1.55),
-            "endoscope": (-0.25, -1.5, 1.55),
+        # Eye, target (metres, Z up), and focal length (mm). Arm views frame
+        # the jaws and shared work area from beside each instrument shaft.
+        # The mounted procedure camera derives its eye from the endoscope TCP.
+        "camera_views": {
+            "procedure": (None, (0, 0, 0.505), 19),
+            # Demonstration overview: keep all four bedside units in frame.
+            "room": ((2.25, -2.65, 2.3), (0, 0, 0.28), 31),
+            "left": ((-0.48, -0.30, 0.88), (0, -0.025, 0.525), 38),
+            "right": ((0.48, 0.30, 0.88), (0, -0.025, 0.525), 38),
+            "assistant": ((0.30, 0.48, 0.88), (0, 0.015, 0.52), 34),
+            "endoscope": ((-0.40, -0.68, 1.02), (0, -0.10, 0.57), 32),
         },
         "robot": "CMR Versius",
     },

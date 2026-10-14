@@ -114,8 +114,7 @@ def run(app, args):
     width, height = preset["resolution"]
     depth_enabled = [False] * len(preset["cameras"])
     for key, name in preset["cameras"]:
-        eye = None if key == "procedure" else preset["arm_views"].get(key, (2.25, -2.65, 2.3))
-        target = (0, 0, 0.32) if key == "room" else (0, 0, 0.505)
+        eye, target, focal_length = preset["camera_views"][key]
         path = (
             rigs["endoscope"]["root"] + "/TCP/Camera"
             if key == "procedure"
@@ -128,7 +127,7 @@ def run(app, args):
             eye = parent.Transform(Gf.Vec3d(0, 0, 0.006))
         camera = UsdGeom.Camera.Define(stage, path)
         camera.CreateClippingRangeAttr((0.001, 20))
-        camera.CreateFocalLengthAttr(16 if key == "procedure" else 27)
+        camera.CreateFocalLengthAttr(focal_length)
         camera.CreateFStopAttr(0)
         matrix = (
             Gf.Matrix4d()

@@ -1236,6 +1236,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 }
 .robot-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     margin-top: 12px;
@@ -1244,7 +1245,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1;
+    flex: 1 1 120px;
     min-width: 0;
     margin: 0;
 }
@@ -1270,6 +1271,18 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     flex-shrink: 0;
     height: 36px;
     min-height: 36px;
+}
+.robot-toolbar-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 8px;
+}
+.replay-status:not([hidden]) {
+    display: block;
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    overflow-wrap: anywhere;
 }
 .motion-settings {
     display: flex;

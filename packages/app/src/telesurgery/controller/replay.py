@@ -34,16 +34,20 @@ def read_rows(path):
     return rows
 
 
-def check_initial(state, initial):
+def check_initial(state, initial, *, starting_scene="Home"):
     for group, expected in initial["joints_deg"].items():
         actual = state.get("joints_deg", {}).get(group, [])
         if len(actual) != len(expected) or any(
             abs(a - b) > 1.0 for a, b in zip(actual, expected, strict=True)
         ):
-            raise ValueError("Starting joints differ; restore Home before replay")
+            raise ValueError(
+                f"Starting joints differ ({group}); use {starting_scene} before replay"
+            )
     for group, expected in initial.get("grippers", {}).items():
         if abs(state.get("grippers", {}).get(group, -1) - expected) > 0.04:
-            raise ValueError("Starting gripper differs; restore Home before replay")
+            raise ValueError(
+                f"Starting gripper differs ({group}); use {starting_scene} before replay"
+            )
 
 
 class InputMapping:
@@ -92,13 +96,18 @@ class Catalog:
         self.recordings = {}
         for path in root.glob("*/*/manifest.json"):
             manifest = json.loads(path.read_text())
-            if manifest.get("version") != 1 or not manifest.get("replay_verified"):
+            if manifest.get("version") not in {1, 2} or not manifest.get("replay_verified"):
                 continue
             if manifest.get("environment") not in {"mira", "franka", "versius"}:
                 continue
             if manifest.get("device") not in {"keyboard", "gamepad", "haply"}:
                 continue
             if not all((path.parent / s["file"]).is_file() for s in manifest["streams"].values()):
+                continue
+            if manifest["version"] == 2 and (manifest["environment"], manifest["device"]) != (
+                "mira",
+                "keyboard",
+            ):
                 continue
             key = str(path.parent.relative_to(root))
             self.recordings[key] = path, manifest
@@ -135,6 +144,11 @@ class Playback:
         self.clock = clock
         self.read_at = clock()
         self.role = role
+        self.renewed = clock()
+
+    @property
+    def finished(self):
+        return self.index == len(self.rows)
 
     def read(self, elapsed, state):
         now = self.clock()
@@ -155,6 +169,183 @@ class Playback:
             "done": self.index == len(self.rows),
             "elapsed": max(0, elapsed),
         }
+
+
+class FeedbackPlayback(Playback):
+    """Keep recorded cadence while tracking; pause at lag or input transitions."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending = None
+        self.previous_t = 0.0
+        self.grip_goals = {}
+        self.request = None
+        self.due_at = None
+        self.barrier = None
+        self.polled_at = float("-inf")
+
+    @property
+    def finished(self):
+        return super().finished and self.pending is None
+
+    def acknowledge(self, state):
+        self.request = None
+        if self.pending is None:
+            return
+        self.pending["acknowledged"] = True
+        if self.pending["mode"] != "grip":
+            targets = state.get("targets_deg", {})
+            if not all(group in targets for group in self.mapping.inputs.groups):
+                raise ValueError("Replay requires controller target feedback")
+            self.pending["targets"] = {
+                group: list(targets[group][:count])
+                for group, count in self.mapping.inputs.groups.items()
+            }
+            if any(
+                len(values) != self.mapping.inputs.groups[group]
+                or not all(math.isfinite(v) for v in values)
+                for group, values in self.pending["targets"].items()
+            ):
+                raise ValueError("Replay requires valid controller target feedback")
+
+    def validate_request(self, mode, command):
+        expected = self.request
+        if (
+            not expected
+            or mode != expected[0]
+            or command != ({"velocity": expected[1]} if mode == "grip" else expected[1])
+        ):
+            raise RuntimeError("Replay input is no longer current")
+        now = self.clock()
+        if now - self.read_at > 0.3:
+            raise TimeoutError("Replay paused because the dashboard stopped polling")
+        if not self.pending or now > self.pending["deadline"]:
+            raise TimeoutError("Replay stopped: measured motion did not reach its target")
+
+    def read(self, elapsed, state):
+        now = self.clock()
+        if now - self.read_at > 0.3:
+            raise TimeoutError("Replay paused because the dashboard stopped polling")
+        self.read_at = now
+        result = {
+            "request": None,
+            "speed_deg_s": self.mapping.inputs.speed,
+            "done": self.finished,
+            "elapsed": self.previous_t,
+            "waiting_feedback": False,
+        }
+        if self.pending:
+            pending = self.pending
+            if now > pending["deadline"]:
+                raise TimeoutError("Replay stopped: measured motion did not reach its target")
+            if not pending.get("acknowledged"):
+                return {**result, "waiting_feedback": True}
+            if pending["mode"] == "grip":
+                positions = state.get("grippers", {})
+                rates = {}
+                for group, goal in pending["goals"].items():
+                    actual = positions.get(group)
+                    if actual is None or not math.isfinite(actual):
+                        raise ValueError("Replay requires measured gripper feedback")
+                    rate = pending["rates"][group]
+                    previous, progressed = pending["progress"][group]
+                    if abs(actual - previous) > 0.001:
+                        pending["progress"][group] = actual, now
+                        progressed = now
+                    # Closing on an object need not reach the empty-jaw pose.
+                    # After the recorded squeeze duration, a stationary jaw
+                    # can release the input while the controller retains its
+                    # bounded closing load. This does not verify a grasp.
+                    contact = (
+                        rate < 0 and now >= pending["squeeze_until"] and now - progressed >= 0.3
+                    )
+                    if not contact and (goal - actual) * math.copysign(1, rate) > 0.002:
+                        rates[group] = rate
+                result["request"] = ("grip", rates) if rates else ("release", {})
+                if rates:
+                    self.request = result["request"]
+                    return {**result, "waiting_feedback": True}
+                self.pending = None
+                self.due_at = now
+                result["done"] = self.finished
+                return result
+            # Continuous input already runs inside the controller's bounded
+            # tracking envelope. Settling every 50 ms sample makes normal
+            # servo lag accumulate into a slow, stop/start replay. Require
+            # settling at key/speed transitions, including the final release.
+            continuing = self.index < len(self.rows) and all(
+                self.rows[self.index][field] == self.rows[self.index - 1][field]
+                for field in ("keys", "speeds")
+            )
+            tolerance = 1.0 if continuing else 0.35
+            for group, goal in pending["targets"].items():
+                actual = state.get("joints_deg", {}).get(group, [])
+                if len(actual) != len(goal) or not all(math.isfinite(v) for v in actual):
+                    raise ValueError("Replay requires measured joint feedback")
+                if any(abs(a - b) > tolerance for a, b in zip(actual, goal, strict=True)):
+                    self.due_at = max(self.due_at or now, now)
+                    return {**result, "waiting_feedback": True}
+            self.pending = None
+        if self.finished:
+            return {**result, "done": True}
+        row = self.rows[self.index]
+        if elapsed < 0:
+            return result
+        if self.due_at is None:
+            self.due_at = now - elapsed + row["t"]
+        if now < self.due_at:
+            return result
+        # Preserve cadence through small scheduler jitter, but never emit a
+        # burst to catch up after a delayed link or a stalled robot.
+        self.due_at = max(self.due_at, now - 0.01)
+        request = self.mapping.update(row, state, row["t"])
+        self.index += 1
+        self.previous_t = row["t"]
+        if request and request[0] != "release":
+            mode, command = request
+            self.pending = {"mode": mode, "deadline": now + 5.0}
+            if mode == "grip":
+                # Identical grip-only samples describe one held key. Convert its
+                # recorded duration to a position goal; network time must not
+                # extend the grip. Never skip a key or speed transition.
+                end = self.index
+                if set(row["keys"]) <= {"z", "x", "n", "m"}:
+                    while end < len(self.rows) and all(
+                        self.rows[end][field] == row[field] for field in ("keys", "speeds")
+                    ):
+                        end += 1
+                until = (
+                    self.rows[end]["t"] if end < len(self.rows) else self.rows[end - 1]["t"] + 0.05
+                )
+                duration = until - row["t"]
+                rates = {group: rate for group, rate in command.items() if rate}
+                positions = state.get("grippers", {})
+                if any(
+                    group not in positions or not math.isfinite(positions[group]) for group in rates
+                ):
+                    raise ValueError("Replay requires measured gripper feedback")
+                goals = {
+                    group: max(
+                        0, min(1, self.grip_goals.get(group, positions[group]) + rate * duration)
+                    )
+                    for group, rate in rates.items()
+                }
+                self.grip_goals.update(goals)
+                self.pending.update(
+                    rates=rates,
+                    goals=goals,
+                    progress={group: (positions[group], now) for group in rates},
+                    squeeze_until=now + duration,
+                    deadline=now + max(5.0, duration * 4 + 2),
+                )
+                if end > self.index:
+                    self.mapping.update(self.rows[end - 1], state, self.rows[end - 1]["t"])
+                self.index = end
+                self.previous_t = until
+        if self.index < len(self.rows):
+            self.due_at += self.rows[self.index]["t"] - row["t"]
+        self.request = request
+        return {**result, "request": request, "done": self.finished, "elapsed": self.previous_t}
 
 
 class Rendezvous:

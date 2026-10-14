@@ -215,10 +215,10 @@ export function emptyJog(robot) {
     );
 }
 
-export function inputBlocked() {
+export function inputBlocked({allowUnfocused = false} = {}) {
     return (
         document.hidden ||
-        !document.hasFocus() ||
+        (!allowUnfocused && !document.hasFocus()) ||
         !!document.activeElement?.closest(".motion-value") ||
         !!document.querySelector(
             'dialog[open], [role="dialog"][aria-modal="true"]:not([hidden])',

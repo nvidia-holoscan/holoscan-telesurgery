@@ -7,7 +7,7 @@ import gzip
 import json
 
 import pytest
-from telesurgery.controller.replay import Catalog, Playback, Rendezvous
+from telesurgery.controller.replay import Catalog, Playback, Rendezvous, check_initial
 from telesurgery_core.control.access import Ownership
 
 
@@ -35,6 +35,20 @@ def catalog(tmp_path):
 
 def robot(role="left", kind="versius-sim"):
     return {"id": f"node:{role}", "kind": kind, "simulation": kind.endswith("-sim")}
+
+
+@pytest.mark.parametrize("component", ["joints_deg", "grippers"])
+def test_mira_replay_requires_both_arms_and_explains_scene_reset(component):
+    path, manifest, role = Catalog().get("mira/keyboard", robot("mira", "mira-sim"))
+    initial = manifest["streams"][role]["initial"]
+    state = json.loads(json.dumps(initial))
+    if component == "joints_deg":
+        state[component]["right"][4] = -25.6
+    else:
+        state[component]["right"] = 0.5
+    with pytest.raises(ValueError, match=r"\(right\); use Reset scene before replay"):
+        check_initial(state, initial, starting_scene=manifest["starting_scene"])
+    check_initial(initial, initial, starting_scene=manifest["starting_scene"])
 
 
 def test_catalog_requires_verified_recording_and_matching_simulation(catalog):

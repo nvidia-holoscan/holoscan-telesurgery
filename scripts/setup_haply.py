@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Install the pinned Haply service, or extract it for the Docker runtime."""
+"""Reuse Haply Hub, install the pinned service, or extract it for the Docker runtime."""
 
 import argparse
 import os
@@ -21,7 +21,10 @@ def package_name(system, machine):
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine)
     ubuntu = system.get("VERSION_ID", "").replace(".", "")
     if system.get("ID") != "ubuntu" or ubuntu not in {"2204", "2404"} or not arch:
-        raise ValueError("Haply service requires Ubuntu 22.04/24.04 on x86_64 or aarch64.")
+        raise ValueError(
+            "The standalone Haply package requires Ubuntu 22.04/24.04 on x86_64 or aarch64. "
+            "For native setup on other releases, including Ubuntu 26.04, install Haply Hub."
+        )
     return f"haply-inverse-service-ubuntu{ubuntu}-{arch}-{VERSION}.deb"
 
 
@@ -33,6 +36,14 @@ def install(extract=None):
             text=True,
         )
         if installed.returncode == 0 and installed.stdout.strip() == f"{VERSION} installed":
+            return
+        hub = subprocess.run(
+            ["dpkg-query", "-W", "-f=${db:Status-Status}", "haply-hub"],
+            capture_output=True,
+            text=True,
+        )
+        if hub.returncode == 0 and hub.stdout.strip() == "installed":
+            print("Using installed Haply Hub; keep it open on the surgeon host for Haply input.")
             return
     package = package_name(platform.freedesktop_os_release(), platform.machine())
     with tempfile.TemporaryDirectory(prefix="telesurgery-haply-") as temporary:

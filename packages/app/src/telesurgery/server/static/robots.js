@@ -137,8 +137,8 @@ export function robotControls(refresh, openMetrics) {
         holding = new Map(),
         moving = new Set(),
         held = new Set();
-    function stopInputs(card) {
-        card?.replay?.stop();
+    function stopInputs(card, reason = "operator stopped replay") {
+        card?.replay?.stop(false, reason);
         card?.haply?.stop();
         card?.gamepad?.stop();
         card?.keyboard?.stop();
@@ -300,7 +300,7 @@ export function robotControls(refresh, openMetrics) {
             await pending.done;
         }
     }
-    async function send(robot, command, mode = "jog", replaySpeed) {
+    async function send(robot, command, mode = "jog", replaySpeed, replayRun) {
         if (current || releasing.has(robot.id) || holding.has(robot.id) || !permitted(robot)) return;
         const feedback = motionState(robot);
         if (feedback.stopping || feedback.home_active) {
@@ -324,6 +324,7 @@ export function robotControls(refresh, openMetrics) {
                 id: robot.id,
                 command,
                 mode,
+                ...(replaySpeed !== undefined ? {replay: true, replay_run: replayRun} : {}),
                 ...(speed ? { speed_deg_s: replaySpeed ?? speed.value() } : {}),
             });
             acknowledge(robot.id, result, true);
@@ -331,10 +332,13 @@ export function robotControls(refresh, openMetrics) {
             moving.add(robot.id);
             return result;
         } catch (error) {
+            const cancelled = input.cancelled
+                || (replaySpeed !== undefined && !cards.get(robot.id)?.replay?.active);
             input.cancelled = true;
             input.failed = true;
-            stopInputs(cards.get(robot.id));
-            notice(error);
+            stopInputs(cards.get(robot.id), error.message);
+            if (!cancelled || !["Replay stopped", "Replay input is no longer current"].includes(error.message))
+                notice(error);
         } finally {
             if (!eligible(robot)) await release(robot.id);
             else if (input.cancelled) await hold(robot.id);
@@ -347,10 +351,15 @@ export function robotControls(refresh, openMetrics) {
         await hold(id);
         if (releasing.has(id)) await releasing.get(id);
     }
-    async function pauseAll() {
-        for (const card of cards.values()) stopInputs(card);
-        await stop();
-        for (const id of held) await hold(id);
+    async function pauseAll(reason, keepReplays = false) {
+        const continuing = new Set();
+        for (const [id, card] of cards) {
+            if (keepReplays && !document.hidden && card.robot.simulation && card.replay?.active)
+                continuing.add(id);
+            else stopInputs(card, reason);
+        }
+        if (current && !continuing.has(current.id)) await stop();
+        for (const id of held) if (!continuing.has(id)) await hold(id);
     }
     async function step(robot, command, mode = "step") {
         if (current || releasing.has(robot.id)) return;
@@ -367,12 +376,12 @@ export function robotControls(refresh, openMetrics) {
         for (const id of [...held]) await release(id);
         await Promise.allSettled([...releasing.values()]);
     }
-    window.addEventListener("blur", pauseAll);
+    window.addEventListener("blur", () => pauseAll("dashboard lost focus", true));
     window.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") pauseAll();
+        if (event.key === "Escape") pauseAll("Escape pressed");
     });
     document.addEventListener("visibilitychange", () => {
-        if (document.hidden) pauseAll();
+        if (document.hidden) pauseAll("dashboard hidden");
     });
     window.addEventListener("pagehide", () => {
         generation++;
@@ -553,7 +562,8 @@ export function robotControls(refresh, openMetrics) {
                 const actions = element("div", undefined, "robot-toolbar");
                 const inputLabel = element("label", undefined, "robot-input-choice");
                 inputLabel.append(mode);
-                actions.append(inputLabel);
+                const buttons = element("div", undefined, "robot-toolbar-actions");
+                actions.append(inputLabel, buttons);
                 if (robot.controls.home_deg) {
                     card.home = button(
                         "Home",
@@ -562,7 +572,7 @@ export function robotControls(refresh, openMetrics) {
                         "home",
                     );
                     card.home.title = `Move to home: ${Object.values(robot.controls.home_deg).flat().join(", ")}°`;
-                    actions.append(card.home);
+                    buttons.append(card.home);
                 }
                 if (robot.simulation && robot.controls.reset_scene) {
                     card.reset = button("Reset scene", async () => {
@@ -576,18 +586,18 @@ export function robotControls(refresh, openMetrics) {
                         await refresh();
                     }, "secondary icon-button", "reset");
                     card.reset.title = "Reset scene";
-                    actions.append(card.reset);
+                    buttons.append(card.reset);
                 }
                 card.replay = replayControls(
                     robot,
                     async () => { stopInputs(card); await endInput(robot.id); },
-                    (command, mode, speed) => send(card.robot, command, mode, speed),
+                    (command, mode, speed, run) => send(card.robot, command, mode, speed, run),
                     () => endInput(robot.id),
                     refresh,
                     result => acknowledge(robot.id, result, true),
                 );
-                actions.append(card.replay.button, card.stop, card.replay.status);
-                element_.append(actions, card.gamepad.discovery);
+                buttons.append(card.replay.button, card.stop);
+                element_.append(actions, card.replay.status, card.gamepad.discovery);
                 if (card.step) {
                     const settings = element("div", undefined, "motion-settings");
                     settings.append(card.step.element);
