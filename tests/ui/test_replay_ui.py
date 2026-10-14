@@ -10,21 +10,32 @@ from urllib.parse import urlsplit
 import pytest
 from playwright.async_api import async_playwright, expect
 from telesurgery_robots.adapters.base import controls
-from telesurgery_robots.adapters.simulation import FrankaSimulation
+from telesurgery_robots.adapters.simulation import FrankaSimulation, MiraSimulation
 
 STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
 
 
 @pytest.mark.asyncio
-async def test_replay_requires_matching_recording_and_ownership_and_escape_discards_reply():
+@pytest.mark.parametrize("ending", ["escape", "complete", "blur", "hidden", "error"])
+@pytest.mark.parametrize(
+    "environment,name,adapter,width",
+    [
+        ("franka", "Franka", FrankaSimulation, 1280),
+        ("mira", "MIRA", MiraSimulation, 1280),
+        ("mira", "MIRA", MiraSimulation, 360),
+    ],
+)
+async def test_replay_requires_matching_recording_and_ownership_and_escape_discards_reply(
+    environment, name, adapter, width, ending, tmp_path
+):
     robot = {
-        "id": "node:franka",
-        "name": "Franka",
-        "kind": "franka-sim",
+        "id": f"node:{environment}",
+        "name": name,
+        "kind": f"{environment}-sim",
         "simulation": True,
         "status": "online",
         "state": {"sequence": 1},
-        "controls": controls(FrankaSimulation({"uri": "unused"}), {"motion_enabled": True}),
+        "controls": controls(adapter({"uri": "unused"}), {"motion_enabled": True}),
     }
     state = {
         "role": "surgeon",
@@ -44,6 +55,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
     }
     calls, errors = [], []
     gate, reading = asyncio.Event(), asyncio.Event()
+    move_gate = asyncio.Event()
 
     async def route(request):
         path = urlsplit(request.request.url).path
@@ -56,15 +68,27 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             if method == "replay.read":
                 reading.set()
                 await gate.wait()
+                if ending == "error":
+                    await request.fulfill(
+                        status=400, json={"error": "Measured feedback unavailable"}
+                    )
+                    return
                 result = {
-                    "request": ["jog", {"translation": [1, 0, 0], "rotation": [0, 0, 0]}],
+                    "request": None
+                    if ending == "complete"
+                    else ["jog", {"translation": [1, 0, 0], "rotation": [0, 0, 0]}],
                     "speed_deg_s": 3,
                     "elapsed": 0.1,
-                    "done": False,
+                    "done": ending == "complete",
+                    "feedback_paced": True,
                 }
             elif method.startswith("replay."):
                 result = True
             else:
+                if method == "robot.move" and ending == "blur":
+                    await move_gate.wait()
+                    await request.fulfill(status=400, json={"error": "Replay stopped"})
+                    return
                 if method == "robot.acquire":
                     robot.update(owner="X", owner_id="X")
                 if method == "robot.release":
@@ -80,7 +104,9 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
-            context = await browser.new_context(bypass_csp=True)
+            context = await browser.new_context(
+                bypass_csp=True, viewport={"width": width, "height": 900}
+            )
             await context.add_init_script(
                 "document.hasFocus = () => true; navigator.getGamepads = () => [];"
             )
@@ -92,11 +118,11 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await expect(control).to_be_hidden()
             state["replays"] = [
                 {
-                    "id": "franka/keyboard",
-                    "environment": "franka",
+                    "id": f"{environment}/keyboard",
+                    "environment": environment,
                     "device": "keyboard",
                     "task": "Scan",
-                    "streams": ["franka"],
+                    "streams": [environment],
                 }
             ]
             await page.wait_for_timeout(1100)
@@ -105,16 +131,66 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await expect(control).to_be_visible()
             await control.click()
             await asyncio.wait_for(reading.wait(), 3)
-            await expect(page.get_by_label("Franka input", exact=True)).to_be_disabled()
-            await page.keyboard.press("Escape")
+            selector = page.get_by_label(f"{name} input", exact=True)
+            await expect(selector).to_be_disabled()
+            toolbar = await page.locator(".robot-toolbar").bounding_box()
+            message = await page.locator(".replay-status").bounding_box()
+            assert message["y"] >= toolbar["y"] + toolbar["height"]
+            assert (await selector.bounding_box())["width"] >= 120
+            assert await page.locator(".robot-toolbar").evaluate(
+                "e => e.scrollWidth <= e.clientWidth"
+            )
+            await page.locator("#robots-panel").screenshot(path=str(tmp_path / "replay-layout.png"))
+            await page.wait_for_timeout(250)
+            assert any(c["action"] == "replay.heartbeat" for c in calls)
+            if ending == "escape":
+                await page.keyboard.press("Escape")
+            elif ending == "blur":
+                await page.evaluate(
+                    "document.hasFocus = () => false; window.dispatchEvent(new Event('blur'))"
+                )
+                gate.set()
+                await page.wait_for_timeout(250)
+                assert any(c["action"] == "robot.move" for c in calls)
+                assert not any(c["action"] == "replay.cancel" for c in calls)
+                assert not any(c["action"] == "robot.hold" for c in calls)
+                await expect(selector).to_be_disabled()
+                await page.evaluate("document.hasFocus = () => true")
+                await page.keyboard.press("Escape")
+                move_gate.set()
+            elif ending == "hidden":
+                await page.evaluate(
+                    "Object.defineProperty(document, 'hidden', {value: true, configurable: true});"
+                    "document.dispatchEvent(new Event('visibilitychange'))"
+                )
             gate.set()
             await page.wait_for_timeout(250)
-            assert any(c["action"] == "replay.cancel" for c in calls)
-            assert not any(c["action"] == "robot.move" for c in calls)
-            await expect(page.get_by_label("Franka input", exact=True)).to_be_enabled()
+            assert any(c["action"] == "replay.cancel" for c in calls) == (ending != "complete")
+            if ending == "complete":
+                await expect(page.locator(".replay-status")).to_have_text("Replay complete")
+            else:
+                reason = (
+                    "dashboard hidden"
+                    if ending == "hidden"
+                    else "Measured feedback unavailable"
+                    if ending == "error"
+                    else "Escape pressed"
+                )
+                await expect(page.locator(".replay-status")).to_have_text(
+                    f"Replay stopped · {reason}"
+                )
+            if ending != "blur":
+                assert not any(c["action"] == "robot.move" for c in calls)
+            else:
+                stopped = sum(c["action"] == "robot.move" for c in calls)
+                await page.wait_for_timeout(150)
+                assert sum(c["action"] == "robot.move" for c in calls) == stopped
+                await expect(page.locator("#notice")).to_be_hidden()
+            await expect(selector).to_be_enabled()
             await page.get_by_role("button", name="Release control", exact=True).click()
             await expect(control).to_be_hidden()
             assert not errors
         finally:
             gate.set()
+            move_gate.set()
             await browser.close()

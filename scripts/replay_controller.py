@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 import aiohttp
-from telesurgery.controller.replay import InputMapping, read_rows
+from telesurgery.controller.checkpoint_replay import CheckpointPlayback, validate_checkpoints
+from telesurgery.controller.replay import InputMapping, check_initial, read_rows
 
 
 class Surgeon:
@@ -51,18 +52,13 @@ class Surgeon:
                 self.state = result
             return result
 
-    async def acquire(self, initial):
+    async def acquire(self, initial, *, starting_scene="Home"):
         await self.action("robot.acquire")
         self.acquired = True
-        for group, expected in initial["joints_deg"].items():
-            actual = self.state.get("joints_deg", {}).get(group, [])
-            if len(actual) != len(expected) or any(
-                abs(a - b) > 1.0 for a, b in zip(actual, expected, strict=True)
-            ):
-                raise ValueError(f"{self.robot_id}: starting joints differ; restore Home first")
-        for group, expected in initial.get("grippers", {}).items():
-            if abs(self.state.get("grippers", {}).get(group, -1) - expected) > 0.04:
-                raise ValueError(f"{self.robot_id}: starting gripper differs from the recording")
+        try:
+            check_initial(self.state, initial, starting_scene=starting_scene)
+        except ValueError as exc:
+            raise ValueError(f"{self.robot_id}: {exc}") from exc
 
     async def send(self, request, inputs):
         if request is None:
@@ -114,9 +110,30 @@ async def play(surgeon, robot, rows, device, environment, start):
             raise RuntimeError(surgeon.state.get("stop_reason", "Robot stopped"))
 
 
+async def play_checkpoints(surgeon, robot, rows, start):
+    await asyncio.sleep(max(0, start - time.monotonic()))
+    playback = CheckpointPlayback(robot, {"device": "keyboard"}, "mira", rows, "cli")
+    while True:
+        result = playback.read(time.monotonic() - start, surgeon.state)
+        try:
+            await surgeon.send(result["request"], playback.mapping.inputs)
+        except RuntimeError as exc:
+            if not result["request"] or str(exc) != "Robot input expired in transit":
+                raise
+            # Admission rejection confirms no motion was dispatched. Refresh
+            # feedback and recompute; an unknown command outcome still fails.
+            await surgeon.action("robot.renew")
+            playback.read_at = time.monotonic()
+        if result["request"]:
+            playback.acknowledge(surgeon.state)
+        if result["done"]:
+            return
+        await asyncio.sleep(0.01)
+
+
 async def run(manifest_path, bindings):
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("version") != 1 or manifest.get("environment") not in {
+    if manifest.get("version") not in {1, 2} or manifest.get("environment") not in {
         "mira",
         "franka",
         "versius",
@@ -125,6 +142,9 @@ async def run(manifest_path, bindings):
     device, environment = manifest["device"], manifest["environment"]
     if device not in {"keyboard", "gamepad", "haply"}:
         raise ValueError("Unknown input device")
+    checkpoint = manifest["version"] == 2
+    if checkpoint and (environment, device) != ("mira", "keyboard"):
+        raise ValueError("Pose checkpoints require MIRA simulation keyboard inputs")
     roles = manifest["streams"]
     if len(bindings) != len(roles) or {b[0] for b in bindings} != set(roles):
         raise ValueError(f"Bind each recorded stream exactly once: {', '.join(roles)}")
@@ -132,6 +152,9 @@ async def run(manifest_path, bindings):
         raise ValueError("Use a separate surgeon dashboard for each Versius stream")
     # Read and validate all files and robot identities before acquiring anything.
     rows = {role: read_rows(manifest_path.parent / spec["file"]) for role, spec in roles.items()}
+    if checkpoint:
+        for stream_rows in rows.values():
+            validate_checkpoints(stream_rows)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as http:
         surgeons = {role: Surgeon(http, url, robot) for role, url, robot in bindings}
         inventory = {
@@ -139,7 +162,9 @@ async def run(manifest_path, bindings):
         }
         try:
             for role, surgeon in surgeons.items():
-                await surgeon.acquire(roles[role]["initial"])
+                await surgeon.acquire(
+                    roles[role]["initial"], starting_scene=manifest.get("starting_scene", "Home")
+                )
             start = time.monotonic() + 1
             print(f"Replaying {environment}/{device}: {manifest['task']}", flush=True)
             async with asyncio.TaskGroup() as group:
@@ -147,7 +172,9 @@ async def run(manifest_path, bindings):
                 async def stream(role, surgeon):
                     renew = asyncio.create_task(surgeon.renew())
                     motion = asyncio.create_task(
-                        play(surgeon, inventory[role], rows[role], device, environment, start)
+                        play_checkpoints(surgeon, inventory[role], rows[role], start)
+                        if checkpoint
+                        else play(surgeon, inventory[role], rows[role], device, environment, start)
                     )
                     try:
                         done, _ = await asyncio.wait(

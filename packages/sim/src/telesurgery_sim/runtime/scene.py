@@ -350,6 +350,12 @@ def main():
                     physics = PhysxSchema.PhysxSceneAPI.Apply(prim)
                     physics.CreateTimeStepsPerSecondAttr(60)
         timeline.play()
+        if scene_reset is not None:
+            # Initialize physics before restoring the recorded starting scene.
+            # Driving from the asset's authored pose can leave the right arm
+            # blocked by contact even though its targets already match Home.
+            app.update()
+            scene_reset.restore()
         progress("Warming up camera rendering")
         pending = queue.Queue(maxsize=8)
         sequence = 0

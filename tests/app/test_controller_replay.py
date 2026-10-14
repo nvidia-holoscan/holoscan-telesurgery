@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from aiohttp import web
+from telesurgery_robots.adapters.base import controls
+from telesurgery_robots.adapters.simulation import MiraSimulation
 
 spec = importlib.util.spec_from_file_location(
     "replay_controller", Path(__file__).resolve().parents[2] / "scripts/replay_controller.py"
@@ -53,7 +55,9 @@ async def serve(kind, actions, *, joint=0, fail=False):
                         {
                             "id": "test:arm",
                             "kind": kind,
-                            "controls": {
+                            "controls": controls(MiraSimulation({"uri": "unused"}), {})
+                            if kind == "mira-sim"
+                            else {
                                 "cartesian": {"linear_speed_m_s": 0.1},
                                 "groups": {"joints": 1},
                                 "speed_deg_s": {"max": 20},
@@ -69,7 +73,9 @@ async def serve(kind, actions, *, joint=0, fail=False):
         actions.append(body)
         if fail and body["action"] == "robot.move":
             return web.json_response({"error": "Motion fault"}, status=409)
-        return web.json_response({"result": {"joints_deg": {"joints": [joint]}}})
+        return web.json_response(
+            {"result": {"joints_deg": {"joints": [joint]}, "grippers": {"right": 0}}}
+        )
 
     app = web.Application()
     app.router.add_get("/api/status", status)
@@ -94,11 +100,15 @@ async def test_replay_refuses_physical_robot_before_acquiring(recording):
 
 
 @pytest.mark.asyncio
-async def test_wrong_start_pose_releases_without_moving(recording):
+@pytest.mark.parametrize("starting_scene", ["Home", "Reset scene"])
+async def test_wrong_start_pose_releases_without_moving(recording, starting_scene):
+    manifest = json.loads(recording.read_text())
+    manifest["starting_scene"] = starting_scene
+    recording.write_text(json.dumps(manifest))
     actions = []
     runner, url = await serve("franka-sim", actions, joint=5)
     try:
-        with pytest.raises(ValueError, match="starting joints differ"):
+        with pytest.raises(ValueError, match=f"Starting joints differ.*use {starting_scene}"):
             await replay.run(recording, [["arm", url, "test:arm"]])
         assert [item["action"] for item in actions] == [
             "robot.acquire",
@@ -128,3 +138,64 @@ async def test_keyboard_mapping_and_release_on_completion_or_fault(recording, fa
         assert [item["action"] for item in actions[-2:]] == ["robot.hold", "robot.release"]
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_runner_skips_redundant_close_and_ignores_timed_deadlines(
+    recording, monkeypatch
+):
+    manifest = json.loads(recording.read_text())
+    manifest.update(version=2, environment="mira")
+    recording.write_text(json.dumps(manifest))
+    with gzip.open(recording.parent / "input.jsonl.gz", "wt") as output:
+        output.write(
+            json.dumps({"t": 100, "keys": ["n"], "speeds": [20, 50, 40], "grip": {"right": 0}})
+            + "\n"
+        )
+
+    async def forbidden(*args):
+        raise AssertionError("Checkpoint playback must not use wall-clock input deadlines")
+
+    monkeypatch.setattr(replay, "deadline", forbidden)
+    actions = []
+    runner, url = await serve("mira-sim", actions)
+    try:
+        await replay.run(recording, [["arm", url, "test:arm"]])
+        assert not any(action["action"] == "robot.move" for action in actions)
+        assert actions[-1]["action"] == "robot.release"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Robot input expired in transit", "Transport disconnected"])
+async def test_checkpoint_cli_recomputes_only_after_known_admission_rejection(message):
+    class Client:
+        state = {"grippers": {"right": 0.1}}
+        attempts = 0
+        renewals = 0
+
+        async def send(self, request, inputs):
+            if request and request[0] == "grip":
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError(message)
+                self.state = {"grippers": {"right": 0}}
+
+        async def action(self, name):
+            assert name == "robot.renew"
+            self.renewals += 1
+            return self.state
+
+    client = Client()
+    robot = {"kind": "mira-sim", "controls": controls(MiraSimulation({"uri": "unused"}), {})}
+    rows = [{"t": 0, "keys": ["n"], "speeds": [20, 50, 40], "grip": {"right": 0}}]
+    if message.startswith("Robot input expired"):
+        await replay.play_checkpoints(client, robot, rows, replay.time.monotonic())
+        assert client.attempts == 2
+        assert client.renewals == 1
+    else:
+        with pytest.raises(RuntimeError, match=message):
+            await replay.play_checkpoints(client, robot, rows, replay.time.monotonic())
+        assert client.attempts == 1
+        assert client.renewals == 0
