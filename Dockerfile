@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM nvcr.io/nvidia/cuda:13.0.2-devel-ubuntu24.04 AS dependencies
+FROM nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04 AS dependencies
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT=/opt/telesurgery \
     UV_LINK_MODE=copy \
@@ -81,7 +81,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --editable packages/core --editable packages/robots --editable packages/runtime \
     --editable packages/sim --editable packages/app
 
-FROM nvcr.io/nvidia/cuda:13.0.2-runtime-ubuntu24.04 AS runtime
+FROM nvcr.io/nvidia/cuda:13.4.2-runtime-ubuntu24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
     PATH=/opt/telesurgery/bin:$PATH
