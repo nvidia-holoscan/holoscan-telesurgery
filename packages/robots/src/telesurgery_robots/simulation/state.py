@@ -14,6 +14,8 @@ from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.franka.trajectory import JointTrajectory
 from telesurgery_robots.mira.cartesian import SIM_CARTESIAN
 from telesurgery_robots.mira.cartesian import command as tool_command
+from telesurgery_robots.mira.follow import Follow
+from telesurgery_robots.mira.follow import command as follow_command
 from telesurgery_robots.mira.gripper import GripperJog, clamp, gripper_rates
 from telesurgery_robots.mira.poses import (
     MIRA_HOME_GRIP,
@@ -52,6 +54,8 @@ class SimRobot:
         self.feedback = {}
         self.grip = GripperJog(retain_closing_load=environment in {"mira", "versius"})
         self.mira_progress = {}
+        self.mira_follow = None
+        self.mira_follow_error = ""
 
     @property
     def joint_target_velocity(self):
@@ -109,8 +113,20 @@ class SimRobot:
             )
         ):
             self.mode = None
-        if self.mode == "mira-tool" and now >= self.deadline:
+        if self.mode in {"mira-tool", "mira-follow"} and now >= self.deadline:
             self._stop()
+        if self.mira_follow is not None:
+            if self.kinematics is None or now - self.kinematics[1] > 0.3:
+                self.mira_follow_error = "MIRA physics feedback is stale"
+                self._stop()
+            else:
+                follower = self.mira_follow
+                self.pose[follower.arm][:5] = follower.advance(
+                    self.kinematics[0][follower.arm], elapsed, now
+                ).tolist()
+                if follower.error:
+                    self.mira_follow_error = follower.error
+                    self._stop()
         if self.cartesian is not None and elapsed > 0:
             position, jacobian, sampled = self.kinematics or (self.pose["joints"], None, -1)
             if now - sampled > 0.3:
@@ -143,11 +159,12 @@ class SimRobot:
             self._grip_targets(self._grippers())
             if self.trajectory is None:
                 self.mode = None
-        if self.mode == "mira-tool":
+        if self.mode in {"mira-tool", "mira-follow"}:
             for arm in self.pose:
                 measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
                 self.pose[arm][:5] = measured[:5]
             self.mode = None
+        self.mira_follow = None
         self.mira_progress.clear()
         self._grip_targets(self.grip.stop(self._grippers()))
         if self.cartesian:
@@ -171,6 +188,17 @@ class SimRobot:
             **({"cartesian_target_mm_deg": tool_targets} if tool_targets else {}),
             **(
                 {
+                    "mira_follow": {
+                        "limited": bool(self.mira_follow and self.mira_follow.limited),
+                        "id": self.mira_follow.target["id"] if self.mira_follow else None,
+                        "error": self.mira_follow_error,
+                    }
+                }
+                if "left" in self.pose
+                else {}
+            ),
+            **(
+                {
                     "control_active": self.mode == "home"
                     or self.trajectory is not None
                     or self.cartesian is not None
@@ -185,7 +213,8 @@ class SimRobot:
                 if "joints" in self.pose
                 else {
                     "grippers": self._grippers(),
-                    "control_active": self.mode in {"home", "mira-tool"} or bool(self.grip.rates),
+                    "control_active": self.mode in {"home", "mira-tool", "mira-follow"}
+                    or bool(self.grip.rates),
                     "home_active": self.mode == "home",
                 }
             ),
@@ -219,6 +248,7 @@ class SimRobot:
             if method == "hold":
                 was_home = self.mode == "home"
                 self._stop()
+                self.mira_follow_error = ""
                 if "left" in self.pose:
                     self.grip.clear()
                     # Keep an existing grasp loaded. Replacing a closing
@@ -244,6 +274,8 @@ class SimRobot:
             return self._state()
         if "left" in self.pose and self.mode == "home":
             raise ValueError("MIRA is moving home; use Stop before manual control")
+        if self.mode == "mira-follow" and method != "set_mira_tool_target":
+            raise ValueError("Release MIRA target following before changing input")
         if method == "set_home" and "joints" in self.pose:
             if set(params) - {"speed_deg_s"}:
                 raise ValueError("Home uses the configured pose")
@@ -306,6 +338,29 @@ class SimRobot:
                 "step" if params.get("step") else "jog",
                 speed_value(params.get("speed_deg_s"), FRANKA_SPEED),
             )
+        elif method == "set_mira_tool_target" and "left" in self.pose:
+            target = follow_command(params)
+            if self.mira_follow_error:
+                raise ValueError(self.mira_follow_error)
+            if self.mode not in {None, "mira-follow"}:
+                raise ValueError("Release input before MIRA target following")
+            if self.kinematics is None or time.monotonic() - self.kinematics[1] > 0.3:
+                raise ValueError("MIRA Cartesian physics feedback is unavailable or stale")
+            arm = target["arm"]
+            workspace = self.feedback.get("mira_workspace_mm", {}).get(arm)
+            if workspace is None:
+                raise ValueError("MIRA workspace calibration is unavailable")
+            target["pose"][:3] = np.clip(
+                target["pose"][:3], workspace["min"], workspace["max"]
+            ).tolist()
+            if self.mira_follow is None:
+                for side, data in self.kinematics[0].items():
+                    self.pose[side][:5] = data[0][:5].tolist()
+                self.mira_follow = Follow(arm, self.kinematics[0][arm][0], time.monotonic())
+            elif self.mira_follow.arm != arm:
+                raise ValueError("Release input before switching MIRA arms")
+            self.mira_follow.request(target)
+            self.mode, self.deadline = "mira-follow", time.monotonic() + 0.2
         elif method == "jog_mira_cartesian" and "left" in self.pose:
             movement = tool_command(params, SIM_CARTESIAN)
             if self.kinematics is None or time.monotonic() - self.kinematics[1] > 0.3:

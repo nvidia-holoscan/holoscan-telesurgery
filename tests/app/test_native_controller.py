@@ -41,7 +41,17 @@ def robot(kind):
 
 @pytest.mark.parametrize("scale", [1, 1.5, 2])
 @pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
-@pytest.mark.parametrize("gamepad", [None, "DualSense", "Xbox", "Nintendo Switch Pro Controller"])
+@pytest.mark.parametrize(
+    "gamepad",
+    [
+        None,
+        "DualSense",
+        "Xbox",
+        "Nintendo Switch Pro Controller",
+        "Generic USB gamepad",
+        "Microsoft Controller",
+    ],
+)
 def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, kind, gamepad):
     import tkinter as tk
 
@@ -102,6 +112,8 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
                 "DualSense": ("□", "○"),
                 "Xbox": ("X", "B"),
                 "Nintendo Switch Pro Controller": ("Y", "A"),
+                "Generic USB gamepad": ("West", "East"),
+                "Microsoft Controller": ("X", "B"),
             }
             assert (window.keys["z"].shortcut, window.keys["x"].shortcut) == expected[gamepad]
         client.action.assert_not_called()

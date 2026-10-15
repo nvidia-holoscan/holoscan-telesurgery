@@ -137,6 +137,23 @@ export function robotControls(refresh, openMetrics) {
         holding = new Map(),
         moving = new Set(),
         held = new Set();
+    const inputKey = id => `telesurgery-input:${JSON.stringify([state.patient || "local", id])}`;
+    function saveInput(id, input) {
+        try { localStorage.setItem(inputKey(id), JSON.stringify(input)); } catch {}
+    }
+    function savedInput(id) {
+        try {
+            const saved = localStorage.getItem(inputKey(id));
+            if (saved === null) return undefined;
+            const input = JSON.parse(saved);
+            if (input === null || (input && typeof input === "object" && (
+                (typeof input.id === "string" && Number.isInteger(input.index) && input.index >= 0) ||
+                (typeof input.name === "string" && Number.isInteger(input.ordinal) &&
+                    Number.isInteger(input.count) && input.ordinal >= 0 && input.ordinal < input.count)
+            ))) return input;
+        } catch {}
+        return undefined;
+    }
     function stopInputs(card, reason = "operator stopped replay") {
         card?.replay?.stop(false, reason);
         card?.haply?.stop();
@@ -187,6 +204,7 @@ export function robotControls(refresh, openMetrics) {
             card.acquire.hidden = owned;
         }
         card?.grippers?.feedback(result);
+        card?.haply?.feedback(result);
         if (card && (result.stopping || result.home_active)) {
             card.keyboard?.feedback(result);
             card.keyboard?.update(card.mode?.value === "keyboard", false);
@@ -486,8 +504,8 @@ export function robotControls(refresh, openMetrics) {
                 actions.append(card.release);
                 element_.append(actions);
             } else if (state.session?.robot && jogGroups(robot).length) {
-                const mira = robot.kind === "mira" || robot.kind === "mira-sim";
-                const franka = robot.kind === "franka" || robot.kind === "franka-sim" || robot.kind === "versius-sim";
+                const mira = !!robot.controls.mira_cartesian || robot.kind === "mira" || robot.kind === "mira-sim";
+                const franka = !!robot.controls.cartesian || robot.kind === "franka" || robot.kind === "franka-sim" || robot.kind === "versius-sim";
                 if (mira || franka) {
                     element_.classList.add("compact-controls", mira ? "mira-controls" : "franka-controls");
                     card.armSpeed = armSpeed(robot, () => stopInputs(card));
@@ -631,8 +649,10 @@ export function robotControls(refresh, openMetrics) {
                     renderFeedback(card.pose, card.robot);
                     if (card.gamepad.inlineFeedback) card.pose.hidden = true;
                 });
-                mode.onchange = async () => {
+                mode.onchange = async event => {
                     selectedInput = card.gamepad.selection();
+                    // Discovery and temporary disconnects must not overwrite the operator's choice.
+                    if (!event.detail?.automatic) saveInput(robot.id, selectedInput);
                     await pauseAll();
                     const available = permitted(card.robot) &&
                         !motionState(card.robot).home_active && !motionState(card.robot).stopping;
@@ -668,8 +688,11 @@ export function robotControls(refresh, openMetrics) {
                     }, true);
                 }
                 placeControls();
-                card.gamepad.restore(restoredInputs.has(robot.id)
-                    ? restoredInputs.get(robot.id) : selectedInput);
+                const preference = savedInput(robot.id);
+                const handedOff = restoredInputs.has(robot.id);
+                card.gamepad.restore(handedOff ? restoredInputs.get(robot.id)
+                    : preference !== undefined ? preference : selectedInput,
+                    {wait: !handedOff && preference !== undefined});
                 restoredInputs.delete(robot.id);
                 element_.append(pose);
             } else
@@ -718,7 +741,11 @@ export function robotControls(refresh, openMetrics) {
     }, 500);
     return {
         inputSelection(id) { return cards.get(id)?.gamepad?.handoff() ?? null; },
-        restoreInput(id, input) { restoredInputs.set(id, input); selectedInput = input; },
+        restoreInput(id, input) {
+            restoredInputs.set(id, input);
+            selectedInput = input;
+            if (state) saveInput(id, input);
+        },
         rebuild() { signature = null; },
         patientActions(robot) {
             const actions = element(
@@ -812,6 +839,7 @@ export function robotControls(refresh, openMetrics) {
                     r.connection_enabled,
                 ]),
                 state.role,
+                state.patient,
                 state.session?.robot,
             ]);
             if (key !== signature) {
@@ -952,6 +980,7 @@ export function robotControls(refresh, openMetrics) {
                     card.gamepad?.bindings(),
                 );
                 card.grippers?.feedback(robot.stale || robot.status !== "online" ? null : robot.state);
+                card.haply?.feedback(robot.stale || robot.status !== "online" ? null : robot.state);
                 card.gamepad?.update(
                     !["keyboard", "haply"].includes(card.mode?.value),
                     inputAllowed,

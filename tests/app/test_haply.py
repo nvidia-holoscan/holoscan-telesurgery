@@ -16,6 +16,7 @@ from telesurgery.controller.haply import (
     Haply,
     MiraHaply,
     Sample,
+    Tracking,
     available,
     decode,
     pen_tilt,
@@ -265,6 +266,61 @@ def test_discontinuity_or_reconnect_requires_fresh_resume(robot, change):
     assert driver.tick(**change) == ("release", {})
     assert driver.mapper.paused
     assert driver.tick() is None
+    assert driver.mapper.error
+
+
+@pytest.mark.parametrize("motion", ["translation", "twist"])
+def test_continuous_fast_pen_motion_survives_slower_control_polls(robot, motion):
+    driver = Driver(robot)
+    driver.resume()
+    tracking = Tracking()
+    first = tracking.observe(driver.sample)
+    driver.mapper.update(first, driver.state, driver.inputs, first.received)
+    # Ten device samples arrive while one 100 ms control round trip completes.
+    # The aggregate movement exceeds the old 5 cm / 45 degree poll thresholds.
+    for i in range(1, 11):
+        angle = math.radians(7 * i if motion == "twist" else 0) / 2
+        latest = tracking.observe(
+            replace(
+                driver.sample,
+                received=first.received + 0.01 * i,
+                position=(0.008 * i if motion == "translation" else 0, 0, 0),
+                orientation=(0, math.sin(angle), 0, math.cos(angle)),
+            )
+        )
+    result = driver.mapper.update(latest, driver.state, driver.inputs, latest.received)
+    assert result[0] == "cartesian"
+    assert not driver.mapper.paused
+    if motion == "twist":
+        assert driver.mapper.rotation == pytest.approx(70)
+
+
+@pytest.mark.parametrize("fault", ["position", "orientation", "disconnect"])
+def test_tracking_fault_between_control_polls_still_requires_restart(robot, fault):
+    driver = Driver(robot)
+    driver.resume()
+    tracking = Tracking()
+    first = tracking.observe(driver.sample)
+    driver.mapper.update(first, driver.state, driver.inputs, first.received)
+    bad = replace(driver.sample, received=first.received + 0.01)
+    if fault == "position":
+        bad = replace(bad, position=(0.1, 0, 0))
+    elif fault == "orientation":
+        bad = replace(bad, orientation=(0, 1, 0, 0))
+    else:
+        bad = None
+    tracking.observe(bad)
+    # The pen returns before the next poll. A discarded intermediate fault
+    # must not be hidden by an apparently unchanged latest sample.
+    latest = tracking.observe(replace(driver.sample, received=first.received + 0.02))
+    assert driver.mapper.update(latest, driver.state, driver.inputs, latest.received) == (
+        "release",
+        {},
+    )
+    assert driver.mapper.paused and "tracking jumped" in driver.mapper.error
+    latest = tracking.observe(replace(driver.sample, received=first.received + 0.03))
+    assert driver.mapper.update(latest, driver.state, driver.inputs, latest.received) is None
+    assert "tracking jumped" in driver.mapper.error
 
 
 def test_stale_tracking_stops_pending_target_and_handles_wrapped_angles(robot):
@@ -572,8 +628,11 @@ def test_browser_token_change_disabled_input_and_poll_gap_rearm(monkeypatch, rob
     params["speeds"] = {"arm": float("nan")}
     with pytest.raises(ValueError, match="percent"):
         read()
+    params["speeds"] = {}
     robot["kind"] = "mira"
-    with pytest.raises(ValueError, match="simulation"):
+    assert read()["paused"]  # Physical MIRA shares the published tool contract.
+    robot["controls"] = {}
+    with pytest.raises(ValueError, match="Cartesian control"):
         read()
 
 
@@ -602,13 +661,18 @@ async def test_browser_api_checks_permission_and_robot_ownership(robot):
 
 
 @pytest.mark.parametrize("scale", [1, 2])
-def test_native_haply_layout_and_selection_stop(monkeypatch, virtual_display, robot, scale):
+@pytest.mark.parametrize("workspace", [False, True])
+def test_native_haply_layout_and_selection_stop(
+    monkeypatch, virtual_display, robot, scale, workspace
+):
     import tkinter as tk
 
     from telesurgery.controller.haply import NAME
     from telesurgery.controller.window import Window
 
     robot.update(name="MIRA", simulation=True)
+    if workspace:
+        robot["controls"]["mira_follow"] = {"version": 1}
     reader = Mock()
     reader.sample.return_value = (None, "Calibrate the Inverse3.")
     monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
@@ -642,6 +706,11 @@ def test_native_haply_layout_and_selection_stop(monkeypatch, virtual_display, ro
         window.feedback()
         assert window.message.cget("text") == "Acquire control to enable input."
         assert window.haply_status.cget("text") == "Paused · Left arm"
+        assert [label.cget("text") for label in window.haply_position.values] == [
+            "100.0",
+            "200.0",
+            "300.0",
+        ]
         assert not window.mode_choice.winfo_viewable()
         assert window.body.winfo_width() >= window.body.winfo_reqwidth()
         assert len(window.sliders) == 3
@@ -669,6 +738,7 @@ def test_native_haply_layout_and_selection_stop(monkeypatch, virtual_display, ro
         root.destroy()
 
 
+@pytest.mark.parametrize("robot_kind", ["franka-sim", "franka", "versius-sim", "future-robot"])
 @pytest.mark.parametrize(
     ("change", "kind", "axis", "sign"),
     [
@@ -679,15 +749,15 @@ def test_native_haply_layout_and_selection_stop(monkeypatch, virtual_display, ro
         ({"angles": (0, 10)}, "rotation", 2, -1),
     ],
 )
-def test_franka_pen_pose_uses_bounded_cartesian_jog(robot, change, kind, axis, sign):
+def test_franka_pen_pose_uses_bounded_cartesian_jog(robot, change, kind, axis, sign, robot_kind):
     from telesurgery.controller.haply import CartesianHaply, supports
 
     robot = {
         **robot,
-        "kind": "franka-sim",
+        "kind": robot_kind,
         "controls": {
             "groups": {"joints": 7},
-            "cartesian": True,
+            "cartesian": {"linear_speed_m_s": 0.1, "angular_speed_deg_s": 30.0},
             "speed_deg_s": {"min": 0.1, "max": 20},
         },
         "state": {
@@ -706,6 +776,7 @@ def test_franka_pen_pose_uses_bounded_cartesian_jog(robot, change, kind, axis, s
     assert command[kind][axis] * sign > 0
     assert all(math.hypot(*v) <= 1.000001 for v in command.values())
     assert driver.mapper.arm == "hand"
+    assert driver.mapper.position_mm(driver.state) == [500, 0, 300]
     driver.state.update(stopping=True, stop_reason="released")
     assert driver.tick() is None
     assert not driver.mapper.paused

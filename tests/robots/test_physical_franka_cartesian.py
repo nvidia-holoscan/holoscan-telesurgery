@@ -10,6 +10,32 @@ import pytest
 from telesurgery_robots.franka.adapter import Franka
 
 
+def test_measured_pose_has_the_shared_cartesian_feedback_shape():
+    from telesurgery.controller.haply import CartesianHaply
+
+    # A non-symmetric rotation catches row/column layout mistakes.
+    matrix = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0.4, -0.2, 0.3, 1]
+    state = {
+        "q": [0] * 7,
+        "dq": [0] * 7,
+        "tau_J": [0] * 7,
+        "O_T_EE": matrix,
+        "mode": "idle",
+        "faults": "[]",
+        "device_time_ms": 1,
+        "control_active": False,
+        "home_active": False,
+        "stopping": False,
+    }
+    adapter = Franka.__new__(Franka)
+    adapter.reader = SimpleNamespace(read=lambda: state)
+    feedback = adapter.read()
+    position, orientation = CartesianHaply.pose(feedback)
+    assert position.tolist() == [0.4, -0.2, 0.3]
+    assert orientation.tolist() == [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+    assert feedback["tool_pose"]["matrix"] == matrix
+
+
 @pytest.mark.parametrize("axis", range(6))
 @pytest.mark.parametrize("sign", [-1, 1])
 def test_physical_tool_axes_and_speed_reach_native_loop(axis, sign):

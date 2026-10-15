@@ -255,3 +255,55 @@ async def test_franka_joint_positions_stay_with_their_axis_and_clear_when_missin
         )
         await page.evaluate("input.feedback({})")
         await expect(page.locator(".gamepad-joint-position")).to_have_text(["—"] * 7)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    ["Microsoft Controller", "USB Gamepad (Vendor: 045e Product: 02ea)", "Generic USB gamepad"],
+)
+async def test_face_button_badges_match_device_and_fit_compact_panel(name):
+    generic = name.startswith("Generic")
+    async with controller_page(name) as page:
+        await page.add_style_tag(url="http://localhost:8777/style.css")
+        await page.evaluate("""async () => {
+            const {gripperControls}=await import('/grippers.js');
+            const grip=gripperControls({name:'MIRA',kind:'mira-sim',
+                controls:{grippers:['left','right']}},()=>{},()=>{},()=>40);
+            input.element.append(grip.element);
+            grip.update(true,false,input.bindings());
+            document.querySelector('main').style.width='320px';
+        }""")
+        await expect(page.locator(".gamepad-roll-arm").nth(1).locator("kbd")).to_have_text(
+            ["North", "South"] if generic else ["Y", "A"]
+        )
+        await expect(page.locator(".gripper-control").nth(1).locator("kbd")).to_have_text(
+            ["West", "East"] if generic else ["X", "B"]
+        )
+        if generic:
+            icons = page.locator(".face-button-icon")
+            assert await icons.count() == 4
+            assert await icons.locator('circle[fill="currentColor"]').evaluate_all(
+                "els=>els.map(e=>e.dataset.position)"
+            ) == ["North", "South", "West", "East"]
+        else:
+            await expect(page.locator("select option:checked").first).to_have_text(
+                "Xbox controller"
+            )
+        # Labels stay separate from centered caps; the compact two-arm panel does not overflow.
+        for box in await page.locator(".gamepad-roll-keys kbd, .gripper-control kbd").all():
+            bounds = await box.bounding_box()
+            assert bounds["width"] == bounds["height"] == 24
+        for button in await page.locator(".gripper-control button").all():
+            cap, label = (
+                await button.locator("kbd").bounding_box(),
+                await button.locator(":scope > span").bounding_box(),
+            )
+            assert label["x"] - cap["x"] - cap["width"] >= 5
+            assert await button.evaluate("e=>e.scrollWidth<=e.clientWidth")
+            assert (await button.bounding_box())["height"] >= 36
+        await page.evaluate("pad.buttons[4].pressed=pad.buttons[3].pressed=true")
+        await page.clock.run_for(50)
+        await expect(
+            page.locator(".gamepad-roll-arm").nth(1).locator("kbd").first
+        ).to_have_attribute("data-active", "true")

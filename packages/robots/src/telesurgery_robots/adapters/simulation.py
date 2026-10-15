@@ -7,6 +7,7 @@ from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_robots.adapters.base import cartesian_command, speed_value
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.mira.cartesian import SIM_CARTESIAN
+from telesurgery_robots.mira.follow import FOLLOW
 from telesurgery_robots.mira.gripper import GRIP_SPEED
 from telesurgery_robots.mira.poses import MIRA_SIM_HOME
 from telesurgery_robots.versius import HOME as VERSIUS_HOME
@@ -50,6 +51,10 @@ class SimulationAdapter:
 
 class MiraSimulation(SimulationAdapter):
     mira_cartesian = SIM_CARTESIAN
+    mira_follow = FOLLOW
+
+    def follow_tool(self, command):
+        return self.request("set_mira_tool_target", command)
 
     def jog_cartesian(self, command):
         return self.request("jog_mira_cartesian", command)

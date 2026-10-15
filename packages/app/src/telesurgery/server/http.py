@@ -59,10 +59,13 @@ def create_app(service, host="127.0.0.1"):
         try:
             result = await service.action(body["action"], body.get("params", {}))
         except Exception as exc:
+            params = body.get("params", {})
+            mode = params.get("mode") if body["action"] == "robot.move" else None
             logging.getLogger(__name__).warning(
-                "Action %s (%s) failed: %s",
+                "Action %s (%s%s) failed: %s",
                 body.get("action"),
-                body.get("params", {}).get("id", ""),
+                params.get("id", ""),
+                f", mode={mode}" if isinstance(mode, str) else "",
                 exc,
             )
             raise

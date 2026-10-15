@@ -37,6 +37,7 @@ const paths = {
     down: "m5 14 7 7 7-7M12 3v18",
     square: "M4 4h16v16H4V4Z",
     circle: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+    triangle: "M12 3 22 21H2L12 3Z",
 };
 
 export function icon(name) {
@@ -50,6 +51,84 @@ export function icon(name) {
     path.setAttribute("d", paths[name]);
     svg.append(path);
     return svg;
+}
+
+// The three positive robot axes, projected into the pen's right/forward/up frame.
+export function axisTriad(basis) {
+    const ns = "http://www.w3.org/2000/svg";
+    const node = (tag, attributes) => {
+        const element = document.createElementNS(ns, tag);
+        for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+        return element;
+    };
+    const svg = node("svg", {class: "axis-triad", role: "img", focusable: "false"});
+    const projection = [[1, 0], [0.72, -0.69], [0, -1]];
+    const directions = [["right", "left"], ["forward", "back"], ["up", "down"]];
+    const description = [], bounds = [[-4, -4], [4, 4]];
+    for (const [index, axis] of ["X", "Y", "Z"].entries()) {
+        const row = basis[index];
+        if (!Array.isArray(row) || row.length !== 3 || !row.every(Number.isFinite)) continue;
+        const penAxis = row?.findIndex(value => Math.abs(value) === 1);
+        const projected = [0, 1].map(axis => row.reduce((sum, v, i) => sum + v * projection[i][axis], 0));
+        const length = Math.hypot(...projected);
+        if (length < 1e-6) continue;
+        const [dx, dy] = projected.map(v => v / length);
+        const x = dx * 34, y = dy * 34, tx = dx * 47, ty = dy * 47;
+        const group = node("g", {"data-axis": axis});
+        group.append(node("path", {d: `M0 0L${x} ${y}M${x - 6 * dx + 3 * dy} ${y - 6 * dy - 3 * dx}L${x} ${y}L${x - 6 * dx - 3 * dy} ${y - 6 * dy + 3 * dx}`}));
+        const label = node("text", {x: tx, y: ty, "text-anchor": "middle", "dominant-baseline": "central"});
+        label.textContent = `+${axis}`;
+        group.append(label);
+        svg.append(group);
+        bounds.push([tx - 12, ty - 10], [tx + 12, ty + 10]);
+        description.push(penAxis >= 0 && row.every((v, i) => i === penAxis || v === 0)
+            ? `+${axis}: pen ${directions[penAxis][row[penAxis] > 0 ? 0 : 1]}`
+            : `+${axis}: pen movement along its arrow`);
+    }
+    svg.append(node("circle", {cx: 0, cy: 0, r: 2.5}));
+    const minX = Math.min(...bounds.map(p => p[0])), minY = Math.min(...bounds.map(p => p[1]));
+    svg.setAttribute("viewBox", `${minX} ${minY} ${Math.max(...bounds.map(p => p[0])) - minX} ${Math.max(...bounds.map(p => p[1])) - minY}`);
+    const text = `Pen movement directions. ${description.join("; ")}. Opposite movement decreases each coordinate. Fixed to the device frame.`;
+    svg.setAttribute("aria-label", text);
+    const title = node("title", {});
+    title.textContent = text;
+    svg.prepend(title);
+    return svg;
+}
+
+// Generic pads retain positional labels for assistive text, while the diamond
+// shows the physical button location without relying on a manufacturer's letters.
+export function setControllerKey(key, label) {
+    if (key.dataset.binding === label) return;
+    key.dataset.binding = label;
+    const positions = {North: [12, 5], South: [12, 19], West: [5, 12], East: [19, 12]};
+    const symbol = {"←": "left", "→": "right", "□": "square", "○": "circle", "△": "triangle", "✕": "close"}[label];
+    const text = document.createElement("span");
+    text.textContent = label;
+    if (positions[label]) {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("class", "icon face-button-icon");
+        svg.setAttribute("aria-hidden", "true");
+        svg.setAttribute("focusable", "false");
+        for (const [position, [x, y]] of Object.entries(positions)) {
+            const dot = document.createElementNS(svg.namespaceURI, "circle");
+            dot.setAttribute("cx", x);
+            dot.setAttribute("cy", y);
+            dot.setAttribute("r", "3");
+            dot.setAttribute("fill", position === label ? "currentColor" : "none");
+            dot.setAttribute("opacity", position === label ? "1" : ".4");
+            dot.dataset.position = position;
+            svg.append(dot);
+        }
+        text.className = "sr-only";
+        key.replaceChildren(svg, text);
+    } else if (symbol) {
+        text.className = "sr-only";
+        key.replaceChildren(icon(symbol), text);
+    } else {
+        key.replaceChildren(text);
+    }
 }
 
 // Keep the button and its handlers; only replace its visual label.

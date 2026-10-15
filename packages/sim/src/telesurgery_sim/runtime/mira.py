@@ -6,6 +6,7 @@
 import time
 
 import numpy as np
+from telesurgery_robots.mira.poses import MIRA_SIM_HOME
 from telesurgery_sim.runtime.franka import rotation_matrix
 
 
@@ -83,6 +84,7 @@ class MiraFeedback:
             offset = np.eye(4)
             offset[axis, 3] = 0.97 * max(distances, key=abs)
             self.chains[arm][-1] = offset, axis
+        self.workspace = {arm: self.workspace_bounds(arm) for arm in self.chains}
 
     def pose(self, arm, joints):
         transform = np.eye(4)
@@ -109,6 +111,50 @@ class MiraFeedback:
         position = transform[:3, 3]
         return np.array([*position, elbow_angle(position, tool_axis, arm)])
 
+    def jacobian(self, arm, joints, pose):
+        result = np.empty((4, 4))
+        for index in range(4):
+            shifted = joints.copy()
+            shifted[index] += 0.001
+            difference = self.pose(arm, shifted) - pose
+            difference[3] = (difference[3] + 180) % 360 - 180
+            result[:, index] = difference / 0.001
+        return result
+
+    def workspace_bounds(self, arm):
+        """Calibrate axis travel from Home using this asset's geometry and joint limits.
+
+        These are operating extents, not a claim that every box corner is
+        reachable. The local follower also enforces the current joint limits.
+        """
+        home = np.array([*MIRA_SIM_HOME[arm], 0.0])
+        center = self.pose(arm, home)
+        limits = np.asarray(self.limits[arm])
+        lower, upper = center[:3].copy(), center[:3].copy()
+        for axis in range(3):
+            for sign in (-1, 1):
+                q, target, pose = home.copy(), center.copy(), center.copy()
+                for _ in range(600):
+                    target[axis] += sign * 2
+                    error = target - pose
+                    error[3] = (error[3] + 180) % 360 - 180
+                    jacobian = self.jacobian(arm, q, pose)
+                    change = np.linalg.lstsq(jacobian, error, rcond=1e-3)[0]
+                    next_q = q[:4] + change
+                    if (
+                        np.max(np.abs(change)) > 3
+                        or np.linalg.norm(jacobian @ change - error) > 0.1
+                        or np.any(next_q < limits[:, 0] + 0.5)
+                        or np.any(next_q > limits[:, 1] - 0.5)
+                    ):
+                        break
+                    q[:4] = next_q
+                    pose = self.pose(arm, q)
+                    if np.linalg.norm(pose[:3] - target[:3]) > 0.5:
+                        break
+                    (lower if sign < 0 else upper)[axis] = pose[axis]
+        return {"min": lower.tolist(), "max": upper.tolist()}
+
     def read(self, measured):
         self.kinematics = None
         if not all(arm in measured.get("joints_deg", {}) for arm in self.chains):
@@ -117,13 +163,10 @@ class MiraFeedback:
         for arm in self.chains:
             joints = np.asarray(measured["joints_deg"][arm], dtype=float)
             pose = self.pose(arm, joints)
-            jacobian = np.empty((4, 4))
-            for index in range(4):
-                shifted = joints.copy()
-                shifted[index] += 0.001
-                difference = self.pose(arm, shifted) - pose
-                difference[3] = (difference[3] + 180) % 360 - 180
-                jacobian[:, index] = difference / 0.001
+            jacobian = self.jacobian(arm, joints, pose)
             result[arm] = (joints, pose, jacobian, self.limits[arm])
         self.kinematics = (result, time.monotonic())
-        return {"cartesian_mm_deg": {arm: data[1].tolist() for arm, data in result.items()}}
+        return {
+            "cartesian_mm_deg": {arm: data[1].tolist() for arm, data in result.items()},
+            "mira_workspace_mm": self.workspace,
+        }

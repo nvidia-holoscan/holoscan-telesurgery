@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { element } from "./ui.js";
-import { icon } from "./icons.js";
+import { icon, setControllerKey } from "./icons.js";
 import { normalizeGamepad } from "./gamepad-mapping.js";
 import { haplyName, supportsHaply } from "./haply.js";
 import {
@@ -24,7 +24,7 @@ function controllerName(id) {
     if (/dualshock|ps4\b|054c.*(05c4|09cc)/i.test(id)) return "Sony DualShock 4";
     if (/playstation|ps3\b|054c/i.test(id)) return "PlayStation controller";
     if (/nintendo|switch.*pro|joy.?con|057e/i.test(id)) return "Nintendo controller";
-    if (/xbox|x-box|xinput/i.test(id)) return "Xbox controller";
+    if (/xbox|x-box|xinput|microsoft.*controller|045e/i.test(id)) return "Xbox controller";
     const name = id.replace(/\s*\([^)]*\)\s*/g, " ").trim();
     return name.length > 26 ? `${name.slice(0, 25)}…` : name || "Gamepad";
 }
@@ -32,7 +32,7 @@ function controllerName(id) {
 function controllerBindings(id) {
     const playstation = /dualsense|dualshock|054c|playstation|ps[345]\b/i.test(id);
     const nintendo = /nintendo|switch.*pro|joy.?con|057e/i.test(id);
-    const xbox = /xbox|x-box|xinput/i.test(id);
+    const xbox = /xbox|x-box|xinput|microsoft.*controller|045e/i.test(id);
     return {
         enable: playstation ? "L1" : nintendo ? "L" : xbox ? "LB" : "LB/L1",
         alternate: playstation ? "R1" : nintendo ? "R" : xbox ? "RB" : "RB/R1",
@@ -244,6 +244,7 @@ export function gamepadInput(
         armed = false;
     let signature = "",
         restoreSelection = null,
+        waitForDevice = false,
         selectedId = "",
         active = false,
         busy = false,
@@ -276,7 +277,11 @@ export function gamepadInput(
             Promise.resolve(stop()).finally(() => { stopping = false; });
         }
     };
-    device.addEventListener("change", () => {
+    const selectionChanged = () => device.dispatchEvent(new CustomEvent("change", {
+        detail: {automatic: true},
+    }));
+    device.addEventListener("change", event => {
+        if (!event.detail?.automatic) restoreSelection = null;
         selectedId = "";
         halt();
     });
@@ -339,20 +344,22 @@ export function gamepadInput(
                         selectedPad.mapping !== "standard"))
             ) {
                 device.value = "keyboard";
-                device.dispatchEvent(new Event("change"));
+                selectionChanged();
             }
         }
         if (restoreSelection) {
             const previous = restoreSelection;
-            restoreSelection = null;
             const matching = pads.filter(p => p.mapping === "standard" &&
                 controllerName(p.id) === previous.name);
             const match = "id" in previous
                 ? pads.find(p => p.index === previous.index && p.id === previous.id && p.mapping === "standard")
                 : matching.length === previous.count ? matching[previous.ordinal] : null;
-            device.value = match ? String(match.index) : "keyboard";
-            if (hasHaply && previous.name === haplyName) device.value = "haply";
-            device.dispatchEvent(new Event("change"));
+            const restoreHaply = hasHaply && previous.name === haplyName;
+            if (match || restoreHaply || !waitForDevice) {
+                restoreSelection = null;
+                device.value = restoreHaply ? "haply" : match ? String(match.index) : "keyboard";
+                selectionChanged();
+            }
         }
         const pad = pads.find((p) => String(p.index) === device.value);
         device.title = device.value === "haply" ? "Haply connected to the surgeon service's host"
@@ -365,8 +372,8 @@ export function gamepadInput(
         enableHint.textContent = dual ? miraCartesian() ? "X / Y · move sticks" : "Joints 1–2 · move sticks"
             : bankedJoints ? "Joints 1–4" : "Hold to move · release to stop";
         alternateHint.textContent = bankedJoints ? `Joints 5–${jointCount}` : miraCartesian() ? "Z / elbow · move sticks" : "Joints 3–4 · move sticks";
-        rightRollKeys[0].textContent = rollUp;
-        rightRollKeys[1].textContent = rollDown;
+        setControllerKey(rightRollKeys[0], rollUp);
+        setControllerKey(rightRollKeys[1], rollDown);
         for (const [keys, arm, buttons] of [
             [leftRollKeys, "left", ["D-pad ↑", "D-pad ↓"]],
             [rightRollKeys, "right", [rollUp, rollDown]],
@@ -600,7 +607,10 @@ export function gamepadInput(
                 !option.disabled && controllerName(option.title) === name);
             return {name, ordinal: matching.indexOf(device.selectedOptions[0]), count: matching.length};
         },
-        restore(selection) { restoreSelection = selection; },
+        restore(selection, {wait = false} = {}) {
+            restoreSelection = selection;
+            waitForDevice = wait;
+        },
         element: container,
         arms,
         roll: rollControls,

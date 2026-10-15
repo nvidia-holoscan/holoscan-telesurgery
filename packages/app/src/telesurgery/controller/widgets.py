@@ -9,6 +9,69 @@ from tkinter import font, ttk
 
 INK, MUTED, BORDER, GREEN = "#18211d", "#69756f", "#e1e5e4", "#659c13"
 FONT = "Inter"
+FACE_POSITIONS = {"North": (0, -1), "South": (0, 1), "West": (-1, 0), "East": (1, 0)}
+
+
+class ToolPosition(tk.Frame):
+    """One axis triad and measured coordinates, independent of the robot model."""
+
+    def __init__(self, parent, basis):
+        super().__init__(parent, bg="white")
+        px = Scale(parent)
+        tk.Label(self, text="Arm tip · mm", bg="white", fg=MUTED, font=(FONT, 9)).pack(anchor="w")
+        body = tk.Frame(self, bg="white")
+        body.pack(fill="x")
+        diagram = tk.Canvas(body, width=px(104), height=px(72), bg="white", highlightthickness=0)
+        diagram.pack(side="left", padx=px(0, 18))
+        rows = tk.Frame(body, bg="white")
+        rows.pack(side="left")
+        self.values = []
+        colors = ("#aa4e4e", "#427e59", "#477eac")
+        directions = []
+        for row in basis:
+            x, y = row[0] + 0.72 * row[1], -0.69 * row[1] - row[2]
+            length = max(1e-9, math.hypot(x, y))
+            directions.append((x / length, y / length))
+        bounds = [(0, 0)] + [(47 * x, 47 * y) for x, y in directions]
+        xmin, xmax = min(x for x, _ in bounds) - 12, max(x for x, _ in bounds) + 12
+        ymin, ymax = min(y for _, y in bounds) - 10, max(y for _, y in bounds) + 10
+        scale = min(104 / (xmax - xmin), 72 / (ymax - ymin))
+
+        def point(x, y):
+            return px(
+                (104 - (xmax + xmin) * scale) / 2 + x * scale,
+                (72 - (ymax + ymin) * scale) / 2 + y * scale,
+            )
+
+        for axis, color, (x, y) in zip("XYZ", colors, directions, strict=True):
+            diagram.create_line(
+                *point(0, 0),
+                *point(34 * x, 34 * y),
+                fill=color,
+                width=px(2),
+                arrow="last",
+                arrowshape=px(5, 6, 3),
+            )
+            diagram.create_text(
+                *point(47 * x, 47 * y), text="+" + axis, fill=color, font=(FONT, 9, "bold")
+            )
+            row = tk.Frame(rows, bg="white")
+            row.pack(fill="x")
+            tk.Label(row, text=axis, bg="white", fg=color, font=(FONT, 9, "bold")).pack(side="left")
+            value = tk.Label(
+                row, text="—", bg="white", fg=INK, font=(FONT, 10), anchor="e", width=9
+            )
+            value.pack(side="right")
+            self.values.append(value)
+
+    def update_position(self, position):
+        for index, label in enumerate(self.values):
+            value = position[index] if position is not None and len(position) > index else None
+            label.configure(
+                text=f"{0 if abs(value) < 0.05 else value:.1f}"
+                if isinstance(value, (int, float)) and math.isfinite(value)
+                else "—"
+            )
 
 
 class Scale:
@@ -192,7 +255,20 @@ def rounded(canvas, x, y, box_width, box_height, radius=5, **options):
 def symbol(canvas, text, x, y, size, color, text_font):
     """Draw controller symbols with the same strong strokes as the web icons."""
     half, stroke = size / 2, max(1, size / 8)
-    if text == "□":
+    if text in FACE_POSITIONS:
+        radius, offset = size / 8, size * 7 / 24
+        for position, (dx, dy) in FACE_POSITIONS.items():
+            cx, cy = x + dx * offset, y + dy * offset
+            canvas.create_oval(
+                cx - radius,
+                cy - radius,
+                cx + radius,
+                cy + radius,
+                fill=color if position == text else "",
+                outline=color if position == text else MUTED,
+                width=max(1, size / 16),
+            )
+    elif text == "□":
         canvas.create_rectangle(x - half, y - half, x + half, y + half, outline=color, width=stroke)
     elif text == "○":
         canvas.create_oval(x - half, y - half, x + half, y + half, outline=color, width=stroke)
@@ -244,7 +320,9 @@ class Badge(tk.Canvas):
         self.text, self.active = text, False
         super().__init__(
             parent,
-            width=max(self.px(28), self.text_font.measure(text) + self.px(12)),
+            width=self.px(28)
+            if text in FACE_POSITIONS
+            else max(self.px(28), self.text_font.measure(text) + self.px(12)),
             height=self.px(27),
             bg="#f6f8f7",
             highlightthickness=0,
@@ -272,7 +350,13 @@ class Badge(tk.Canvas):
             self.text,
             width / 2,
             height / 2,
-            self.px(14 if self.text in {"←", "→", "↑", "↓"} else 13),
+            self.px(
+                18
+                if self.text in FACE_POSITIONS
+                else 14
+                if self.text in {"←", "→", "↑", "↓"}
+                else 13
+            ),
             "#365809" if self.active else INK,
             self.text_font,
         )
@@ -477,7 +561,13 @@ class Button(tk.Canvas):
                 self.shortcut,
                 left + px(8.5),
                 px(17),
-                px(14 if self.shortcut in {"←", "→", "↑", "↓"} else 11),
+                px(
+                    16
+                    if self.shortcut in FACE_POSITIONS
+                    else 14
+                    if self.shortcut in {"←", "→", "↑", "↓"}
+                    else 11
+                ),
                 color,
                 (FONT, 9, "bold"),
             )

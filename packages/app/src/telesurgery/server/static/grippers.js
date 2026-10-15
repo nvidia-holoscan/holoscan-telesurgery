@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { element } from "./ui.js";
-import { icon } from "./icons.js";
+import { setControllerKey } from "./icons.js";
 import { inputBlocked, keyboardHolds } from "./robot-input.js";
 
 const editing = () => document.activeElement?.closest(
@@ -66,7 +66,7 @@ export function gripperControls(robot, send, stop, speed) {
         for (const [index, label, sign] of [[0, "Close", -1], [1, "Open", 1]]) {
             const key = keys[index], control = element("button", undefined, "secondary small");
             control.type = "button";
-            control.append(element("kbd", key.toUpperCase()), document.createTextNode(` ${label}`));
+            control.append(element("kbd", key.toUpperCase()), element("span", label));
             control.setAttribute("aria-label", `${label} ${arm} gripper`);
             control.title = `Hold ${key.toUpperCase()} or this button to ${label.toLowerCase()}`;
             bindings.set(key, { arm, sign });
@@ -162,7 +162,7 @@ export function gripperControls(robot, send, stop, speed) {
             const toggleGrip = single && !keyboard && (gamepad?.toggleGrip ?? !holdGrip);
             toggle.hidden = !toggleGrip;
             if (single) {
-                toggleKey.textContent = gamepad?.n || "□";
+                setControllerKey(toggleKey, gamepad?.n || "□");
                 toggle.title = `Press ${gamepad?.n || "□"} to toggle the gripper · Stop / Esc interrupts motion`;
             }
             for (const [key, control] of buttons) {
@@ -172,12 +172,7 @@ export function gripperControls(robot, send, stop, speed) {
                 cap.hidden = toggleGrip || gamepad?.haply;
                 const binding = single ? (key === "z" ? "n" : "m") : key;
                 const label = keyboard ? key.toUpperCase() : gamepad?.[binding] || "";
-                if (cap.dataset.binding !== label) {
-                    cap.dataset.binding = label;
-                    const symbol = {"←": "left", "→": "right", "□": "square", "○": "circle"}[label];
-                    if (symbol) cap.replaceChildren(icon(symbol), element("span", label, "sr-only"));
-                    else cap.textContent = label;
-                }
+                setControllerKey(cap, label);
                 control.title = keyboard
                     ? `Hold ${key.toUpperCase()} or this button to ${bindings.get(key).sign < 0 ? "close" : "open"}`
                     : toggleGrip || gamepad?.haply ? "Hold this button · Release to stop"

@@ -279,6 +279,9 @@ class MiraAdapter:
 
     def __init__(self, spec):
         self.client = Mira(spec["uri"])
+        # A pose input device captures the measured tool pose before its first
+        # move. Waiting for a Cartesian command would leave Start unable to arm.
+        self.client.tool_mode = True
 
     def read(self):
         return {**self.client.state(), "feedback_source": "vendor cached pose"}

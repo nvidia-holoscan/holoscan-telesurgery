@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 import pytest
-from telesurgery_robots.mira.adapter import Mira
+from telesurgery_robots.mira.adapter import Mira, MiraAdapter
 from telesurgery_robots.mira.cartesian import SIM_CARTESIAN, bounded_solution, command
 from telesurgery_robots.mira.poses import MIRA_HOME
 from telesurgery_robots.simulation.state import SimRobot
@@ -43,6 +43,15 @@ class Vendor:
 
     def close(self):
         pass
+
+
+def test_physical_adapter_provides_tool_feedback_before_first_motion():
+    adapter, vendor = MiraAdapter({"uri": "unused"}), Vendor()
+    adapter.client.client = vendor
+    state = adapter.read()
+    assert state["cartesian_mm_deg"]["left"] == [70, 28, -76, 4.6]
+    assert {r["method"] for r in vendor.requests} == {"get_mira_pose", "get_mira_fkine_cartesian"}
+    assert not state["control_active"]
 
 
 def test_vendor_cartesian_queries_bound_both_arms_and_expire(monkeypatch):

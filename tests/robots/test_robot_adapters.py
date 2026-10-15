@@ -47,6 +47,19 @@ def test_installed_adapters_and_unknown_kind():
         adapter_type("uninstalled-robot")
 
 
+@pytest.mark.parametrize("kind", ["mira", "franka"])
+def test_haply_support_follows_enabled_cartesian_capabilities(kind):
+    from telesurgery.controller.haply import supports
+    from telesurgery_robots.adapters.base import controls
+
+    adapter = adapter_type(kind).__new__(adapter_type(kind))
+    assert not supports({"kind": kind, "controls": controls(adapter, {})})
+    assert supports({"kind": kind, "controls": controls(adapter, {"motion_enabled": True})})
+    assert supports(
+        {"kind": "future-robot", "controls": controls(adapter, {"motion_enabled": True})}
+    )
+
+
 def test_replay_release_is_bounded_and_preserves_manual_command_sequence():
     from telesurgery_robots.simulation.state import SimRobot
 
@@ -917,3 +930,30 @@ def test_scene_reset_requires_simulation_capability_and_fresh_owned_command(kind
     assert "reset_scene" not in controls(adapter, {"motion_enabled": True})
     with pytest.raises(ValueError, match="not supported"):
         controller.move("owner", 2, {}, time.time(), mode="reset")
+
+
+def test_mira_follow_requires_simulation_capability_freshness_and_ownership():
+    from telesurgery_robots.adapters.base import controls
+
+    adapter = adapter_type("mira-sim")({"uri": "unused"})
+    calls = []
+    adapter.request = lambda method, params=None, **kwargs: calls.append((method, params)) or {}
+    assert controls(adapter, {})["mira_follow"]["version"] == 1
+    controller = Controller(adapter, lambda: {}, lambda: 0)
+    controller.prepare("owner")
+    target = {"arm": "left", "pose": [0.0] * 5, "arm_percent": 20, "roll_percent": 50, "id": 1}
+    before = len(calls)
+    with pytest.raises(PermissionError):
+        controller.move("other", 1, target, time.time(), mode="follow")
+    with pytest.raises(ValueError, match="expired"):
+        controller.move("owner", 1, target, time.time() - 1, mode="follow")
+    assert len(calls) == before
+    controller.move("owner", 1, target, time.time(), mode="follow")
+    assert calls[-1] == ("set_mira_tool_target", target)
+    with pytest.raises(ValueError, match="Stale"):
+        controller.move("owner", 1, target, time.time(), mode="follow")
+    adapter.simulation = False
+    controller.specification = lambda: {"motion_enabled": True}
+    assert "mira_follow" not in controls(adapter, {"motion_enabled": True})
+    with pytest.raises(ValueError, match="not supported"):
+        controller.move("owner", 2, target, time.time(), mode="follow")

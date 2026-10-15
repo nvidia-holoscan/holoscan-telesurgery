@@ -115,7 +115,7 @@ class Controller:
         self.expires = time.monotonic() + 2
 
     def move(self, token, sequence, command, sent_at, mode="jog", speed_deg_s=None):
-        if mode not in {"step", "jog", "home", "grip", "cartesian", "reset"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian", "follow", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if type(sent_at) not in (float, int) or not math.isfinite(sent_at):
             raise ValueError("Invalid controller timestamp")
@@ -154,6 +154,14 @@ class Controller:
             gripper_rates(command, self.adapter.grippers)
             self.sequence = sequence
             return self.record(lambda: self.adapter.grip(command), motion=True)
+        if mode == "follow":
+            from telesurgery_robots.mira.follow import command as follow_command
+
+            if not self.adapter.simulation or not hasattr(self.adapter, "follow_tool"):
+                raise ValueError("MIRA target following is not supported by this robot")
+            command = follow_command(command)
+            self.sequence = sequence
+            return self.record(lambda: self.adapter.follow_tool(command), motion=True)
         if mode == "cartesian":
             from telesurgery_robots.mira.cartesian import command as tool_command
 

@@ -5,7 +5,7 @@
 
 import math
 
-from telesurgery_robots.adapters.base import cartesian_command, speed_value
+from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 
 
@@ -41,6 +41,7 @@ class Franka:
         except Exception:
             self.close()
             raise
+        transform = values(state["O_T_EE"], 16, math.inf)
         return {
             "joints_deg": {"joints": [math.degrees(v) for v in state["q"]]},
             "velocity_deg_s": {"joints": [math.degrees(v) for v in state["dq"]]},
@@ -50,6 +51,8 @@ class Franka:
                 "matrix": state["O_T_EE"],
                 "layout": "column-major",
                 "unit": "m",
+                "position_m": transform[12:15],
+                "orientation_matrix": [[transform[4 * j + i] for j in range(3)] for i in range(3)],
             },
             "mode": state["mode"],
             "faults": state["faults"],

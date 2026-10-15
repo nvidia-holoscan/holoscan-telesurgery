@@ -59,6 +59,11 @@ def controls(adapter: Adapter, spec: dict) -> dict:
         **({"speed_deg_s": adapter.speed_limits} if hasattr(adapter, "speed_limits") else {}),
         **({"cartesian": adapter.cartesian} if enabled and hasattr(adapter, "cartesian") else {}),
         **(
+            {"mira_follow": adapter.mira_follow}
+            if adapter.simulation and hasattr(adapter, "mira_follow")
+            else {}
+        ),
+        **(
             {"mira_cartesian": adapter.mira_cartesian}
             if enabled and hasattr(adapter, "mira_cartesian")
             else {}

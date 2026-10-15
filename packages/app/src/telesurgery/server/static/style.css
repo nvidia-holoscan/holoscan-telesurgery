@@ -646,10 +646,26 @@ body[data-role="surgeon"] #cameras .actions {
 .node-status-line {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     margin-top: 12px;
     min-height: 34px;
+    flex-wrap: nowrap;
+}
+.node-status-summary {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
     flex-wrap: wrap;
+    gap: 2px 10px;
+}
+.node-uptime {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 .node-directory .device {
     display: flex;
@@ -684,12 +700,13 @@ body[data-role="surgeon"] #cameras .actions {
     padding: 3px;
 }
 .node-status-line button {
+    flex-shrink: 0;
     min-height: 24px;
     font-size: 11px;
 }
 
 .node-status-line .node-remove {
-    margin-left: auto;
+    margin-left: 0;
 }
 .status {
     display: inline-flex;
@@ -1197,21 +1214,23 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .gamepad-roll-keys {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
 }
 .gamepad-roll-keys kbd {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 28px;
-    min-height: 26px;
-    line-height: 20px;
-    font-size: 14px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0;
+    line-height: 1;
+    font-size: 12px;
     color: var(--ink);
 }
 .gamepad-roll-keys .icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     stroke-width: 2.5;
 }
 .gamepad-roll-arm:has(kbd[data-active="true"]) > span {
@@ -1253,9 +1272,115 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     font-size: 11px;
     color: var(--muted);
 }
-.input-discovery {
+.input-discovery,
+.haply-range {
     margin: 6px 0 0;
     color: var(--muted);
+    font-size: 11px;
+}
+.haply-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-bottom: 12px;
+}
+.haply-header .gamepad-status {
+    margin: 0;
+}
+.haply-position {
+    margin-bottom: 12px;
+}
+.haply-position-label {
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 10px;
+}
+.haply-position-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+}
+.axis-triad {
+    display: block;
+    width: 104px;
+    height: 72px;
+    flex-shrink: 0;
+}
+.axis-triad path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.axis-triad text {
+    fill: currentColor;
+    font-size: 12px;
+    font-weight: 600;
+}
+.axis-triad circle {
+    fill: var(--muted);
+}
+.haply-position [data-axis="X"] { color: #b8443c; }
+.haply-position [data-axis="Y"] { color: #39824d; }
+.haply-position [data-axis="Z"] { color: #356fa8; }
+.haply-coordinates {
+    flex: 1;
+    min-width: 0;
+    max-width: 128px;
+    display: grid;
+    gap: 5px;
+    font-size: 12px;
+}
+.haply-axis-value {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    font-weight: 500;
+}
+.haply-coordinate {
+    color: var(--ink);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+.haply-calibration {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+.haply-calibration button {
+    width: auto;
+    min-height: 26px;
+    padding: 3px 8px;
+    margin: 0;
+    font-size: 11px;
+}
+.haply-range {
+    padding: 8px 10px;
+    margin: 0 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    line-height: 1.5;
+}
+.haply-range strong {
+    color: var(--ink);
+    font-weight: 500;
+}
+.haply-range p {
+    margin: 4px 0 0;
+}
+.haply-travel {
+    font-variant-numeric: tabular-nums;
+}
+.haply-travel:empty {
+    display: none;
+}
+.haply-calibration-error {
+    margin: 0 0 12px;
     font-size: 11px;
 }
 .robot-toolbar select {
@@ -1320,8 +1445,12 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     font-weight: 500;
 }
 .gripper-control button {
-    padding: 6px;
-    gap: 4px;
+    min-width: 0;
+    min-height: 36px;
+    padding: 4px;
+    gap: 5px;
+    font-size: 11px;
+    white-space: nowrap;
     touch-action: none;
 }
 .gripper-feedback {
@@ -1349,19 +1478,29 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 .gripper-control kbd {
     display: grid;
     place-items: center;
-    min-width: 18px;
-    height: 18px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    flex-shrink: 0;
     border: 1px solid #d7dfd3;
     border-radius: 3px;
     background: #f6f8f7;
     font: inherit;
     font-weight: 700;
+    font-size: 12px;
     color: var(--ink);
 }
 .gripper-control kbd .icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     stroke-width: 2.5;
+}
+.gamepad-roll-keys .face-button-icon,
+.gripper-control kbd .face-button-icon,
+.grip-toggle .face-button-icon {
+    width: 18px;
+    height: 18px;
+    stroke-width: 1.5;
 }
 .motion-value {
     display: flex;

@@ -410,6 +410,7 @@ class Application:
                     "ip": ip,
                     "status": node.get("status"),
                     "sdk": node.get("sdk"),
+                    "uptime_s": node.get("uptime_s"),
                     "environment": node.get("environment"),
                     "simulation": node.get("simulation"),
                     "simulation_support": node.get("simulation_support"),
@@ -581,7 +582,7 @@ class Application:
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
         mode = params.get("mode", "jog")
-        if mode not in {"step", "jog", "home", "grip", "cartesian", "reset"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian", "follow", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if mode == "home" and not robot["controls"].get("home_deg"):
             raise ValueError("Home is not supported by this robot")
@@ -593,6 +594,10 @@ class Application:
             raise PermissionError(reason)
         if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
             raise ValueError("MIRA Cartesian jogging is not supported by this robot")
+        if mode == "follow" and not (
+            robot.get("simulation") and robot["controls"].get("mira_follow")
+        ):
+            raise ValueError("MIRA target following is not supported by this robot")
         if mode == "grip" and not robot["controls"].get("grippers"):
             raise ValueError("Gripper control is not supported by this robot")
         if (
@@ -618,7 +623,7 @@ class Application:
                 **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
                 **(
                     {"mode": mode}
-                    if mode in {"home", "grip", "cartesian", "reset"}
+                    if mode in {"home", "grip", "cartesian", "follow", "reset"}
                     or robot["controls"].get("step_mode")
                     else {}
                 ),
