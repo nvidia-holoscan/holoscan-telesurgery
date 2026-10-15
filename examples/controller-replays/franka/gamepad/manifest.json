@@ -1,0 +1,112 @@
+{
+  "version": 2,
+  "environment": "franka",
+  "device": "gamepad",
+  "task": "Ultrasound probe approach and torso swipe",
+  "source": "Measured tool checkpoints from the reference keyboard approach and scan through production Cartesian controls; normalized for each selected device",
+  "starting_scene": "Fresh Franka scene at Home",
+  "duration_s": 36.4,
+  "streams": {
+    "franka": {
+      "file": "franka.jsonl.gz",
+      "initial": {
+        "joints_deg": {
+          "joints": [
+            -24.474349975585938,
+            -18.341707229614258,
+            13.682441711425781,
+            -106.195068359375,
+            9.416765213012695,
+            90.74629211425781,
+            -21.33296012878418
+          ]
+        },
+        "grippers": {}
+      }
+    }
+  },
+  "observed": {
+    "task": "Probe approach and torso scan checkpoints reached in Isaac physics",
+    "scan_endpoint_distance_m": 0.142875
+  },
+  "scan_start_s": 13.97,
+  "replay_verified": true,
+  "replayed": {
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
+    "local": {
+      "added_round_trip_delay_ms": 0,
+      "replay_elapsed_s": 31.67,
+      "elapsed_including_setup_and_retention_s": 43.72,
+      "checkpoints_reached": {
+        "franka": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": false,
+      "measured_final_tool_pose": {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [
+          0.6656354665756226,
+          0.07248276472091675,
+          0.15678757429122925
+        ],
+        "orientation_matrix": [
+          [
+            -0.9999816417694092,
+            0.0059816655702888966,
+            0.0010989356087520719
+          ],
+          [
+            0.005985426250845194,
+            0.9999761581420898,
+            0.003451533615589142
+          ],
+          [
+            -0.0010782635072246194,
+            0.0034580472856760025,
+            -0.9999935626983643
+          ]
+        ]
+      }
+    },
+    "delayed": {
+      "added_round_trip_delay_ms": 160,
+      "replay_elapsed_s": 60.97,
+      "elapsed_including_setup_and_retention_s": 74.72,
+      "checkpoints_reached": {
+        "franka": 18
+      },
+      "retention_observed_s": 3,
+      "cameras_enabled": false,
+      "measured_final_tool_pose": {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [
+          0.6653763055801392,
+          0.0720284953713417,
+          0.15708771347999573
+        ],
+        "orientation_matrix": [
+          [
+            -0.999982476234436,
+            0.00584579911082983,
+            0.0011327463435009122
+          ],
+          [
+            0.005849702283740044,
+            0.9999768733978271,
+            0.003473906312137842
+          ],
+          [
+            -0.0011124123120680451,
+            0.0034804707393050194,
+            -0.9999934434890747
+          ]
+        ]
+      }
+    }
+  }
+}

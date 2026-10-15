@@ -27,6 +27,8 @@ async def test_mira_roll_keyboard_and_gamepad():
                     )
                 ),
             )
+            await page.clock.install(time=1000)
+            await page.clock.pause_at(1000)
             await page.goto("http://localhost:8777/index.html")
             await page.evaluate("""async () => {
                 document.body.replaceChildren(); document.hasFocus=()=>true;
@@ -42,19 +44,19 @@ async def test_mira_roll_keyboard_and_gamepad():
             await expect(page.get_by_label("MIRA left roll increase (T)")).to_be_visible()
             await expect(page.get_by_label("MIRA right roll decrease (H)")).to_be_visible()
             await page.keyboard.down("t")
-            await page.wait_for_timeout(80)
+            await page.clock.run_for(80)
             await page.keyboard.down("h")
-            await page.wait_for_timeout(650)
+            await page.clock.run_for(650)
             assert await page.evaluate("moves.at(-1)") == {
                 "left": [0, 0, 0, 0, 1],
                 "right": [0, 0, 0, 0, -1],
             }
             await page.keyboard.up("t")
             await page.keyboard.up("h")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert await page.evaluate("stops") == 1
             count = await page.evaluate("moves.length")
-            await page.wait_for_timeout(150)
+            await page.clock.run_for(150)
             assert await page.evaluate("moves.length") == count
             await page.evaluate("""async () => {
                 input.destroy();document.body.replaceChildren();moves=[];stops=0;
@@ -65,18 +67,21 @@ async def test_mira_roll_keyboard_and_gamepad():
                 window.input=gamepadInput(robot,send,stop,()=>1);
                 document.body.append(input.select,input.element);input.update(true,true);
             }""")
+            await page.clock.run_for(50)
             await page.get_by_label("MIRA input", exact=True).select_option("0")
+            await page.clock.run_for(50)
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
             await page.evaluate(
                 "pad.buttons[4].pressed=pad.buttons[12].pressed=pad.buttons[0].pressed=true"
             )
-            await page.wait_for_timeout(160)
+            await page.clock.run_for(160)
             assert await page.evaluate("moves.at(-1)") == {
                 "left": [0, 0, 0, 0, 1],
                 "right": [0, 0, 0, 0, -1],
             }
             # One tool can stop while the other keeps rolling.
             await page.evaluate("pad.buttons[12].pressed=false;moves=[]")
+            await page.clock.run_for(50)
             await page.wait_for_function("moves.length>0")
             assert await page.evaluate("moves.at(-1)") == {
                 "left": [0, 0, 0, 0, 0],
@@ -84,9 +89,10 @@ async def test_mira_roll_keyboard_and_gamepad():
             }
             # Opposing face buttons cancel the remaining roll input.
             await page.evaluate("pad.buttons[3].pressed=true")
+            await page.clock.run_for(50)
             await page.wait_for_function("stops===1")
             count = await page.evaluate("moves.length")
-            await page.wait_for_timeout(150)
+            await page.clock.run_for(150)
             assert await page.evaluate("moves.length") == count
             await page.evaluate("input.destroy()")
         finally:

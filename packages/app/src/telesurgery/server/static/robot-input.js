@@ -191,6 +191,7 @@ function motionSpeed(robot, stop, kind, title, limits, defaultPercent, maximumSt
     return {
         element: container,
         value,
+        percent: () => percent,
         increment: (seconds = 0.05) => Math.min(maximumStep, value() * seconds),
         update(available) { slider.disabled = !available; },
     };
@@ -214,10 +215,10 @@ export function emptyJog(robot) {
     );
 }
 
-export function inputBlocked() {
+export function inputBlocked({allowUnfocused = false} = {}) {
     return (
         document.hidden ||
-        !document.hasFocus() ||
+        (!allowUnfocused && !document.hasFocus()) ||
         !!document.activeElement?.closest(".motion-value") ||
         !!document.querySelector(
             'dialog[open], [role="dialog"][aria-modal="true"]:not([hidden])',
@@ -231,7 +232,8 @@ export function miraToolJog(robot, command) {
     const maximum = robot.controls.max_step_deg || 1;
     return Object.fromEntries(Object.entries(command).map(([arm, values]) => {
         const result = values.map((v, i) => v / maximum *
-            (i < 3 ? config.linear_step_mm : config.angular_step_deg));
+            (i < 3 ? config.linear_step_mm : i === 4 ?
+                (config.roll_step_deg ?? config.angular_step_deg) : config.angular_step_deg));
         const length = Math.hypot(...result.slice(0, 3));
         if (length > config.linear_step_mm)
             for (let i = 0; i < 3; i++) result[i] *= config.linear_step_mm / length;

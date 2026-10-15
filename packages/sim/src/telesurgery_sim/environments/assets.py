@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Fetch a room's USD assets and place fixed props."""
+"""Fetch and position a room's USD assets."""
 
 import time
 import urllib.parse
@@ -9,8 +9,8 @@ import urllib.request
 from pathlib import Path
 
 
-def place_static(stage, name, asset, position, rotation, scale):
-    """Place a fixed prop without overriding transforms authored inside its asset."""
+def place_static(stage, name, asset, position, rotation, scale, *, dynamic=False):
+    """Place a prop without overriding transforms authored inside its asset."""
     from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     prop = UsdGeom.Xform.Define(stage, name)
@@ -21,7 +21,32 @@ def place_static(stage, name, asset, position, rotation, scale):
     reference.GetReferences().AddReference(asset)
     for prim in Usd.PrimRange(reference):
         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-            UsdPhysics.RigidBodyAPI(prim).CreateKinematicEnabledAttr(True)
+            UsdPhysics.RigidBodyAPI(prim).CreateKinematicEnabledAttr(not dynamic)
+
+
+def aim_camera(camera, target, offset=(0, 0, 0)):
+    """Aim mounted optics in world space, preserving the mount, scale and screen up."""
+    from pxr import Gf, UsdGeom
+
+    xform = UsdGeom.Xformable(camera)
+    world = xform.ComputeLocalToWorldTransform(0)
+    position = world.ExtractTranslation() + Gf.Vec3d(*offset)
+    view = Gf.Matrix4d().SetLookAt(
+        position,
+        Gf.Vec3d(*target),
+        world.TransformDir(Gf.Vec3d(0, 1, 0)).GetNormalized(),
+    )
+    transform = Gf.Transform(world)
+    transform.SetTranslation(position)
+    transform.SetRotation(Gf.Transform(view.GetInverse()).GetRotation())
+    parent = xform.ComputeParentToWorldTransform(0)
+    local = Gf.Transform(transform.GetMatrix() * parent.GetInverse())
+    # Isaac's Camera wrapper removes matrix ops while normalizing transforms.
+    # Author its supported TRS ops so sensor setup/resolution changes retain the aim.
+    xform.ClearXformOpOrder()
+    xform.AddTranslateOp().Set(local.GetTranslation())
+    xform.AddOrientOp(UsdGeom.XformOp.PrecisionDouble).Set(local.GetRotation().GetQuat())
+    xform.AddScaleOp(UsdGeom.XformOp.PrecisionDouble).Set(local.GetScale())
 
 
 def fetch(url, directory):

@@ -11,6 +11,7 @@ fail() { echo "$*" >&2; exit 1; }
 sdk=5
 docker=false
 franka=false
+force=false
 workspace="$root/workspace"
 while (($#)); do
     case "$1" in
@@ -18,6 +19,7 @@ while (($#)); do
             [[ $# -ge 2 && ( "$2" == 4 || "$2" == 5 ) ]] || fail "--sdk requires 4 or 5"
             sdk="$2"; shift 2 ;;
         --docker) docker=true; shift ;;
+        --force) force=true; shift ;;
         --profile)
             [[ $# -ge 2 && "$2" == franka ]] || fail "--profile requires franka"
             franka=true; shift 2 ;;
@@ -26,9 +28,10 @@ while (($#)); do
             workspace="$(realpath -m -- "$2")"; shift 2 ;;
         --workspace=*) workspace="$(realpath -m -- "${1#*=}")"; shift ;;
         -h|--help)
-            echo "Usage: ./setup.sh [--sdk 4] [--docker] [--workspace PATH] [--profile franka]"
+            echo "Usage: ./setup.sh [--sdk 4] [--docker] [--workspace PATH] [--profile franka] [--force]"
             echo "Install native dependencies, or prepare only the host clock for Docker."
             echo "Add --profile franka to build the physical Franka adapter for native execution."
+            echo "Unchanged native setups are reused; --force reruns installation and validation."
             exit 0 ;;
         *) fail "Unknown option: $1. Use --help for usage." ;;
     esac
@@ -54,7 +57,7 @@ if dpkg-query -W libglib2.0-0t64 >/dev/null 2>&1; then glib=libglib2.0-0t64; fi
 packages=(build-essential ca-certificates curl git pkg-config libgl1 libegl1
           libxkbcommon0 libvulkan1 "$glib" libx11-dev libxrandr-dev
           libxinerama-dev libxcursor-dev libxi-dev libusb-1.0-0
-          libsdl2-2.0-0 python3-tk xvfb xauth)
+          libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth)
 missing=()
 for package in "${packages[@]}"; do
     if [[ "$(dpkg-query -W -f='${db:Status-Status}' "${package%%=*}" 2>/dev/null || true)" != installed ]]; then
@@ -82,6 +85,19 @@ fi
 
 environment="$root/.venv-sdk$sdk"
 python_bin="$environment/bin/python"
+setup_path="$PATH"
+mkdir -p build/setup
+pending="$(mktemp "$root/build/setup/run.XXXXXX")"
+trap 'rm -f -- "$pending"' EXIT
+cache_args=(--sdk "$sdk" --workspace "$workspace" --pending "$pending")
+if $franka; then cache_args+=(--franka); fi
+if $force; then cache_args+=(--force); fi
+cache_python=python3
+if [[ -x "$python_bin" ]]; then cache_python="$python_bin"; fi
+if "$cache_python" scripts/setup_cache.py check "${cache_args[@]}"; then
+    echo "Setup already up to date (SDK $sdk). Use --force to rerun installation and validation."
+    exit 0
+fi
 export UV_MANAGED_PYTHON=1
 log="$root/build/setup.log"
 : > "$log"
@@ -99,6 +115,7 @@ step "Preparing Python environment…" uv run --no-project --python 3.12 \
     python scripts/builders/dependencies.py \
     --sdk "$sdk" --environment "$environment"
 export PATH="$environment/bin:$PATH"
+step "Preparing Haply input support…" "$python_bin" scripts/setup_haply.py
 step "Building SDK and camera support…" "$python_bin" "scripts/builders/sdk$sdk.py"
 step "Preparing GPU codecs…" "$python_bin" scripts/builders/codecs.py
 if $franka; then
@@ -109,5 +126,6 @@ step "Preparing simulation dependencies…" uv pip install --python "$python_bin
 step "Preparing simulation meshes…" uv pip install --python "$python_bin" \
     --target "$workspace/sim-deps" --no-deps 'trimesh==5.1.0'
 step "Checking GPU codecs…" "$python_bin" -m telesurgery doctor
+PATH="$setup_path" "$python_bin" scripts/setup_cache.py record "${cache_args[@]}"
 
 echo "Setup complete."

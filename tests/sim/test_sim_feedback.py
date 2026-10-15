@@ -54,6 +54,31 @@ def test_feedback_waits_for_physics_and_rejects_missing_joint():
         feedback.read()
 
 
+def test_drive_targets_use_physics_joint_identity_and_leave_mimic_joint_alone():
+    feedback = JointFeedback.__new__(JointFeedback)
+    commands = []
+    first = view(["/R2", "/mimic", "/L1"], [0, 0, 0], [0, 0, 0])
+    second = view(["/finger", "/L2"], [0, 0], [0, 0])
+    for number, item in enumerate((first, second)):
+        item.set_dof_position_targets = lambda values, dof_indices, n=number: commands.append(
+            (n, "position", values, dof_indices)
+        )
+        item.set_dof_velocity_targets = lambda values, dof_indices, n=number: commands.append(
+            (n, "velocity", values, dof_indices)
+        )
+    feedback.views = [first, second]
+    feedback.apply_targets({"/L1": 0.1, "/L2": 0.2, "/R2": 0.3, "/finger": 0.025}, {"/L1": 0.4})
+    assert commands == [
+        (0, "position", [0.3, 0.1], [0, 2]),
+        (0, "velocity", [0.4], [2]),
+        (1, "position", [0.025, 0.2], [0, 1]),
+    ]
+    commands.clear()
+    with pytest.raises(RuntimeError, match="/missing"):
+        feedback.apply_targets({"/L1": 0.5, "/missing": 0.6})
+    assert commands == []
+
+
 @pytest.mark.parametrize("yaw", [0, 90, 180, 270])
 @pytest.mark.parametrize("tool_yaw", [0, 45, 180])
 def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, yaw, tool_yaw):
@@ -105,3 +130,71 @@ def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, 
     feedback.view.is_physics_tensor_entity_valid = lambda: False
     assert feedback.read(measured) == {}
     assert feedback.kinematics is None
+
+
+def test_scene_reset_preserves_angular_and_linear_joint_units(monkeypatch):
+    import sys
+    from unittest.mock import Mock
+
+    from telesurgery_sim.runtime.reset import SceneReset
+
+    physics = SimpleNamespace(RevoluteJoint=object(), PrismaticJoint=object())
+    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(Usd=Mock(), UsdPhysics=physics))
+    monkeypatch.setitem(
+        sys.modules, "isaacsim.core.experimental.prims", SimpleNamespace(RigidPrim=Mock())
+    )
+
+    def joint(path, kind, position):
+        return SimpleNamespace(
+            IsA=lambda schema: schema is kind,
+            GetPath=lambda: path,
+            GetAttribute=lambda _: SimpleNamespace(Get=lambda: position),
+        )
+
+    shoulder = joint("/shoulder", physics.RevoluteJoint, 15)
+    mimic = joint("/mimic", physics.RevoluteJoint, 45)
+    finger = joint("/finger", physics.PrismaticJoint, 0.03)
+    slider = joint("/slider", physics.PrismaticJoint, 0.02)
+    stage = SimpleNamespace(Traverse=lambda: [shoulder, mimic, finger, slider])
+    scene = SceneReset(
+        stage,
+        SimpleNamespace(views=[]),
+        {"joints": {0: shoulder}},
+        {"joints": [30]},
+        [],
+        joint_positions={"/finger": 0.04},
+    )
+    assert scene.positions == pytest.approx(
+        {"/shoulder": np.deg2rad(30), "/mimic": np.deg2rad(45), "/finger": 0.04, "/slider": 0.02}
+    )
+
+
+def test_scene_reset_restores_robot_props_and_zeroes_momentum():
+    from unittest.mock import Mock
+
+    from telesurgery_sim.runtime.reset import SceneReset
+
+    scene = SceneReset.__new__(SceneReset)
+    arm, needle = Mock(), Mock()
+    arm_pose = (np.array([[0, 1, 2]]), np.array([[1, 0, 0, 0]]))
+    needle_pose = (np.array([[3, 4, 5]]), np.array([[0, 1, 0, 0]]))
+    joints = np.deg2rad([[25, 68, 49, 92, 0, 0.3]])
+    arm.dof_paths = [[f"/J{i}" for i in range(6)]]
+    scene.positions = dict(zip(arm.dof_paths[0], joints[0], strict=True))
+    scene.articulations = [(arm, arm_pose)]
+    scene.props = [(needle, needle_pose)]
+    scene.restore()
+    np.testing.assert_array_equal(arm.set_dof_positions.call_args.args[0], joints)
+    np.testing.assert_array_equal(arm.set_dof_velocities.call_args.args[0], np.zeros_like(joints))
+    for view, pose in ((arm, arm_pose), (needle, needle_pose)):
+        for actual, expected in zip(view.set_world_poses.call_args.args, pose, strict=True):
+            np.testing.assert_array_equal(actual, expected)
+        velocities = view.set_velocities.call_args.kwargs
+        assert set(velocities) == {"linear_velocities", "angular_velocities"}
+        for value in velocities.values():
+            np.testing.assert_array_equal(value, np.zeros((1, 3)))
+    needle.is_physics_tensor_entity_valid.return_value = False
+    arm.reset_mock()
+    with pytest.raises(ValueError, match="not ready"):
+        scene.restore()
+    arm.set_dof_positions.assert_not_called()

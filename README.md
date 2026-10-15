@@ -18,7 +18,7 @@ Use physical devices or **MIRA, Franka and Versius simulations**, with browser o
 | Native builds    | CUDA 13 development toolkit and GCC 13+. `setup.sh` installs the remaining build dependencies.                                                                                                            |
 | Simulation nodes | x86 with an RTX GPU, or DGX Spark, meeting [Isaac Sim requirements](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/installation/requirements.html).                                                     |
 | Viewing          | A browser for dashboards; a local desktop display for Holoviz or the Isaac Sim window.                                                                                                                    |
-| Robot input      | Keyboard, or a compatible Xbox, PlayStation or Nintendo Switch gamepad.                                                                                                                                   |
+| Robot input      | Keyboard, Xbox/PlayStation/Nintendo Switch gamepad, or Haply Inverse3 (MIRA, Franka and Versius simulations).                                                                                             |
 | Build access     | SSH access to NVIDIA GitLab for the current SDK 5 Hololink dependency.                                                                                                                                    |
 
 ## Setup
@@ -33,7 +33,7 @@ Prepare the host once:
 ./setup.sh --docker
 ```
 
-`run.sh --docker` builds the image automatically: `holoscan-telesurgery:0.1.0` for SDK 5 or `holoscan-telesurgery:0.1.0-sdk4` for SDK 4.
+`run.sh --docker` builds the image automatically: `holoscan-telesurgery:0.1.0`.
 
 ### Native execution
 
@@ -42,6 +42,8 @@ With the CUDA 13 development toolkit installed, run:
 ```bash
 ./setup.sh
 ```
+
+Unchanged setups are reused automatically. Use `./setup.sh --force` to rerun installation and validation.
 
 Follow the quickstart below, omitting `--docker` from run commands. Simulation nodes still require Docker for Isaac Sim.
 
@@ -79,7 +81,7 @@ On the surgeon's machine:
 
 Open **[localhost:8002](http://localhost:8002)**. Enter the patient hostname, your name and requested access. The default endpoint works when both services run on the same machine.
 
-Approve the request in Patient, then select feeds and a robot in Surgeon. See [robot controls](docs/robot-controls.md) for keyboard and gamepad mappings.
+Approve the request in Patient, then select feeds and a robot in Surgeon. See [robot controls](docs/robot-controls.md) for keyboard, gamepad and Haply mappings.
 
 ## Node configuration
 
@@ -87,14 +89,11 @@ Replace `PATIENT_IP` below with the patient hostname or IP.
 
 ### CMR Versius simulation
 
-Extract the supplied CMR URDF archive on the simulation host into this layout:
+Extract `CMR_Versius_All_Assets.zip` on the simulation host, preserving its folders:
 
-```text
-workspace/assets/versius/
-├── BSU.urdf
-├── needle_holder_platform.urdf
-├── fenestrated_grasper_platform.urdf
-└── meshes/
+```bash
+mkdir -p workspace/assets/versius
+unzip CMR_Versius_All_Assets.zip -d workspace/assets/versius
 ```
 
 Start the simulation node:
@@ -141,9 +140,7 @@ Works for native and Docker services on the local host:
 ./run.sh stop --all
 ```
 
-A role alone stops its only running instance. If several match, specify `--name` / `--port`, or add `--all`.
-Use `--workspace PATH` for another workspace.
-Shutdown allows 30 seconds for cleanup. Change this with `--timeout SECONDS`; add `--force` to kill after the timeout.
+A role alone stops its only running instance. If several match, specify `--name` / `--port`, or add `--all`. Use `--workspace PATH` for another workspace. Shutdown allows 30 seconds for cleanup. Change this with `--timeout SECONDS`; add `--force` to kill after the timeout.
 
 ----
 Research demonstration. [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [TODO](docs/TODO.md)

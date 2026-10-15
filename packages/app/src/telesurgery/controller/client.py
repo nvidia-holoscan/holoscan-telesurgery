@@ -68,6 +68,7 @@ class Control:
         self.pending = None
         self.owned = None
         self.releasing = False
+        self.stopping = self.moving = False
         self.last_renew = 0
         self.reply = {}
         self.error = ""
@@ -75,7 +76,7 @@ class Control:
 
     @property
     def ready(self):
-        return self.pending is None and not self.releasing
+        return self.pending is None and not self.releasing and not self.stopping
 
     def _send(self, method, params):
         if self.pending is not None:
@@ -87,14 +88,18 @@ class Control:
         )
         return True
 
-    def move(self, robot, mode, command, speed):
-        if not self.ready:
+    def acquire(self, robot):
+        if not self.ready or self.owned:
             return False
-        if self.owned and self.owned != robot:
-            self.stop()
-            return False
-        self.owned = robot  # An interrupted reply may still have accepted the command.
+        self.owned = robot  # Keep the credential available if the reply is interrupted.
         self.error = ""
+        return self._send("robot.acquire", {"id": robot})
+
+    def move(self, robot, mode, command, speed, *, replay_run=None):
+        if not self.ready or self.owned != robot:
+            return False
+        self.error = ""
+        self.moving = True
         if mode == "grip":
             command = {"velocity": command}
         return self._send(
@@ -104,10 +109,15 @@ class Control:
                 "mode": mode,
                 "command": command,
                 **({"speed_deg_s": speed} if speed is not None else {}),
+                **({"replay": True, "replay_run": replay_run} if replay_run is not None else {}),
             },
         )
 
     def stop(self):
+        self.stopping = bool(self.owned and self.moving)
+
+    def release(self, robot=None):
+        self.owned = self.owned or robot
         self.releasing = bool(self.owned)
 
     def poll(self, now):
@@ -123,14 +133,21 @@ class Control:
             except Exception as exc:
                 self.error = str(exc)
                 self.failed = True
-                if method != "robot.release":
+                if method == "robot.move" and self.owned:
                     self.stop()
+                elif method != "robot.release":
+                    self.release()
+            if method == "robot.hold":
+                self.stopping = self.moving = False
             if method == "robot.release":
                 self.owned = None
                 self.releasing = False
+                self.stopping = self.moving = False
             self.last_renew = now
         if self.releasing and self.owned:
             self._send("robot.release", {"id": self.owned})
+        elif self.stopping and self.owned:
+            self._send("robot.hold", {"id": self.owned})
         elif self.owned and now - self.last_renew >= 0.5:
             self._send("robot.renew", {"id": self.owned})
 
@@ -140,7 +157,7 @@ class Control:
         return reply if reply.get("sequence", -1) > state.get("sequence", -1) else state
 
     def close(self):
-        self.stop()
+        self.release()
         deadline = time.monotonic() + 9
         while (self.owned or self.pending) and time.monotonic() < deadline:
             self.poll(time.monotonic())

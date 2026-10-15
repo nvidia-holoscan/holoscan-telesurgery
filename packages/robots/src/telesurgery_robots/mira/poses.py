@@ -4,6 +4,11 @@
 """Vendor nominal arm pose and the application's physical jog limit, in degrees."""
 
 MIRA_HOME = (15.7, 80.6, 45.0, 98.9)
+# Simulation-only setup: jaws start above the pad with room to tilt both ways.
+MIRA_SIM_HOME = {
+    "left": (-1.643189, 82.733636, 32.455492, 128.931830),
+    "right": (1.388606, 82.507631, 31.895388, 127.063201),
+}
 MIRA_HOME_ROLL = 0.0
 MIRA_HOME_GRIP = 0.0  # fraction of tool travel; zero is closed
 MIRA_STEP_LIMIT = 1.0

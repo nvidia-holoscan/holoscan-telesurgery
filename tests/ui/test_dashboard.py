@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Delayed control replies must not create overlapping motion or retain a blurred tab's lock."""
+"""Delayed control replies must not overlap motion; blur holds without surrendering control."""
 
 import asyncio
 import json
@@ -59,8 +59,13 @@ async def test_motion_repress_and_blur_with_request_in_flight(input_mode):
             page = await browser.new_page()
             await page.context.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
+            await expect(
+                page.get_by_role("button", name="Release control", exact=True)
+            ).to_be_visible()
             control = page.get_by_role("button", name="Fixture joints 1 increase (Q)", exact=True)
 
+            await expect(control).to_be_enabled()
             await control.focus()
             await page.wait_for_timeout(1200)
             assert await control.evaluate("element => document.activeElement === element")
@@ -88,6 +93,11 @@ async def test_motion_repress_and_blur_with_request_in_flight(input_mode):
             assert calls.count("robot.move") == 1
 
             await page.reload()
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
+            await expect(
+                page.get_by_role("button", name="Release control", exact=True)
+            ).to_be_visible()
+            await expect(control).to_be_enabled()
             calls.clear()
             await press()
             await page.wait_for_timeout(30)
@@ -95,8 +105,9 @@ async def test_motion_repress_and_blur_with_request_in_flight(input_mode):
             await release()
             await page.wait_for_timeout(700)
             assert calls.count("robot.move") == 1
-            assert "robot.release" in calls
-            assert "robot.renew" not in calls
+            assert "robot.hold" in calls
+            assert "robot.release" not in calls
+            assert "robot.renew" in calls
         finally:
             await browser.close()
 

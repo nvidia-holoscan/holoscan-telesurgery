@@ -132,6 +132,8 @@ def test_optional_tegra_bindings_allow_setup_without_tokenizer(
 
     monkeypatch.setattr(deps.subprocess, "check_output", output)
     deps.prepare("5", environment)
+    sync = next(command for command in commands if command[:2] == ("uv", "sync"))
+    assert sync[sync.index("--no-install-package") + 1] == "pynvvideocodec"
     assert commands[-1][-5:] == (
         "cmake>=4,<5",
         "patchelf",

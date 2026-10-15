@@ -1,0 +1,99 @@
+{
+  "version": 2,
+  "environment": "mira",
+  "device": "haply",
+  "task": "Right-arm needle pickup from above and lift",
+  "source": "Measured right-arm pickup checkpoints adapted from the verified MIRA keyboard task; device-specific grip and speed controls",
+  "starting_scene": "Reset scene",
+  "duration_s": 12.39,
+  "streams": {
+    "mira": {
+      "file": "mira.jsonl.gz",
+      "initial": {
+        "joints_deg": {
+          "left": [
+            -1.6425440311431885,
+            82.72921752929688,
+            32.458587646484375,
+            128.929443359375,
+            -0.00516576087102294
+          ],
+          "right": [
+            1.3892266750335693,
+            82.50299835205078,
+            31.898517608642578,
+            127.06092071533203,
+            3.694500992423855e-05
+          ]
+        },
+        "grippers": {
+          "left": 0.00023178535047918558,
+          "right": 0.0
+        }
+      }
+    }
+  },
+  "replay_verified": true,
+  "observed": {
+    "needle_start_cm": [
+      50.21165084838867,
+      102.11071014404297,
+      0.006083719432353973
+    ],
+    "needle_final_cm": [
+      50.348819732666016,
+      104.45121765136719,
+      -0.18814781308174133
+    ],
+    "needle_lift_cm": 2.3405,
+    "retention_observed_s": 10
+  },
+  "replayed": {
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
+    "local": {
+      "added_round_trip_delay_ms": 0,
+      "replay_elapsed_s": 12.41,
+      "elapsed_including_setup_and_retention_s": 30.94,
+      "checkpoints_reached": {
+        "mira": 9
+      },
+      "retention_observed_s": 10,
+      "cameras_enabled": true,
+      "needle_start_cm": [
+        50.21165084838867,
+        102.11071014404297,
+        0.006083719432353973
+      ],
+      "needle_final_cm": [
+        50.348819732666016,
+        104.45121765136719,
+        -0.18814781308174133
+      ],
+      "needle_lift_cm": 2.3405
+    },
+    "delayed": {
+      "added_round_trip_delay_ms": 80,
+      "replay_elapsed_s": 29.26,
+      "elapsed_including_setup_and_retention_s": 50.04,
+      "checkpoints_reached": {
+        "mira": 9
+      },
+      "retention_observed_s": 10,
+      "cameras_enabled": true,
+      "needle_start_cm": [
+        50.21154022216797,
+        102.11071014404297,
+        0.006050175055861473
+      ],
+      "needle_final_cm": [
+        50.30949401855469,
+        104.71587371826172,
+        -0.25453516840934753
+      ],
+      "needle_lift_cm": 2.6052
+    }
+  }
+}

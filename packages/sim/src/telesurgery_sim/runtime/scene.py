@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--versius-assets", type=Path)
     args = parser.parse_args()
-    width, height = Config.width, Config.height
+    width, height = PRESETS[args.sim].get("resolution", (Config.width, Config.height))
 
     def progress(message):
         temporary = args.directory / "progress.tmp"
@@ -45,6 +45,7 @@ def main():
             "window_width": 1280,
             "window_height": 900,
             "multi_gpu": False,
+            "disable_viewport_updates": not args.gui,
         }
     )
     server = None
@@ -71,7 +72,7 @@ def main():
         from websockets.sync.server import serve
 
         progress("Loading environment assets")
-        from telesurgery_sim.environments.assets import fetch, place_static
+        from telesurgery_sim.environments.assets import aim_camera, fetch, place_static
 
         preset = PRESETS[args.sim]
         asset = fetch(preset["asset"], args.directory / "assets")
@@ -106,7 +107,15 @@ def main():
             articulation.CreateSolverPositionIterationCountAttr(64)
             articulation.CreateSolverVelocityIterationCountAttr(4)
         for name, path, position, rotation, scale in props:
-            place_static(stage, f"/Telesurgery/{name}", path, position, rotation, scale)
+            place_static(
+                stage,
+                f"/Telesurgery/{name}",
+                path,
+                position,
+                rotation,
+                scale,
+                dynamic=name in preset.get("dynamic_props", []),
+            )
         if stage.GetPrimAtPath("/Needle"):
             stage.GetPrimAtPath("/Needle").SetActive(False)
         for prim in stage.Traverse():
@@ -115,9 +124,19 @@ def main():
         dome = UsdLux.DomeLight.Define(stage, "/Telesurgery/RoomLight")
         dome.CreateIntensityAttr(900)
         if args.sim == "mira":
-            from telesurgery_sim.environments.mira import enable_tool_roll
+            from telesurgery_sim.environments.mira import (
+                configure_task_physics,
+                configure_tool_contacts,
+                enable_tool_roll,
+            )
 
             enable_tool_roll(stage)
+            configure_tool_contacts(stage, preset["root"])
+            configure_task_physics(stage)
+        elif args.sim == "franka":
+            from telesurgery_sim.environments.franka import configure_phantom_contacts
+
+            configure_phantom_contacts(stage)
         drives = {"left": {}, "right": {}} if args.sim == "mira" else {"joints": {}}
         fingers = {}
         for prim in stage.Traverse():
@@ -187,7 +206,22 @@ def main():
         scale[up_axis] = radius * 0.02
         box("Floor", floor_position, scale, (0.12, 0.18, 0.24))
         if args.sim == "mira":
-            box("ProcedureTable", (13.4, 18.0, 0.0), (32.0, 4.0, 32.0), (0.16, 0.21, 0.25))
+            pad = next(prop for prop in preset["props"] if prop[0] == "SuturePad")
+            x, y, z = pad[2]
+            box("ProcedureTable", (x, y - 2.0, z), (32.0, 4.0, 32.0), (0.16, 0.21, 0.25))
+            # Three points support the curve and leave the grasp region clear.
+            for index, (offset_x, offset_z) in enumerate(((0.9, -4.65), (0.9, 4.65), (-2.6, 1.0))):
+                box(
+                    f"NeedleRest{index}",
+                    (x + offset_x, y + 4.35, z + offset_z),
+                    (0.8, 2.0, 0.8),
+                    (0.28, 0.08, 0.06),
+                )
+                contact = PhysxSchema.PhysxCollisionAPI.Apply(
+                    stage.GetPrimAtPath(f"/Telesurgery/NeedleRest{index}")
+                )
+                contact.CreateContactOffsetAttr(0.01)
+                contact.CreateRestOffsetAttr(0)
         cameras = []
         depth_enabled = []
         manifests = []
@@ -204,6 +238,8 @@ def main():
             elif "focal_length" in preset:
                 camera.CreateFocalLengthAttr(preset["focal_length"])
             camera.CreateFStopAttr(0.0)
+            if existing and "camera_target" in preset:
+                aim_camera(camera, preset["camera_target"], preset.get("camera_offset", (0, 0, 0)))
             offset = (0.9, -1.2, 0.5) if index else (0.55, -0.65, 0.85)
             if up_axis == 1:
                 offset = (offset[0], offset[2], offset[1])
@@ -221,12 +257,12 @@ def main():
             prim.ApplyAPI("OmniSensorAPI")
             cameras.append(
                 CameraSensor(
-                    # Franka uses wall-clock physics catch-up. Render the
+                    # With wall-clock physics catch-up, render the
                     # newest state once per camera loop, never older sensor
                     # ticks accumulated during a slow frame.
                     RtxCamera(
                         path,
-                        tick_rate=0 if args.sim == "franka" else 30,
+                        tick_rate=0,
                         reset_xform_op_properties=False,
                     ),
                     resolution=(height, width),
@@ -287,8 +323,22 @@ def main():
                 raise RuntimeError("Incomplete Franka finger drives")
             robot.gripper_ranges = {"hand": (0.0, 0.04)} if fingers else {}
             cartesian_feedback = FrankaFeedback(feedback, fingers)
+        from telesurgery_sim.runtime.reset import SceneReset
+
+        initial_pose = {arm: list(pose) for arm, pose in robot.pose.items()}
+        initial_grippers = dict(robot.gripper_ranges)
+        scene_reset = SceneReset(
+            stage,
+            feedback,
+            drives,
+            initial_pose,
+            [f"/Telesurgery/{name}" for name in preset.get("dynamic_props", [])],
+            joint_positions={
+                str(drive.GetPath()): robot.finger_target for drive in fingers.values()
+            },
+        )
         timeline = omni.timeline.get_timeline_interface()
-        if args.sim == "franka":
+        if args.sim in {"franka", "mira"}:
             import carb.settings
             from omni.kit.loop import _loop
 
@@ -299,9 +349,17 @@ def main():
             settings = carb.settings.get_settings()
             settings.set_bool("/app/player/useFixedTimeStepping", False)
             settings.set_int("/persistent/simulation/minFrameRate", 10)
-            physics = PhysxSchema.PhysxSceneAPI.Apply(stage.GetPrimAtPath("/World/Physics"))
-            physics.CreateTimeStepsPerSecondAttr(120)
+            for prim in stage.Traverse():
+                if prim.IsA(UsdPhysics.Scene):
+                    physics = PhysxSchema.PhysxSceneAPI.Apply(prim)
+                    physics.CreateTimeStepsPerSecondAttr(60)
         timeline.play()
+        if args.sim == "mira":
+            # Initialize physics before restoring the recorded starting scene.
+            # Driving from the asset's authored pose can leave the right arm
+            # blocked by contact even though its targets already match Home.
+            app.update()
+            scene_reset.restore()
         progress("Warming up camera rendering")
         pending = queue.Queue(maxsize=8)
         sequence = 0
@@ -317,7 +375,7 @@ def main():
                     request = json.loads(raw)
                     if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
                         raise ValueError("Expected JSON-RPC 2.0")
-                    if request.get("method") == "camera.configure":
+                    if request.get("method") in {"camera.configure", "reset_scene"}:
                         future = Future()
                         pending.put_nowait((time.monotonic(), request, future))
                         result = future.result(timeout=10)
@@ -348,14 +406,34 @@ def main():
         while app.is_running() and not (args.directory / "stop").exists():
             frame_started = time.monotonic()
             applied = []
+            reset_replies = []
             for _ in range(8):
                 try:
                     received, request, future = pending.get_nowait()
                 except queue.Empty:
                     break
                 try:
-                    if time.monotonic() - received > 5:
+                    if time.monotonic() - received > (
+                        1 if request.get("method") == "reset_scene" else 5
+                    ):
                         raise ValueError("Expired simulator command")
+                    if request.get("method") == "reset_scene":
+                        if request.get("params"):
+                            raise ValueError(
+                                "Scene reset uses the initial environment without parameters"
+                            )
+                        with robot_lock:
+                            robot.apply({"method": "hold"})
+                            try:
+                                scene_reset.restore()
+                            except (AssertionError, RuntimeError) as exc:
+                                raise ValueError(f"Scene reset failed: {exc}") from exc
+                            robot = SimRobot(args.sim)
+                            robot.pose = {arm: list(pose) for arm, pose in initial_pose.items()}
+                            robot.gripper_ranges = dict(initial_grippers)
+                            command_sequence += 1
+                        reset_replies.append(future)
+                        continue
                     params = request["params"]
                     size = (params["width"], params["height"])
                     if size not in RESOLUTIONS:
@@ -390,16 +468,27 @@ def main():
                 finger_target = robot.finger_target
                 joint_velocity = robot.joint_target_velocity
                 applied_sequence = command_sequence
-            for arm, joints in drives.items():
-                for index, drive in joints.items():
-                    drive.GetTargetPositionAttr().Set(targets[arm][index])
-                    if args.sim == "franka":
-                        # Feed forward the same bounded trajectory velocity.
-                        # A zero velocity target makes drive damping resist a
-                        # held jog and leaves the tool trailing its target.
-                        drive.GetTargetVelocityAttr().Set(joint_velocity[index])
-            for drive in fingers.values():
-                drive.GetTargetPositionAttr().Set(finger_target)
+            # Use the live physics target API instead of relying on USD scene
+            # edits while the articulation is running. Preserve its drives.
+            position_targets = {
+                str(drive.GetPath()): np.deg2rad(targets[arm][index])
+                for arm, joints in drives.items()
+                for index, drive in joints.items()
+            }
+            position_targets.update(
+                {str(drive.GetPath()): finger_target for drive in fingers.values()}
+            )
+            # Feed forward the bounded Franka trajectory velocity so damping
+            # does not resist a held jog and leave the tool trailing its target.
+            velocity_targets = (
+                {
+                    str(drive.GetPath()): np.deg2rad(joint_velocity[index])
+                    for index, drive in drives["joints"].items()
+                }
+                if args.sim == "franka"
+                else None
+            )
+            feedback.apply_targets(position_targets, velocity_targets)
             for future, result in applied:
                 future.set_result(result)
             app.update()
@@ -411,6 +500,8 @@ def main():
                 if cartesian_feedback:
                     robot.kinematics = cartesian_feedback.kinematics
                 feedback_at = time.monotonic()
+                for future in reset_replies:
+                    future.set_result(robot.apply({"method": "get_state"}))
             for index, camera in enumerate(cameras):
                 pixels, _ = camera.get_data("rgb")
                 capture_started = time.monotonic_ns()

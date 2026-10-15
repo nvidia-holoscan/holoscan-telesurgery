@@ -23,6 +23,7 @@ const paths = {
     remove: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
     copy: "M8 8h13v13H8V8ZM16 8V3H3v13h5",
     reset: "M3 4v5h5M3.5 9a9 9 0 1 1 .5 7",
+    replay: "M3 4v5h5M3.5 9a9 9 0 1 1 .5 7M10 8l6 4-6 4V8Z",
     home: "m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-8H9v8H4a1 1 0 0 1-1-1V10Z",
     stop: "M6 6h12v12H6V6Z",
     disconnect:
@@ -42,6 +43,7 @@ export function icon(name) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("class", "icon");
+    if (name === "stop") svg.classList.add("icon-stop");
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
     const path = document.createElementNS(svg.namespaceURI, "path");

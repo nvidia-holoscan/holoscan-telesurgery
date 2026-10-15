@@ -11,7 +11,19 @@ import secrets
 import time
 from pathlib import Path
 
+from telesurgery.controller.checkpoint_replay import CheckpointPlayback, validate_checkpoints
+from telesurgery.controller.haply import BrowserHaply
+from telesurgery.controller.haply import available as haply_available
 from telesurgery.controller.process import NativeController
+from telesurgery.controller.replay import (
+    Catalog,
+    FeedbackPlayback,
+    Playback,
+    Rendezvous,
+    check_initial,
+    read_rows,
+)
+from telesurgery.controller.replay_handoff import ReplayHandoff
 from telesurgery.nodes.address import endpoint
 from telesurgery.nodes.registry import NodeRegistry
 from telesurgery.server.media import Media
@@ -38,9 +50,14 @@ class Application:
         self.access = Access(self.directory / "surgeons.yaml" if role == "patient" else None)
         self.native = NativeViews(self.directory / "viewers")
         self.controller = NativeController(self.directory / "controller")
+        self.haply = BrowserHaply()
+        self.replay_catalog = Catalog()
+        self.replay_barrier = Rendezvous(self.replay_catalog)
+        self.replays = {}
         self.controller_server = None
         self.controller_certificate = None
         self.peers, self.peer_nodes, self.nodes, self.owners = {}, {}, {}, {}
+        self.replay_handoff = ReplayHandoff(self.owners, self._handoff_call)
         self.tokens, self.sequences, self.selected = {}, {}, set()
         self.control_lock = asyncio.Lock()
         self.tasks = set()
@@ -208,15 +225,69 @@ class Application:
             peer.clear_frames()
             await self._close_viewers(peer.id, cameras - set(selected))
             return True
-        if method in {"robot.acquire", "robot.move", "robot.renew", "robot.release"}:
+        if method in {"replay.join", "replay.poll", "replay.cancel"}:
+            async with self.control_lock:
+                await self.run(lambda: self.access.require(peer.id, robot=True))
+                key = params["id"]
+                owner = self.owners.get(key)
+                if owner is None:
+                    raise ValueError("Robot is unavailable")
+                await self.run(owner.validate, peer.id, params.get("token"))
+                if method == "replay.cancel":
+                    self.replay_barrier.cancel(params["run"], peer.id, key)
+                    await self.replay_handoff.clear(key)
+                    return True
+                if method == "replay.poll":
+                    barrier = self.replay_barrier.poll(
+                        params["run"],
+                        peer.id,
+                        key,
+                        self.owners,
+                        finished=params.get("finished") is True,
+                        checkpoint=params.get("checkpoint"),
+                    )
+                    robot = next((r for r in self.inventory()["robots"] if r["id"] == key), {})
+                    if robot.get("stale") or robot.get("error") or robot.get("status") != "online":
+                        raise RuntimeError("Replay stopped because robot feedback is unavailable")
+                    state = robot.get("state", self.robot_state.get(key, {}))
+                    handoff_context = self.replay_barrier.handoff(params["run"])
+                    if params.get("fresh") is True or handoff_context:
+                        # A motion acknowledgement may precede its physics step.
+                        # Observe again before calculating a checkpoint correction.
+                        state = await self._robot(peer.id, "robot.renew", params)
+                    handoff = await self.replay_handoff.update(
+                        handoff_context,
+                        state,
+                        finished=params.get("finished") is True,
+                        take=params.get("take") is True,
+                    )
+                    return {
+                        **barrier,
+                        "state": state,
+                        "handoff_done": handoff,
+                        "shadow": handoff_context.get("shadow") if handoff_context else None,
+                    }
+                robot = next((r for r in self.inventory()["robots"] if r["id"] == key), None)
+                if robot is None or robot["status"] != "online":
+                    raise ValueError("Robot is unavailable")
+                await self.replay_handoff.clear(key)
+                run = self.replay_barrier.join(params["recording"], robot, peer.id, owner.token)
+                await self.replay_handoff.prepare(self.replay_barrier.handoff(run))
+                return run
+        if method in {"robot.acquire", "robot.move", "robot.renew", "robot.hold", "robot.release"}:
             async with self.control_lock:
                 started = time.monotonic()
+                barrier = None
+                if method == "robot.move" and params.get("replay") is True:
+                    barrier = self.replay_barrier.poll(
+                        params["replay_run"], peer.id, params["id"], self.owners
+                    )
                 result = await self._robot(peer.id, method, params)
                 if method == "robot.move":
                     self.robot_timings.setdefault(params["id"], Samples()).add(
                         (time.monotonic() - started) * 1000
                     )
-                return result
+                return {**result, "replay_barrier": barrier} if barrier else result
         raise PermissionError("Unsupported surgeon operation")
 
     async def _media_changed(self):
@@ -409,6 +480,11 @@ class Application:
                             else {}
                         ),
                         "owner_id": surgeon.id if surgeon else None,
+                        **(
+                            {"reset_scene_blocked": self.scene_reset_blocked(robot_id)}
+                            if device.get("controls", {}).get("reset_scene")
+                            else {}
+                        ),
                         "state": device.get("state"),
                         "error": self.faults.get(robot_id, device.get("error", "")),
                         "status": device.get("status", "online")
@@ -417,6 +493,24 @@ class Application:
                     }
                 )
         return {"nodes": nodes, "cameras": cameras, "robots": robots}
+
+    def scene_reset_blocked(self, key):
+        node, _ = key.split(":", 1)
+        devices = self.nodes.get(node, {}).get("robots", [])
+        scene = [
+            f"{node}:{device['id']}"
+            for device in devices
+            if device.get("simulation") and device["kind"] == "versius-sim"
+        ]
+        if key in scene:
+            for other in scene:
+                owner = self.owners.get(other)
+                if other != key and owner and (owner.owner is not None or not owner.ready):
+                    return (
+                        "Release control of all other arms and wait for them to stop "
+                        "before resetting."
+                    )
+        return ""
 
     async def node_call(self, key, method, params=None):
         for peer_id, node_id in self.peer_nodes.items():
@@ -433,6 +527,12 @@ class Application:
                     else 3,
                 )
         raise ConnectionError("Node is offline")
+
+    async def _handoff_call(self, key, method, params):
+        node, device = key.split(":", 1)
+        result = await self.node_call(node, method, {"key": device, **params})
+        self.robot_state[key] = result["state"] if method == "robot.replay_release" else result
+        return result
 
     async def _robot(self, peer, method, params):
         await self.run(lambda: self.access.require(peer, robot=True))
@@ -463,7 +563,7 @@ class Application:
             except Exception:
                 owner.release()
                 raise
-            return {"token": token}
+            return {"token": token, "state": self.robot_state[key]}
         token = params.get("token")
         await self.run(
             owner.validate, peer, token, params.get("sequence") if method == "robot.move" else None
@@ -473,15 +573,24 @@ class Application:
             if not owner.ready:
                 raise RuntimeError(self.faults[key])
             return result
-        if method == "robot.renew":
-            return await self.node_call(node, method, {"key": device, "token": token})
+        if method in {"robot.renew", "robot.hold"}:
+            self.robot_state[key] = await self.node_call(
+                node, method, {"key": device, "token": token}
+            )
+            return self.robot_state[key]
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
         mode = params.get("mode", "jog")
-        if mode not in {"step", "jog", "home", "grip", "cartesian"}:
+        if mode not in {"step", "jog", "home", "grip", "cartesian", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if mode == "home" and not robot["controls"].get("home_deg"):
             raise ValueError("Home is not supported by this robot")
+        if mode == "reset" and not (
+            robot.get("simulation") and robot["controls"].get("reset_scene")
+        ):
+            raise ValueError("Scene reset is not supported by this robot")
+        if mode == "reset" and (reason := self.scene_reset_blocked(key)):
+            raise PermissionError(reason)
         if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
             raise ValueError("MIRA Cartesian jogging is not supported by this robot")
         if mode == "grip" and not robot["controls"].get("grippers"):
@@ -492,6 +601,11 @@ class Application:
             or not -0.05 <= time.time() - sent <= 0.3
         ):
             raise ValueError("Robot input expired in transit")
+        if mode == "reset":
+            self.replay_barrier.released(key)
+        if params.get("replay") is not True:
+            await self.replay_handoff.clear(key)
+            self.replay_barrier.released(key)
         self.robot_state[key] = await self.node_call(
             node,
             method,
@@ -504,7 +618,8 @@ class Application:
                 **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
                 **(
                     {"mode": mode}
-                    if mode in {"home", "grip", "cartesian"} or robot["controls"].get("step_mode")
+                    if mode in {"home", "grip", "cartesian", "reset"}
+                    or robot["controls"].get("step_mode")
                     else {}
                 ),
             },
@@ -512,12 +627,14 @@ class Application:
         return self.robot_state[key]
 
     async def _release(self, key):
+        self.replay_barrier.released(key)
         owner = self.owners[key]
         token = owner.token
         owner.release()
         owner.ready = False
         node, device = key.split(":", 1)
         try:
+            await self.replay_handoff.clear(key)
             result = await self.node_call(node, "robot.release", {"key": device, "token": token})
             owner.ready = True
             self.faults.pop(key, None)
@@ -585,6 +702,8 @@ class Application:
         self.selected.clear()
         self.tokens.clear()
         self.sequences.clear()
+        self.replays.clear()
+        self.robot_state.clear()
         self.remote = Peer(reader, writer, reject, event, clock=self.clock).start()
         self.address = address
         self.timings = {key: Samples() for key in ("patient_round_trip_ms", "control_ack_ms")}
@@ -682,10 +801,42 @@ class Application:
             **statistics,
             "native_views": self.native.status(),
             "native_controller": self.controller.status(),
+            "haply_available": await asyncio.to_thread(haply_available),
+            "replays": self.replay_catalog.list(),
             "clock": self.clock.status(),
         }
 
     async def action(self, method, params):
+        if method in {"replay.start", "replay.read", "replay.cancel", "replay.heartbeat"}:
+            return await self._replay_action(method, params)
+        if method == "haply.read":
+            if (
+                self.role != "surgeon"
+                or self.remote_status.get("status") != "approved"
+                or not self.remote_status.get("robot")
+            ):
+                raise PermissionError("Robot control permission is required")
+            robot = next(
+                (r for r in self.remote_status.get("robots", []) if r["id"] == params.get("id")),
+                None,
+            )
+            if not robot:
+                raise ValueError("Robot is unavailable")
+            reply = self.robot_state.get(robot["id"], {})
+            if reply.get("sequence", -1) > (robot.get("state") or {}).get("sequence", -1):
+                robot = {**robot, "state": reply}
+            enabled = (
+                robot.get("status") == "online"
+                and not robot.get("stale")
+                and not robot.get("error")
+                and not robot.get("controls", {}).get("read_only")
+                and (
+                    not robot.get("owner") or robot.get("owner_id") == self.remote_status.get("id")
+                )
+            )
+            return self.haply.read(
+                robot, {**params, "enabled": params.get("enabled") is True and enabled}
+            )
         if method == "controller.close":
             await self.controller.close()
             return True
@@ -779,24 +930,45 @@ class Application:
                 self.selected = selected
                 await self._sync_streams()
                 return True
-            if method in {"robot.move", "robot.renew", "robot.release"}:
+            if method in {
+                "robot.acquire",
+                "robot.move",
+                "robot.renew",
+                "robot.hold",
+                "robot.release",
+            }:
                 received = time.time()
                 started = time.monotonic()
                 async with self.control_lock:
-                    if method == "robot.move" and time.time() - received > 0.3:
-                        raise TimeoutError("Robot input expired while waiting")
                     key = params["id"]
+                    playback = self.replays.get(key)
+                    if method == "robot.move":
+                        if params.get("replay") is True and (
+                            playback is None or params.get("replay_run") != playback.run
+                        ):
+                            raise RuntimeError("Replay input is no longer current")
+                        if params.get("replay") is True and isinstance(playback, FeedbackPlayback):
+                            # Materialize the next recorded input only while the
+                            # dashboard is live and that exact input is pending.
+                            # Its transit deadline starts when it can be sent.
+                            playback.validate_request(params.get("mode", "jog"), params["command"])
+                            received = time.time()
+                        elif time.time() - received > 0.3:
+                            raise TimeoutError("Robot input expired while waiting")
+                    if method == "robot.acquire":
+                        if key not in self.tokens:
+                            reply = await self.remote.call("robot.acquire", {"id": key})
+                            self.tokens[key] = reply["token"]
+                            self.sequences[key] = 0
+                            self.robot_state[key] = reply["state"]
+                            return reply["state"]
+                        method = "robot.renew"
                     if key not in self.tokens:
                         if method == "robot.release":
                             outgoing = await self.run(lambda: {"id": key})
                             reply = await self.remote.call(method, outgoing, timeout=7)
                             return await self.run(lambda: reply)
-                        if method != "robot.move":
-                            return True
-                        result = await self.run(lambda: {"id": key})
-                        reply = await self.remote.call("robot.acquire", result)
-                        self.tokens[key] = reply["token"]
-                        self.sequences[key] = 0
+                        raise RuntimeError("Acquire robot control first")
                     self.sequences[key] += 1
                     outgoing = {
                         **params,
@@ -807,9 +979,31 @@ class Application:
                     outgoing = await self.run(lambda: outgoing)
                     try:
                         reply = await self.remote.call(
-                            method, outgoing, timeout=7 if method == "robot.release" else 2
+                            method,
+                            outgoing,
+                            timeout=7 if method in {"robot.release", "robot.hold"} else 2,
                         )
-                    except Exception:
+                    except Exception as exc:
+                        if (
+                            method == "robot.move"
+                            and params.get("replay") is True
+                            and isinstance(playback, CheckpointPlayback)
+                            and str(exc) == "Robot input expired in transit"
+                        ):
+                            # The patient explicitly rejected this input before
+                            # dispatch. Observe the held robot and let the next
+                            # checkpoint tick compute a new bounded step. Never
+                            # retry a transport failure or an unknown outcome.
+                            state = await self.remote.call(
+                                "robot.renew", {"id": key, "token": self.tokens[key]}
+                            )
+                            if self.replays.get(key) is not playback:
+                                raise RuntimeError("Replay input is no longer current") from exc
+                            playback.acknowledge(state)
+                            playback.barrier = None
+                            playback.renewed = time.monotonic()
+                            self.robot_state[key] = state
+                            return state
                         # Keep credentials for Stop unless the patient confirms
                         # our lease ended. Never replay failed motion.
                         with contextlib.suppress(Exception):
@@ -821,9 +1015,25 @@ class Application:
                                 self.tokens.pop(key, None)
                         raise
                     result = await self.run(lambda value: value, reply)
+                    if isinstance(result, dict):
+                        barrier = result.pop("replay_barrier", None)
+                        if barrier and isinstance(playback, FeedbackPlayback):
+                            playback.barrier = barrier
+                            playback.polled_at = time.monotonic()
+                        self.robot_state[key] = result
+                    if playback:
+                        playback.renewed = time.monotonic()
                     if method == "robot.release":
                         self.tokens.pop(key, None)
+                        self.robot_state.pop(key, None)
+                        self.replays.pop(key, None)
                     elif method == "robot.move":
+                        if (
+                            params.get("replay") is True
+                            and isinstance(playback, FeedbackPlayback)
+                            and self.replays.get(key) is playback
+                        ):
+                            playback.acknowledge(result)
                         elapsed = (time.monotonic() - started) * 1000
                         self.timings["control_ack_ms"].add(elapsed)
                         self.robot_timings.setdefault(key, Samples()).add(elapsed)
@@ -918,10 +1128,174 @@ class Application:
             return await self.node_registry.remove(params["id"])
         raise ValueError("Unsupported patient action")
 
+    async def _replay_action(self, method, params):
+        if (
+            self.role != "surgeon"
+            or self.remote_status.get("status") != "approved"
+            or not self.remote_status.get("robot")
+        ):
+            raise PermissionError("Robot control permission is required")
+        key = params["id"]
+        if key not in self.tokens:
+            self.replays.pop(key, None)
+            raise PermissionError("Acquire robot control before replay")
+        credentials = {"id": key, "token": self.tokens[key]}
+        playback = self.replays.get(key)
+        if method == "replay.heartbeat":
+            if playback:
+                playback.read_at = playback.clock()
+            return True
+        if method == "replay.cancel":
+            if playback:
+                self.replays.pop(key, None)
+                await self.remote.call("replay.cancel", {**credentials, "run": playback.run})
+            return True
+        if method == "replay.start":
+            if playback:
+                raise RuntimeError("Stop the current replay first")
+            robot = next((r for r in self.remote_status.get("robots", []) if r["id"] == key), None)
+            if (
+                robot is None
+                or robot["status"] != "online"
+                or robot.get("stale")
+                or robot.get("error")
+            ):
+                raise ValueError("Robot is unavailable")
+            path, manifest, role = self.replay_catalog.get(params["recording"], robot)
+            state = await self.action("robot.renew", {"id": key})
+            check_initial(
+                state,
+                manifest["streams"][role]["initial"],
+                starting_scene=manifest.get("starting_scene", "Home"),
+            )
+            rows = await asyncio.to_thread(
+                read_rows, path.parent / manifest["streams"][role]["file"]
+            )
+            if manifest["version"] == 2:
+                validate_checkpoints(
+                    rows, environment=manifest["environment"], device=manifest["device"]
+                )
+                if max((row.get("barrier", 0) for row in rows), default=0) != manifest.get(
+                    "barriers", 0
+                ):
+                    raise ValueError("Replay stream has incomplete handoff barriers")
+            run = await self.remote.call(
+                "replay.join", {**credentials, "recording": params["recording"]}
+            )
+            playback_type = (
+                FeedbackPlayback
+                if robot["kind"] == "mira-sim" and manifest["device"] == "keyboard"
+                else Playback
+            )
+            if manifest["version"] == 2:
+                playback_type = CheckpointPlayback
+            self.replays[key] = playback_type(robot, manifest, role, rows, run)
+            return True
+        if playback is None:
+            raise RuntimeError("Replay stopped")
+        try:
+            feedback = isinstance(playback, FeedbackPlayback)
+            if isinstance(playback, CheckpointPlayback) and playback.taking:
+                if playback.clock() - playback.read_at > 0.3:
+                    raise TimeoutError("Replay paused because the dashboard stopped polling")
+            now = time.monotonic()
+            if (
+                not feedback
+                or isinstance(playback, CheckpointPlayback)
+                or playback.barrier is None
+                or now - playback.polled_at >= 0.1
+                or playback.finished
+            ):
+                barrier = await self.remote.call(
+                    "replay.poll",
+                    {
+                        **credentials,
+                        "run": playback.run,
+                        "finished": playback.finished,
+                        **(
+                            {
+                                "checkpoint": playback.checkpoint,
+                                "fresh": True,
+                                "take": playback.taking,
+                            }
+                            if isinstance(playback, CheckpointPlayback)
+                            else {}
+                        ),
+                    },
+                )
+                if isinstance(playback, CheckpointPlayback) and "checkpoint" not in barrier:
+                    raise RuntimeError(
+                        "Patient service does not support checkpoint replay; "
+                        "restart it with the updated code"
+                    )
+                if (
+                    isinstance(playback, CheckpointPlayback)
+                    and playback.independent_actions
+                    and not barrier.get("independent_actions")
+                ):
+                    raise RuntimeError("Restart the patient service to support independent replay")
+                if (
+                    isinstance(playback, CheckpointPlayback)
+                    and playback.independent_actions
+                    and playback.role == "right"
+                ):
+                    playback.select_pickup(barrier.get("shadow"))
+                if feedback:
+                    playback.barrier, playback.polled_at = barrier, time.monotonic()
+                    if isinstance(playback, CheckpointPlayback):
+                        playback.renewed = time.monotonic()
+            else:
+                barrier = playback.barrier
+            elapsed = barrier["elapsed"]
+            if feedback and elapsed is not None:
+                elapsed += time.monotonic() - playback.polled_at
+            state = self.robot_state.get(key, {})
+            if feedback:
+                # Motion acknowledgements carry measured feedback too. The
+                # slower inventory publication must not replace newer samples.
+                state = max(
+                    (state, barrier.get("state", {})),
+                    key=lambda sample: sample.get("sequence", -1),
+                )
+            if (feedback and time.monotonic() - playback.renewed >= 0.5) or (
+                not feedback
+                and elapsed is not None
+                and playback.index < len(playback.rows)
+                and playback.rows[playback.index]["t"] <= elapsed
+            ):
+                state = await self.action("robot.renew", {"id": key})
+                playback.renewed = time.monotonic()
+            if isinstance(playback, CheckpointPlayback):
+                playback.synchronized = barrier.get("checkpoint", 0)
+                if playback.taking and "handoff_done" not in barrier:
+                    raise RuntimeError("Restart the patient service to support independent replay")
+                playback.handoff_done = barrier.get("handoff_done", False)
+            result = playback.read(-1 if elapsed is None else elapsed, state)
+            if barrier["done"]:
+                self.replays.pop(key, None)
+            return {
+                **result,
+                "done": barrier["done"],
+                "waiting": elapsed is None,
+                "state": state,
+                "feedback_paced": isinstance(playback, FeedbackPlayback),
+                "run": playback.run,
+            }
+        except Exception:
+            self.replays.pop(key, None)
+            with contextlib.suppress(Exception):
+                await self.remote.call("replay.cancel", {**credentials, "run": playback.run})
+            raise
+
     async def _watch(self):
         tick = 0
         while True:
             try:
+                if self.haply.reader and (
+                    time.monotonic() - self.haply.last_read > 2
+                    or self.remote_status.get("status") != "approved"
+                ):
+                    await asyncio.to_thread(self.haply.close)
                 if self.role == "patient":
                     async with self.control_lock:
                         for key, owner in self.owners.items():
@@ -969,6 +1343,7 @@ class Application:
             await asyncio.sleep(0.1)
 
     async def close(self):
+        await asyncio.to_thread(self.haply.close)
         await self.native.close()
         await self.controller.close()
         LOG.info("Stopping application endpoint")

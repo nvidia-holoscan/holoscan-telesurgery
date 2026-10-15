@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 from telesurgery_robots.mira.adapter import Mira
-from telesurgery_robots.mira.cartesian import bounded_solution, command
+from telesurgery_robots.mira.cartesian import SIM_CARTESIAN, bounded_solution, command
 from telesurgery_robots.mira.poses import MIRA_HOME
 from telesurgery_robots.simulation.state import SimRobot
 
@@ -84,6 +84,36 @@ def test_ik_rejects_invalid_second_arm_before_motion():
         bounded_solution({"left": pose["left"], "right": [0]}, pose, movement())
 
 
+def test_faster_simulated_roll_remains_measured_bounded_and_expires(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    robot = SimRobot()
+    measured = {arm: [*MIRA_HOME, 0] for arm in robot.pose}
+    robot.feedback = {"joints_deg": measured}
+    robot.kinematics = (
+        {
+            arm: (np.array(q), np.zeros(4), np.eye(4), [(-180, 180)] * 4)
+            for arm, q in measured.items()
+        },
+        clock[0],
+    )
+    request = {"left": [0, 0, 0, 0, 5], "right": [0] * 5}
+    with pytest.raises(ValueError, match="angular step"):
+        command(request)  # Physical MIRA retains its one-degree roll limit.
+    for _ in range(3):
+        robot.apply({"method": "jog_mira_cartesian", "params": request})
+        assert robot.pose["left"][4] == 5  # Frozen feedback cannot accumulate roll travel.
+    request["left"][4] = 5.01
+    with pytest.raises(ValueError, match="angular step"):
+        command(request, SIM_CARTESIAN)
+    request["left"] = [0, 0, 0, 1.01, 0]
+    with pytest.raises(ValueError, match="angular step"):
+        command(request, SIM_CARTESIAN)
+    clock[0] += 0.21
+    assert not robot.apply({"method": "get_state"})["control_active"]
+    assert robot.pose["left"][:5] == measured["left"]
+
+
 def test_simulator_uses_physics_jacobian_and_measured_hold(monkeypatch):
     clock = [10.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
@@ -100,12 +130,109 @@ def test_simulator_uses_physics_jacobian_and_measured_hold(monkeypatch):
     result = robot.apply({"method": "jog_mira_cartesian", "params": movement()})
     assert result["control_active"]
     assert result["targets_deg"]["left"][0] == pytest.approx(MIRA_HOME[0] + 0.1)
-    # Repeated requests do not accumulate a target ahead of measured physics.
+    # Preserve the previous command while physics catches up.
     robot.apply({"method": "jog_mira_cartesian", "params": movement()})
-    assert robot.pose["left"][0] == pytest.approx(MIRA_HOME[0] + 0.1)
+    assert robot.pose["left"][0] == pytest.approx(MIRA_HOME[0] + 0.2)
+    assert robot._state()["cartesian_target_mm_deg"]["left"][0] == pytest.approx(0.2)
     clock[0] += 0.21
     assert not robot.apply({"method": "get_state"})["control_active"]
     assert robot.pose["left"][:5] == measured["left"]
     clock[0] += 0.1
     with pytest.raises(ValueError, match="stale"):
         robot.apply({"method": "jog_mira_cartesian", "params": movement()})
+
+
+def test_simulator_continuous_tool_travel_survives_servo_lag_and_stops(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    robot = SimRobot()
+    measured = {arm: np.array(pose[:5]) for arm, pose in robot.pose.items()}
+    start = measured["left"].copy()
+
+    def feedback():
+        robot.feedback = {"joints_deg": {arm: q.tolist() for arm, q in measured.items()}}
+        robot.kinematics = (
+            {
+                arm: (q.copy(), q[:4].copy(), np.eye(4), [(-180, 180)] * 4)
+                for arm, q in measured.items()
+            },
+            clock[0],
+        )
+
+    # A slow position servo completes only a fraction of each target per frame.
+    # 100 fresh 0.1 mm commands must still yield nearly 10 mm, not 2 mm.
+    for _ in range(100):
+        feedback()
+        robot.apply({"method": "jog_mira_cartesian", "params": movement()})
+        for arm in measured:
+            measured[arm] += 0.2 * (np.array(robot.pose[arm][:5]) - measured[arm])
+        clock[0] += 0.05
+    assert measured["left"][0] - start[0] == pytest.approx(9.6, abs=0.01)
+    feedback()
+    robot.apply({"method": "hold"})
+    assert robot.pose["left"][:5] == pytest.approx(measured["left"])
+    assert not robot._state()["control_active"]
+
+    # Frozen feedback/contact may not accumulate a large deferred target.
+    with pytest.raises(ValueError, match="tracking error"):
+        for _ in range(20):
+            feedback()
+            robot.apply({"method": "jog_mira_cartesian", "params": movement()})
+            clock[0] += 0.05
+    assert robot.pose["left"][:5] == pytest.approx(measured["left"])
+    assert not robot._state()["control_active"]
+
+
+def test_simulator_scales_combined_tool_motion_to_joint_lead_without_losing_direction(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    robot = SimRobot()
+    measured = {arm: np.array(pose[:5]) for arm, pose in robot.pose.items()}
+    initial = measured["left"].copy()
+    # An elbow change needs ten times as much joint travel at this configuration.
+    jacobian = np.diag([1.0, 1.0, 1.0, 0.1])
+    for _ in range(20):
+        robot.feedback = {"joints_deg": {arm: q.tolist() for arm, q in measured.items()}}
+        robot.kinematics = (
+            {
+                arm: (q.copy(), jacobian @ q[:4], jacobian, [(-180, 180)] * 4)
+                for arm, q in measured.items()
+            },
+            clock[0],
+        )
+        before = np.array(robot.pose["left"][:4])
+        robot.apply(
+            {
+                "method": "jog_mira_cartesian",
+                "params": {"left": [0.2, 0, 0, 0.2, 0], "right": [0] * 5},
+            }
+        )
+        target = np.array(robot.pose["left"][:4])
+        tool_change = jacobian @ (target - before)
+        assert tool_change[0] == pytest.approx(tool_change[3])
+        assert np.max(np.abs(target - measured["left"][:4])) <= 1 + 1e-9
+        measured["left"][:4] += 0.4 * (target - measured["left"][:4])
+        clock[0] += 0.05
+    assert measured["left"][3] - initial[3] > 7
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_simulator_stops_at_joint_limit_and_permits_retreat(sign):
+    robot = SimRobot()
+    measured = {arm: np.array(pose[:5]) for arm, pose in robot.pose.items()}
+    measured["left"][0] = 70 * sign
+    robot.feedback = {"joints_deg": {arm: q.tolist() for arm, q in measured.items()}}
+    robot.kinematics = (
+        {
+            arm: (q, q[:4], np.eye(4), [(-70, 70), *[(-180, 180)] * 3])
+            for arm, q in measured.items()
+        },
+        time.monotonic(),
+    )
+    request = {"left": [0.1 * sign, 0, 0, 0, 0], "right": [0] * 5}
+    with pytest.raises(ValueError, match="joint limits"):
+        robot.apply({"method": "jog_mira_cartesian", "params": request})
+    assert not robot._state()["control_active"]
+    request["left"][0] *= -1
+    result = robot.apply({"method": "jog_mira_cartesian", "params": request})
+    assert result["targets_deg"]["left"][0] == pytest.approx(69.9 * sign)

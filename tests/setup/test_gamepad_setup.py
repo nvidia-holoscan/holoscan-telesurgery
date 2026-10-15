@@ -3,6 +3,7 @@
 
 """Validate USB startup boundaries and installation without changing host devices."""
 
+import ast
 import ctypes as c
 import importlib.util
 from pathlib import Path
@@ -151,10 +152,82 @@ def test_installer_enables_only_matching_connected_controllers(installation):
     initialize.assert_called_once_with("/dev/bus/usb/001/019")
 
 
-def test_repeating_setup_retries_connected_device_without_reinstalling(installation):
+@pytest.mark.parametrize("uid", [0, 1000])
+def test_repeating_setup_skips_sudo_and_leaves_connected_device_alone(
+    installation, monkeypatch, uid
+):
     run, initialize = installation
+    monkeypatch.setattr(setup_gamepads.os, "geteuid", lambda: uid)
     setup_gamepads.HELPER.write_bytes((ROOT / "scripts/setup_gamepads.py").read_bytes())
     setup_gamepads.RULE.write_bytes((ROOT / "scripts/udev" / setup_gamepads.RULE.name).read_bytes())
     setup_gamepads.install()
     run.assert_not_called()
+    initialize.assert_not_called()
+
+
+def test_changed_device_helper_requests_installation_once(installation, monkeypatch):
+    run, initialize = installation
+    setup_gamepads.HELPER.write_text("outdated helper")
+    monkeypatch.setattr(setup_gamepads.os, "geteuid", lambda: 1000)
+    setup_gamepads.install()
+    run.assert_called_once_with(
+        ["sudo", setup_gamepads.sys.executable, str(ROOT / "scripts/setup_gamepads.py")],
+        check=True,
+    )
+    initialize.assert_not_called()
+
+
+def test_old_bundled_installer_needs_no_privileged_update(installation, monkeypatch):
+    run, initialize = installation
+    monkeypatch.setattr(setup_gamepads.os, "geteuid", lambda: 1000)
+    tree = ast.parse((ROOT / "scripts/setup_gamepads.py").read_text())
+    tree.body = [
+        node
+        for node in tree.body
+        if not (isinstance(node, ast.FunctionDef) and node.name == "helper_matches")
+    ]
+    old_installer = ast.parse('def install():\n    raise RuntimeError("old installer")').body[0]
+    tree.body = [
+        old_installer if isinstance(node, ast.FunctionDef) and node.name == "install" else node
+        for node in tree.body
+    ]
+    setup_gamepads.HELPER.write_text(ast.unparse(tree))
+    setup_gamepads.RULE.write_bytes((ROOT / "scripts/udev" / setup_gamepads.RULE.name).read_bytes())
+    setup_gamepads.install()
+    run.assert_not_called()
+    initialize.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("03 91 00 0a", "03 91 00 0b"),
+        ("def initialize(device):", "def initialize(device, extra=None):"),
+        ("if args.device:", "if not args.device:"),
+    ],
+)
+def test_device_behavior_changes_still_require_installation(
+    installation, monkeypatch, before, after
+):
+    run, initialize = installation
+    monkeypatch.setattr(setup_gamepads.os, "geteuid", lambda: 1000)
+    source = (ROOT / "scripts/setup_gamepads.py").read_text()
+    assert before in source
+    setup_gamepads.HELPER.write_text(source.replace(before, after))
+    setup_gamepads.RULE.write_bytes((ROOT / "scripts/udev" / setup_gamepads.RULE.name).read_bytes())
+    setup_gamepads.install()
+    assert run.call_args.args[0][0] == "sudo"
+    initialize.assert_not_called()
+
+
+def test_missing_usb_library_is_repaired_with_current_rules(installation, monkeypatch):
+    run, initialize = installation
+    setup_gamepads.HELPER.write_bytes((ROOT / "scripts/setup_gamepads.py").read_bytes())
+    setup_gamepads.RULE.write_bytes((ROOT / "scripts/udev" / setup_gamepads.RULE.name).read_bytes())
+    monkeypatch.setattr(setup_gamepads, "find_library", lambda _: None)
+    setup_gamepads.install()
+    assert [call.args[0] for call in run.call_args_list] == [
+        ["apt-get", "update"],
+        ["apt-get", "install", "-y", "libusb-1.0-0"],
+    ]
     initialize.assert_called_once_with("/dev/bus/usb/001/019")
