@@ -69,7 +69,8 @@ fi
 # Select HSB support before Python loads Holoscan or Docker chooses an image.
 # Simulation nodes and dashboard roles do not own physical HSB cameras.
 if [[ "$role" == node && -z "$sim" ]] && ! $help; then
-    selection_python=python3
+    # A Docker-only host uses apt's python3-yaml, even when PATH points to Conda.
+    selection_python=/usr/bin/python3
     for candidate in "$root/.venv-sdk5/bin/python" "$root/.venv-sdk4/bin/python"; do
         if [[ -x "$candidate" ]]; then selection_python="$candidate"; break; fi
     done

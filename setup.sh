@@ -77,7 +77,8 @@ if $docker; then exit 0; fi
 # Keep the default runtime for dashboards/simulations and add isolated camera
 # support when this host has an HSB board or saved HSB node configuration.
 if $automatic; then
-    detected="$(python3 scripts/select_runtime.py --workspace "$workspace" --all-nodes)"
+    # python3-yaml is installed by apt for the system interpreter, not Conda or a venv.
+    detected="$(/usr/bin/python3 scripts/select_runtime.py --workspace "$workspace" --all-nodes)"
     if [[ "$detected" == 4 ]]; then
         camera_args=(--sdk 4 --workspace "$workspace")
         if $franka; then camera_args+=(--profile franka); fi

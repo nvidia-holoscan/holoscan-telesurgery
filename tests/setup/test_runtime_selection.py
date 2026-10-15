@@ -4,6 +4,7 @@
 """Choose camera support before either native or container startup."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,3 +61,18 @@ def test_invalid_configuration_does_not_silently_select_wrong_runtime(tmp_path):
     save(tmp_path / "nodes/room/devices.yaml", {"cameras": {"source": "imx274"}})
     with pytest.raises(ValueError, match="cameras list"):
         runtime.select(tmp_path, "room")
+
+
+def test_missing_dependency_reports_interpreter_and_import_error(monkeypatch, capsys):
+    def missing(*args, **kwargs):
+        raise ModuleNotFoundError("No module named 'yaml'", name="yaml")
+
+    monkeypatch.setattr(runtime, "select", missing)
+    monkeypatch.setattr(sys, "argv", ["select_runtime.py"])
+    with pytest.raises(SystemExit) as exc:
+        runtime.main()
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert sys.executable in error
+    assert "No module named 'yaml'" in error
+    assert "run ./setup.sh first" not in error

@@ -42,7 +42,7 @@ if os.environ.get("SETUP_FAIL") in command:
 if "scripts/setup_cache.py" in command and "check" in command:
     sys.exit(0 if os.environ.get("SETUP_CACHE_HIT") and "--force" not in command else 1)
 if "scripts/select_runtime.py" in command:
-    print(os.environ.get("SETUP_CAMERA_SDK", "5"))
+    sys.exit("PATH Python has no yaml module")
 elif command[0] == "dpkg-query":
     if command[-1] in os.environ.get("SETUP_MISSING_PACKAGES", "libegl1").split():
         sys.exit(1)
@@ -57,6 +57,13 @@ elif command[0] == "nvcc":
         path.chmod(0o755)
     scripts = root / "scripts"
     scripts.mkdir()
+    (scripts / "select_runtime.py").write_text(
+        "import json, os, sys\n"
+        "with open(os.environ['SETUP_CALLS'], 'a') as log:\n"
+        "    log.write(json.dumps({'command': ['python3', *sys.argv], "
+        "'sdk': os.environ['TELESURGERY_SDK'], 'python': sys.executable}) + '\\n')\n"
+        "print(os.environ.get('SETUP_CAMERA_SDK', '5'))\n"
+    )
     (scripts / "build_franka.sh").symlink_to(tools / "python3")
     for sdk in (4, 5):
         environment = root / f".venv-sdk{sdk}/bin"
@@ -139,6 +146,16 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     ]
     assert "Setup complete." in result.stdout
     assert records[-1]["command"][:3] == ["python", "scripts/setup_cache.py", "record"]
+
+
+def test_camera_selection_uses_system_python_despite_shadowed_path(setup, monkeypatch):
+    _, invoke = setup
+    monkeypatch.setenv("SETUP_CACHE_HIT", "1")
+    result, records = invoke()
+    assert result.returncode == 0, result.stderr
+    selection = [item for item in records if "scripts/select_runtime.py" in item["command"]]
+    assert len(selection) == 1
+    assert selection[0]["python"] == "/usr/bin/python3"
 
 
 @pytest.mark.parametrize("sdk", ["4", "5"])
