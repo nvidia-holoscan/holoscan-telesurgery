@@ -143,6 +143,9 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             selector = page.get_by_label(f"{name} input", exact=True)
             await selector.select_option("0" if device == "gamepad" else device)
+            # Replay availability updates on the next dashboard refresh. Do not
+            # depend on acquisition's response still being in flight at selection.
+            await page.clock.run_for(1000)
             await expect(control).to_be_visible()
             async with page.expect_response(
                 lambda response: (
