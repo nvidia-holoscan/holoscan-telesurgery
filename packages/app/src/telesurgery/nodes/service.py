@@ -104,7 +104,15 @@ class NodeService:
             if action == "robot.feedback":
                 return self.robots.report()
             method = action.removeprefix("robot.")
-            if method not in {"prepare", "move", "renew", "hold", "release", "state"}:
+            if method not in {
+                "prepare",
+                "move",
+                "renew",
+                "hold",
+                "release",
+                "state",
+                "replay_release",
+            }:
                 raise ValueError("Unsupported robot operation")
             return await asyncio.wrap_future(self.robots.submit(method, **params))
         else:

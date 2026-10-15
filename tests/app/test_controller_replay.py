@@ -20,6 +20,48 @@ replay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(replay)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_independent_cli_action_uses_server_replay_and_stops_on_failure(monkeypatch, fail):
+    calls, reads = [], []
+
+    class Client:
+        http, url, robot_id = None, "http://unused", "node:right"
+
+        async def action(self, method, **params):
+            calls.append((method, params))
+            if method == "replay.read":
+                reads.append(True)
+                return {
+                    "request": ("grip", {"hand": -0.2}) if len(reads) == 1 else None,
+                    "done": len(reads) == 2,
+                    "run": "current-run",
+                    "speed_deg_s": 20,
+                }
+            if method == "robot.move" and fail:
+                raise RuntimeError("Motion unavailable")
+            return True
+
+    client = Client()
+    monkeypatch.setattr(replay, "Surgeon", lambda *args: client)
+    task = replay.play_remote(client, {"controls": {"speed_deg_s": {}}}, "versius/gamepad")
+    if fail:
+        with pytest.raises(ExceptionGroup, match="TaskGroup"):
+            await task
+    else:
+        await task
+    assert calls[0] == ("replay.start", {"recording": "versius/gamepad"})
+    movement = next(params for method, params in calls if method == "robot.move")
+    assert movement == {
+        "mode": "grip",
+        "command": {"velocity": {"hand": -0.2}},
+        "replay": True,
+        "replay_run": "current-run",
+    }
+    assert any(method == "replay.cancel" for method, _ in calls) is fail
+    assert calls[-1][0] == "robot.hold"
+
+
 @pytest.fixture
 def recording(tmp_path):
     rows = [

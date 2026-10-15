@@ -239,29 +239,21 @@ def test_independent_replay_cannot_continue_after_first_participant_stops(catalo
 
 @pytest.mark.parametrize("left_device", ["keyboard", "gamepad", "haply"])
 @pytest.mark.parametrize("right_device", ["keyboard", "gamepad", "haply"])
-def test_handoff_joins_across_device_recordings(left_device, right_device):
-    barrier = Rendezvous(Catalog())
-    owners = {f"node:{role}": Ownership() for role in ("left", "right")}
+def test_independent_actions_complete_with_any_device_pair(left_device, right_device):
+    now = [0.0]
+    barrier = Rendezvous(Catalog(), lambda: now[0])
+    owners = {f"node:{role}": Ownership(lambda: now[0]) for role in ("left", "right")}
     left = barrier.join(f"versius/{left_device}", robot(), "X", owners["node:left"].acquire("X"))
-    assert barrier.poll(left, "X", "node:left", owners, checkpoint=1)["checkpoint"] == 0
+    assert barrier.poll(left, "X", "node:left", owners, finished=True)["done"]
+    # No live left replay or left replay heartbeat is required for right startup.
+    now[0] += 60
     right = barrier.join(
         f"versius/{right_device}", robot("right"), "Y", owners["node:right"].acquire("Y")
     )
-    assert left == right
-    assert barrier.poll(right, "Y", "node:right", owners, checkpoint=1)["checkpoint"] == 1
-    for checkpoint in (2, 3):
-        assert (
-            barrier.poll(left, "X", "node:left", owners, checkpoint=checkpoint)["checkpoint"]
-            == checkpoint - 1
-        )
-        assert (
-            barrier.poll(right, "Y", "node:right", owners, checkpoint=checkpoint)["checkpoint"]
-            == checkpoint
-        )
-    # A mixed-device participant retains the same Stop/ownership semantics.
-    barrier.cancel(right, "Y", "node:right")
-    with pytest.raises(RuntimeError, match="Replay stopped"):
-        barrier.poll(left, "X", "node:left", owners)
+    assert left != right
+    assert barrier.poll(right, "Y", "node:right", owners)["elapsed"] == 0
+    barrier.cancel(left, "X", "node:left")
+    assert barrier.poll(right, "Y", "node:right", owners, finished=True)["done"]
 
 
 @pytest.mark.parametrize("difference", ["node", "task", "version"])
@@ -275,6 +267,7 @@ def test_handoff_does_not_join_other_scene_task_or_legacy_recording(difference):
         alternate["handoff_group"] = "another-task"
     elif difference == "version":
         alternate["version"] = 1
+        alternate.pop("independent_actions", None)
     catalog.recordings["versius/keyboard"] = catalog.recordings["versius/keyboard"][0], alternate
     barrier = Rendezvous(catalog)
     left = barrier.join("versius/gamepad", robot(), "X", "left-token")
@@ -288,6 +281,10 @@ def test_handoff_does_not_join_other_scene_task_or_legacy_recording(difference):
 @pytest.mark.parametrize("field,value", [("barriers", 2), ("streams", {"right": {}})])
 def test_handoff_rejects_incompatible_group_definition(field, value):
     catalog = Catalog()
+    for _, manifest in catalog.recordings.values():
+        if manifest["environment"] == "versius":
+            manifest.pop("independent_actions", None)
+            manifest.update(handoff_group="coordinated-task", barriers=3)
     barrier = Rendezvous(catalog)
     barrier.join("versius/gamepad", robot(), "X", "left-token")
     catalog.recordings["versius/keyboard"][1][field] = value

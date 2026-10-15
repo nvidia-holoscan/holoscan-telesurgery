@@ -149,6 +149,52 @@ async def play_checkpoints(surgeon, robot, rows, start, device="keyboard", check
         await asyncio.gather(alive, return_exceptions=True)
 
 
+async def play_remote(surgeon, robot, recording):
+    """Use the same independent replay and handoff path as both controller UIs."""
+    heartbeat_client = Surgeon(surgeon.http, surgeon.url, surgeon.robot_id)
+
+    async def heartbeat():
+        while True:
+            await heartbeat_client.action("replay.heartbeat")
+            await asyncio.sleep(0.1)
+
+    await surgeon.action("replay.start", recording=recording)
+    try:
+        async with asyncio.TaskGroup() as group:
+            alive = group.create_task(heartbeat())
+            try:
+                while True:
+                    result = await surgeon.action("replay.read")
+                    if result["request"]:
+                        mode, command = result["request"]
+                        if mode == "release":
+                            await surgeon.action("robot.hold")
+                        else:
+                            await surgeon.action(
+                                "robot.move",
+                                mode=mode,
+                                command={"velocity": command} if mode == "grip" else command,
+                                replay=True,
+                                replay_run=result["run"],
+                                **(
+                                    {"speed_deg_s": result["speed_deg_s"]}
+                                    if robot["controls"].get("speed_deg_s")
+                                    else {}
+                                ),
+                            )
+                    if result["done"]:
+                        return
+                    await asyncio.sleep(0.01)
+            finally:
+                alive.cancel()
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await surgeon.action("replay.cancel")
+        raise
+    finally:
+        await surgeon.action("robot.hold")
+
+
 async def run(manifest_path, bindings):
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("version") not in {1, 2} or manifest.get("environment") not in {
@@ -161,10 +207,14 @@ async def run(manifest_path, bindings):
     if device not in {"keyboard", "gamepad", "haply"}:
         raise ValueError("Unknown input device")
     checkpoint = manifest["version"] == 2
+    independent = manifest.get("independent_actions") is True
     roles = manifest["streams"]
-    if len(bindings) != len(roles) or {b[0] for b in bindings} != set(roles):
+    bound = {b[0] for b in bindings}
+    if len(bound) != len(bindings) or (
+        not bound <= set(roles) if independent else bound != set(roles)
+    ):
         raise ValueError(f"Bind each recorded stream exactly once: {', '.join(roles)}")
-    if environment == "versius" and len({b[1].rstrip("/") for b in bindings}) != len(roles):
+    if environment == "versius" and len({b[1].rstrip("/") for b in bindings}) != len(bindings):
         raise ValueError("Use a separate surgeon dashboard for each Versius stream")
     # Read and validate all files and robot identities before acquiring anything.
     rows = {role: read_rows(manifest_path.parent / spec["file"]) for role, spec in roles.items()}
@@ -189,6 +239,20 @@ async def run(manifest_path, bindings):
             start = time.monotonic() + 1
             print(f"Replaying {environment}/{device}: {manifest['task']}", flush=True)
             async with asyncio.TaskGroup() as group:
+                if independent:
+                    renewals = [group.create_task(surgeon.renew()) for surgeon in surgeons.values()]
+                    try:
+                        # When both are requested, present the needle first.
+                        # A single right binding performs the independent pickup.
+                        for role in ("left", "right"):
+                            if role in surgeons:
+                                await play_remote(
+                                    surgeons[role], inventory[role], f"{environment}/{device}"
+                                )
+                    finally:
+                        for task in renewals:
+                            task.cancel()
+                    return
 
                 async def stream(role, surgeon):
                     renew = asyncio.create_task(surgeon.renew())

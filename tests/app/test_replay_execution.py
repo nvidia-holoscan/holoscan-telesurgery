@@ -296,13 +296,20 @@ async def test_remote_feedback_replay_reaches_grip_goal_and_stops(
 @pytest.mark.parametrize(
     "left_device,right_device", [("haply", "haply"), ("gamepad", "keyboard"), ("keyboard", "haply")]
 )
-async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_barrier(
-    tmp_path, enrolled_node, left_device, right_device
+@pytest.mark.parametrize("independent", [False, True])
+async def test_two_surgeons_release_donor_only_after_delayed_receiver_grasps(
+    tmp_path, enrolled_node, left_device, right_device, independent
 ):
     robots = {role: SimRobot("versius") for role in ("left", "right")}
     for robot in robots.values():
         robot.finger_target = 0.004  # Start with a small opening, then close.
     events = []
+    pose = {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [0, 0, 0],
+        "orientation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    }
 
     def handle(socket):
         role = socket.request.path.strip("/")
@@ -310,6 +317,14 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
             request = json.loads(raw)
             if request["method"] == "jog_gripper":
                 events.append((role, request["params"]["velocity"]["hand"]))
+                if independent and role == "left" and request["params"]["velocity"]["hand"] > 0:
+                    assert robots["right"]._grippers()["hand"] == pytest.approx(0.1)
+                    assert not robots["right"].grip.rates
+            if independent:
+                robots[role].feedback = {
+                    "tool_pose": pose,
+                    "grippers": {"hand": max(0.1, robots[role].finger_target / 0.04)},
+                }
             result = robots[role].apply(request)
             socket.send(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}))
 
@@ -322,6 +337,10 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
             {"barrier": 1},
             {"grip": {"hand": 0.1}} if role == "left" else {"hold_s": 0.1},
         ]
+        if independent:
+            targets = [{"tool_pose": pose}, {"grip": {"hand": 0}}, {"hold_s": 0.1}]
+            if role == "right":
+                targets += [{"handoff": "take"}, {"hold_s": 0.1}]
         with gzip.open(directory / f"{role}.jsonl.gz", "wt") as output:
             for i, target in enumerate(targets):
                 output.write(json.dumps({"t": i, "speeds": [20, 50, 40], **target}) + "\n")
@@ -332,7 +351,8 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
                 "version": 2,
                 "environment": "versius",
                 "device": "haply",
-                "barriers": 1,
+                "barriers": 0 if independent else 1,
+                "independent_actions": independent,
                 "task": "Handoff fixture",
                 "handoff_group": "handoff-fixture",
                 "replay_verified": True,
@@ -406,7 +426,7 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
                         if mode == "release":
                             await surgeon.action("robot.hold", params)
                         else:
-                            if role == "left" and command["hand"] > 0:
+                            if not independent and role == "left" and command["hand"] > 0:
                                 assert robots["right"]._grippers()["hand"] <= 0.002
                             await surgeon.action(
                                 "robot.move",
@@ -423,13 +443,36 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_reaches_ba
                     await asyncio.sleep(0.01)
 
             async with asyncio.timeout(15):
-                await asyncio.gather(*(play(role, s) for role, s in surgeons.items()))
-            assert "left" in waited
+                if independent:
+                    renewals = [
+                        asyncio.create_task(_renew_control(s, f"{node}:{role}"))
+                        for role, s in surgeons.items()
+                    ]
+                    try:
+                        await play("left", surgeons["left"])
+                        assert f"{node}:left" not in surgeons["left"].replays
+                        await asyncio.sleep(0.6)  # Left replay heartbeat has ended.
+                        await play("right", surgeons["right"])
+                    finally:
+                        for task in renewals:
+                            task.cancel()
+                        await asyncio.gather(*renewals, return_exceptions=True)
+                else:
+                    await asyncio.gather(*(play(role, s) for role, s in surgeons.items()))
+            assert ("left" in waited) is not independent
             assert any(role == "left" and rate > 0 for role, rate in events)
-            assert robots["left"]._grippers()["hand"] == pytest.approx(0.1, abs=0.005)
+            assert robots["left"]._grippers()["hand"] == pytest.approx(
+                1.0 if independent else 0.1, abs=0.005
+            )
         finally:
             for surgeon in surgeons.values():
                 await surgeon.close()
             await patient.close()
             controller.shutdown()
             thread.join(timeout=2)
+
+
+async def _renew_control(surgeon, key):
+    while True:
+        await surgeon.action("robot.renew", {"id": key})
+        await asyncio.sleep(0.3)

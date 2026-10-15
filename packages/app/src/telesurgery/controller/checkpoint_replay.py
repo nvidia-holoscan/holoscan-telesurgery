@@ -14,9 +14,17 @@ def validate_checkpoints(rows, *, environment="mira", device="keyboard"):
     arms = {"left", "right"} if environment == "mira" else {"hand"}
     barrier = 0
     for row in rows:
-        kinds = set(row) & {"pose", "tool_pose", "joint_pose", "grip", "hold_s", "barrier"}
+        kinds = set(row) & {
+            "pose",
+            "tool_pose",
+            "joint_pose",
+            "grip",
+            "hold_s",
+            "barrier",
+            "handoff",
+        }
         if len(kinds) != 1:
-            raise ValueError("Each checkpoint requires one pose, grip, hold, or barrier")
+            raise ValueError("Each checkpoint requires one pose, grip, hold, barrier, or handoff")
         kind = kinds.pop()
         if "position_tolerance_mm" in row:
             tolerance = row["position_tolerance_mm"]
@@ -36,6 +44,10 @@ def validate_checkpoints(rows, *, environment="mira", device="keyboard"):
         ):
             raise ValueError("Squeeze requires an explicitly held close key or button")
         value = row[kind]
+        if kind == "handoff":
+            if environment != "versius" or value != "take":
+                raise ValueError("Only a Versius replay can take a presented needle")
+            continue
         if kind == "barrier":
             if environment != "versius" or type(value) is not int or value != barrier + 1:
                 raise ValueError("Handoff barriers must be consecutive, starting at one")
@@ -107,9 +119,35 @@ class CheckpointPlayback(FeedbackPlayback):
         self.environment = robot["kind"].removesuffix("-sim")
         validate_checkpoints(self.rows, environment=self.environment, device=self.mapping.device)
         self.synchronized = 0
+        self.independent_actions = manifest.get("independent_actions") is True
+        self.handoff_done = False
+        self.shadow = None
         self.handoff_waits = manifest.get("handoff_waits", {}).get(self.role, {})
         self.feedback_at = None
         self.feedback_period = 0.05
+
+    def select_pickup(self, shadow):
+        """Empty CMR practice stays clear of the left tool parked at Home."""
+        if type(shadow) is not bool:
+            raise RuntimeError("Restart the patient service to support independent pickup")
+        if self.shadow is not None:
+            if self.shadow != shadow:
+                raise RuntimeError("Replay pickup mode changed during motion")
+            return
+        if self.index:
+            raise RuntimeError("Select the pickup before starting motion")
+        self.shadow = shadow
+        prepared = False
+        for row in self.rows:
+            prepared |= "joint_pose" in row
+            if shadow and prepared and "tool_pose" in row:
+                # In the right arm's base frame, -Y moves away from the left
+                # Home tool. Keep the same approach, close and modest lift.
+                row["tool_pose"]["position_m"][1] -= 0.03
+
+    @property
+    def taking(self):
+        return not self.finished and self.rows[self.index].get("handoff") == "take"
 
     @property
     def checkpoint(self):
@@ -206,6 +244,11 @@ class CheckpointPlayback(FeedbackPlayback):
         inputs = self.mapping.inputs
         inputs.arm_percent, inputs.roll_percent, inputs.grip_percent = row["speeds"]
         result["speed_deg_s"] = inputs.speed
+        if self.taking:
+            if not self.handoff_done:
+                return {**result, "waiting_feedback": True}
+            self.index += 1
+            return {**result, "done": self.finished}
         if "barrier" in row:
             if self.synchronized < row["barrier"]:
                 return {

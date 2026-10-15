@@ -182,6 +182,37 @@ class Controller:
         self.validate(token)
         return self.state()
 
+    def replay_release(self, token, sent_at):
+        """One bounded opening tick, authorized by the patient replay handoff.
+
+        Keep the surgeon's command sequence intact. The patient serializes this
+        operation with manual input, which revokes the completed pickup's consent.
+        The ordinary gripper watchdog stops opening if replay polling stops.
+        """
+        if not self.adapter.simulation or self.specification().get("kind") != "versius-sim":
+            raise PermissionError("Replay release is only available in Versius simulation")
+        if (
+            type(sent_at) not in (float, int)
+            or not math.isfinite(sent_at)
+            or not -0.05 <= time.time() + self.offset() - sent_at <= 0.3
+        ):
+            raise ValueError("Replay release expired in transit")
+        self.validate(token)
+        state = self.state()
+        opening = state.get("grippers", {}).get("hand")
+        if type(opening) not in (float, int) or not math.isfinite(opening):
+            raise ValueError("Replay release requires measured gripper feedback")
+        done = opening >= 0.998
+        state = self.record(
+            self.adapter.hold
+            if done
+            else lambda: self.adapter.grip(
+                {"velocity": {"hand": min(0.375, (1.0 - opening) / 0.3)}}
+            ),
+            motion=True,
+        )
+        return {"done": done, "state": state}
+
     def hold(self, token):
         """Stop motion while preserving this surgeon's lease."""
         self.validate(token)
@@ -300,7 +331,9 @@ class Robots:
             )
             return future
         function = getattr(device, method)
-        return graph.submit(lambda: function(**params), timeout=0.2 if method == "move" else 2)
+        return graph.submit(
+            lambda: function(**params), timeout=0.2 if method in {"move", "replay_release"} else 2
+        )
 
     def _close(self, key):
         device = self.devices[key]

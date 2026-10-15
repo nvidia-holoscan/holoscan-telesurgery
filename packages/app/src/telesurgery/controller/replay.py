@@ -344,19 +344,25 @@ class FeedbackPlayback(Playback):
 
 
 class Rendezvous:
-    """Coordinate owned replay arms at their recorded handoff checkpoints."""
+    """Track owned simulation replays, with optional shared checkpoints."""
 
     def __init__(self, catalog, clock=time.monotonic):
         self.catalog, self.clock = catalog, clock
         self.runs = {}
 
     def join(self, recording, robot, peer, token):
-        _, manifest, role = self.catalog.get(recording, robot)
+        path, manifest, role = self.catalog.get(recording, robot)
         node = robot["id"].split(":", 1)[0]
         # Device recordings of one checkpoint task share the same handoff.
         # Legacy timed streams still require their exact recording and clock.
         group = manifest.get("handoff_group", recording) if manifest["version"] == 2 else recording
         key = node, manifest["environment"], manifest["version"], group
+        solo = manifest.get("independent_actions") is True
+        if solo:
+            if manifest["version"] != 2 or manifest["environment"] != "versius":
+                raise ValueError("Independent handoff actions require Versius checkpoints")
+            key += (role,)
+        roles = {role} if solo else set(manifest["streams"])
         run = self.runs.get(key)
         now = self.clock()
         if run and (
@@ -370,10 +376,7 @@ class Rendezvous:
             run = None
         if run and run["started"] is not None and not run["independent"]:
             raise RuntimeError("Stop the previous replay before preparing another")
-        if run and (
-            run["roles"] != set(manifest["streams"])
-            or run["barriers"] != manifest.get("barriers", 0)
-        ):
+        if run and (run["roles"] != roles or run["barriers"] != manifest.get("barriers", 0)):
             raise ValueError("Recordings have incompatible handoff checkpoints")
         if run is None:
             run = {
@@ -381,8 +384,9 @@ class Rendezvous:
                 "members": {},
                 "started": None,
                 "barriers": manifest.get("barriers", 0),
-                "roles": set(manifest["streams"]),
+                "roles": roles,
                 "independent": manifest["version"] == 2,
+                "solo": solo,
             }
             self.runs[key] = run
         if role in run["members"]:
@@ -392,6 +396,20 @@ class Rendezvous:
         ):
             raise PermissionError("Use a separate surgeon for each Versius arm")
         run["members"][role] = {"peer": peer, "token": token, "key": robot["id"], "seen": now}
+        if solo:
+            rows = read_rows(path.parent / manifest["streams"][role]["file"])
+            pose = None
+            for row in rows:
+                if "handoff" in row:
+                    break
+                pose = row.get("tool_pose", pose)
+            run["handoff"] = {
+                **run["members"][role],
+                "role": role,
+                "pose": pose,
+                "run": run["id"],
+                "group": group,
+            }
         # Feedback-paced streams can begin independently. A surgeon joining
         # later shares the existing handoff barriers, without restarting it.
         if run["independent"] and run["started"] is None:
@@ -399,6 +417,10 @@ class Rendezvous:
         elif not run["independent"] and set(run["members"]) == run["roles"]:
             run["started"] = now + 1.0
         return run["id"]
+
+    def handoff(self, run_id):
+        """Replay-only release consent; callers must first validate with poll()."""
+        return next((run.get("handoff") for run in self.runs.values() if run["id"] == run_id), None)
 
     def poll(self, run_id, peer, key, owners, *, finished=False, checkpoint=None):
         found = next(((k, v) for k, v in self.runs.items() if v["id"] == run_id), None)
@@ -433,6 +455,7 @@ class Rendezvous:
                 )
         joined = set(run["members"]) == run["roles"]
         return {
+            "independent_actions": run["solo"],
             "checkpoint": min(m.get("checkpoint", 0) for m in run["members"].values())
             if joined and run["started"] is not None
             else 0,
