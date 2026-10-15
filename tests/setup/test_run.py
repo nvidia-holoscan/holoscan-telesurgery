@@ -21,6 +21,10 @@ def launcher(tmp_path, monkeypatch):
     root = tmp_path / "checkout with spaces"
     root.mkdir()
     shutil.copy(Path(__file__).parents[2] / "run.sh", root)
+    (root / "scripts").mkdir(exist_ok=True)
+    (root / "scripts/select_runtime.py").write_text(
+        "import os; print(os.environ.get('TEST_CAMERA_SDK', '5'))\n"
+    )
     module = root / "telesurgery.py"
     module.write_text(
         "import os, signal, sys\n"
@@ -30,6 +34,7 @@ def launcher(tmp_path, monkeypatch):
         "        sys.exit(0)\n"
         "    signal.signal(signal.SIGINT, stop)\n"
         "print('Application ready')\n"
+        "print('Runtime:', os.environ['TELESURGERY_SDK'])\n"
         "print('Diagnostic output', file=sys.stderr)\n"
         "if os.environ.get('WAIT_FOR_STOP'): signal.pause()\n"
         "sys.exit(int(os.environ.get('EXIT_CODE', '0')))\n"
@@ -118,3 +123,24 @@ def test_help_does_not_create_logs(launcher):
     for options in (["--help"], ["node", "--help"]):
         subprocess.run([*command, *options], check=True, capture_output=True, timeout=10)
     assert not (root / "workspace").exists()
+
+
+@pytest.mark.parametrize(
+    "options,expected",
+    [
+        (["node", "--patient", "localhost"], "4"),
+        (["--sdk", "5", "node", "--patient", "localhost"], "4"),
+        (["node", "--patient", "localhost", "--sim=mira"], "5"),
+        (["node", "--patient", "localhost", "--sim", "franka"], "5"),
+        (["patient"], "5"),
+        (["surgeon"], "5"),
+    ],
+)
+def test_only_physical_nodes_select_detected_camera_runtime(
+    launcher, monkeypatch, options, expected
+):
+    _, command = launcher
+    monkeypatch.setenv("TEST_CAMERA_SDK", "4")
+    result = subprocess.run([*command, *options], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert f"Runtime: {expected}" in result.stdout

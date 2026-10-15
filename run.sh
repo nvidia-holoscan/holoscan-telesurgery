@@ -12,7 +12,7 @@ while (($#)); do
         --sdk) sdk="${2:?--sdk requires 4 or 5}"; shift 2 ;;
         --docker) docker=true; shift ;;
         -h|--help)
-            echo "Usage: ./run.sh [--sdk 4] [--docker] {patient|surgeon|node|controller|doctor|status|stop} [options]"
+            echo "Usage: ./run.sh [--docker] {patient|surgeon|node|controller|doctor|status|stop} [options]"
             echo "Use ./run.sh patient --help for dashboard options."
             echo "Use ./run.sh status or ./run.sh stop --help to manage running services."
             exit 0 ;;
@@ -66,13 +66,21 @@ if [[ "$role" == patient || "$role" == surgeon || "$role" == node ]]; then
         printf 'Log: %s\n' "$log"
     fi
 fi
+# Select HSB support before Python loads Holoscan or Docker chooses an image.
+# Simulation nodes and dashboard roles do not own physical HSB cameras.
+if [[ "$role" == node && -z "$sim" ]] && ! $help; then
+    selection_python=python3
+    for candidate in "$root/.venv-sdk5/bin/python" "$root/.venv-sdk4/bin/python"; do
+        if [[ -x "$candidate" ]]; then selection_python="$candidate"; break; fi
+    done
+    detected="$("$selection_python" "$root/scripts/select_runtime.py" --workspace "$workspace" --name "$name")"
+    if [[ "$detected" == 4 ]]; then sdk=4; fi
+fi
 if $docker; then exec "$root/scripts/docker.sh" "$sdk" "$@"; fi
 export TELESURGERY_SDK="$sdk"
 python_bin="${TELESURGERY_PYTHON:-$root/.venv-sdk${sdk}/bin/python}"
 if [[ ! -x "$python_bin" ]]; then
-    sdk_option=""
-    if [[ "$sdk" == 4 ]]; then sdk_option=" --sdk 4"; fi
-    echo "Run ./setup.sh$sdk_option first." >&2
+    echo "Run ./setup.sh first to prepare this node's camera support." >&2
     exit 1
 fi
 ulimit -s 32768 2>/dev/null || true

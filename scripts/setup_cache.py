@@ -87,6 +87,8 @@ def inputs(root, sdk, franka):
         root / "pyproject.toml",
         root / "scripts/setup_cache.py",
         root / "scripts/setup_haply.py",
+        root / "scripts/select_runtime.py",
+        root / "packages/core/src/telesurgery_core/hsb.py",
         root / "scripts/builders",
         root / "native",
         root / f"dependencies/sdk{sdk}.toml",
@@ -141,9 +143,7 @@ def artifacts(root, sdk, workspace, franka):
     paths.extend(
         Path(p).resolve() for p in os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep) if p
     )
-    if sdk == "5":
-        paths.append(root / "packages/runtime/src/telesurgery_runtime/backends/sdk5/_hsb.abi3.so")
-    else:
+    if sdk == "4":
         paths.extend(
             [
                 root / "build/hololink-install",

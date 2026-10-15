@@ -101,6 +101,15 @@ def test_invalid_provider_fails_before_install(tmp_path):
         deps.load(config)
 
 
+def test_public_builds_accept_sdk_without_camera_dependency():
+    specs = deps.load()
+    assert set(specs) == {"holoscan"}
+    for sdk in (4, 5):
+        for spec in deps.load(deps.ROOT / f"dependencies/sdk{sdk}.toml").values():
+            if spec["provider"] == "git":
+                assert spec["git"].startswith("https://github.com/")
+
+
 @pytest.mark.parametrize("version", [None, "10.0", "10.13.3.9"])
 def test_optional_tegra_bindings_allow_setup_without_tokenizer(
     tmp_path, monkeypatch, caplog, version

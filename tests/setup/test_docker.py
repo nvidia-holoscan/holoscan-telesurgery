@@ -21,12 +21,15 @@ def docker_launcher(tmp_path, monkeypatch):
     (root / "scripts").mkdir(parents=True)
     (root / "dependencies").mkdir()
     shutil.copy(Path(__file__).parents[2] / "run.sh", root / "run.sh")
+    (root / "scripts").mkdir(exist_ok=True)
+    (root / "scripts/select_runtime.py").write_text(
+        "import os; print(os.environ.get('TEST_CAMERA_SDK', '5'))\n"
+    )
     shutil.copy(Path(__file__).parents[2] / "scripts/docker.sh", root / "scripts/docker.sh")
     shutil.copy(Path(__file__).parents[2] / "pyproject.toml", root)
     for sdk in (4, 5):
         (root / f"dependencies/sdk{sdk}.toml").write_text(
             '[holoscan]\ngit = "https://example.invalid/sdk"\n'
-            '[hololink]\ngit = "ssh://git@example.invalid/camera"\n'
         )
     tools = tmp_path / "bin"
     tools.mkdir()
@@ -123,7 +126,8 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk, suffi
     image = f"holoscan-telesurgery:0.1.7{suffix}"
     assert "--target" not in build
     assert build[build.index("--tag") + 1] == image
-    assert "--ssh" in build
+    assert "--ssh" not in build
+    assert "--secret" not in build
     run = commands[-1]
     assert run[-len(options) - 1 :] == [image, *options]
     assert ("SYS_NICE" in run) is (role == "node-real")
@@ -277,3 +281,30 @@ def test_container_identity_uses_canonical_workspace(docker_launcher, tmp_path):
         names.append(command[command.index("--name") + 1])
         assert f"com.nvidia.telesurgery.workspace={workspace}" in command
     assert names[0] == names[1] != names[2]
+
+
+@pytest.mark.parametrize("sim", [False, True])
+def test_hsb_selects_image_before_build_without_ssh_credentials(docker_launcher, monkeypatch, sim):
+    root, records = docker_launcher
+    monkeypatch.setenv("TEST_CAMERA_SDK", "4")
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    subprocess.run(
+        [
+            "bash",
+            str(root / "run.sh"),
+            "--docker",
+            "node",
+            "--patient",
+            "localhost",
+            *(["--sim", "versius"] if sim else []),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    commands = [json.loads(line) for line in records.read_text().splitlines()]
+    build = next(c for c in commands if c[0] == "build")
+    image = "holoscan-telesurgery:0.1.0" + ("" if sim else "-sdk4")
+    assert build[build.index("--tag") + 1] == image
+    assert "--ssh" not in build and "--secret" not in build
+    assert image in commands[-1]

@@ -91,7 +91,7 @@ By making a contribution to this project, I certify that:
 | `packages`  | `pip` and/or `apt` lists; optional CMake `prefix`                              |
 | `installed` | Optional `prefix`; reuse installed dependencies                                |
 
-Git uses ordinary SSH/HTTPS authentication. Sources stay under `build/third_party/`. Compatible public releases can replace these providers without changing application code. Camera bindings also require matching C++ headers and CMake exports. SDK 5 uses unmodified public EA3 source. Its compatible Hololink port still requires NVIDIA GitLab and camera-specific patches; remove those when upstream supplies the fixes.
+All dependency sources are public and stay under `build/third_party/`. SDK 5 uses unmodified public EA3 source. Physical nodes with HSB configuration or detected board announcements automatically use SDK 4 and the public sensor-bridge library. Native setup prepares that isolated environment alongside SDK 5; Docker selects a separate image before launch. No process loads both SDKs. For backend development, `--sdk 4` and `--sdk 5` remain available on setup and run commands; detected HSB always selects SDK 4 for physical nodes.
 
 ## Verification
 

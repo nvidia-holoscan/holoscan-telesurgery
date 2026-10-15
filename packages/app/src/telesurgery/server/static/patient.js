@@ -108,11 +108,6 @@ export function patientPages(changed, removeNode, refresh) {
                     status(selected),
                     element(
                         "span",
-                        `SDK ${String(selected.sdk || state.sdk).split(".")[0]}`,
-                        "muted",
-                    ),
-                    element(
-                        "span",
                         selected.environment
                             ? `${selected.environment.toUpperCase()} simulation`
                             : "Physical devices",
@@ -340,7 +335,7 @@ export function patientPages(changed, removeNode, refresh) {
                     }
                     card.querySelector("small").textContent = [
                         node.ip,
-                        `${node.environment ? `${node.environment.toUpperCase()} · ` : ""}SDK ${String(node.sdk || state.sdk).split(".")[0]}`,
+                        node.environment ? `${node.environment.toUpperCase()} simulation` : "Physical devices",
                     ]
                         .filter(Boolean)
                         .join(" · ");

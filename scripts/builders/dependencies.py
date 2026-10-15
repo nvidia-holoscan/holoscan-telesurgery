@@ -24,8 +24,9 @@ def run(*args, **kwargs):
 
 def load(path=ROOT / "dependencies/sdk5.toml"):
     specs = tomllib.loads(Path(path).read_text())
-    for name in ("holoscan", "hololink"):
-        spec = specs[name]
+    if "holoscan" not in specs:
+        raise ValueError("holoscan: dependency configuration is required")
+    for name, spec in specs.items():
         if spec.get("provider") not in {"git", "packages", "installed"}:
             raise ValueError(f"{name}: provider must be git, packages, or installed")
         if spec["provider"] == "git" and not (spec.get("git") and spec.get("rev")):

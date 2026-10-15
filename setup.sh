@@ -9,6 +9,7 @@ cd "$root"
 fail() { echo "$*" >&2; exit 1; }
 
 sdk=5
+automatic=true
 docker=false
 franka=false
 force=false
@@ -17,7 +18,7 @@ while (($#)); do
     case "$1" in
         --sdk)
             [[ $# -ge 2 && ( "$2" == 4 || "$2" == 5 ) ]] || fail "--sdk requires 4 or 5"
-            sdk="$2"; shift 2 ;;
+            sdk="$2"; automatic=false; shift 2 ;;
         --docker) docker=true; shift ;;
         --force) force=true; shift ;;
         --profile)
@@ -28,7 +29,7 @@ while (($#)); do
             workspace="$(realpath -m -- "$2")"; shift 2 ;;
         --workspace=*) workspace="$(realpath -m -- "${1#*=}")"; shift ;;
         -h|--help)
-            echo "Usage: ./setup.sh [--sdk 4] [--docker] [--workspace PATH] [--profile franka] [--force]"
+            echo "Usage: ./setup.sh [--docker] [--workspace PATH] [--profile franka] [--force]"
             echo "Install native dependencies, or prepare only the host clock for Docker."
             echo "Add --profile franka to build the physical Franka adapter for native execution."
             echo "Unchanged native setups are reused; --force reruns installation and validation."
@@ -50,14 +51,14 @@ fi
 
 python3 scripts/clock_sync.py
 python3 scripts/setup_gamepads.py
-if $docker; then exit 0; fi
 
 glib=libglib2.0-0
 if dpkg-query -W libglib2.0-0t64 >/dev/null 2>&1; then glib=libglib2.0-0t64; fi
 packages=(build-essential ca-certificates curl git pkg-config libgl1 libegl1
           libxkbcommon0 libvulkan1 "$glib" libx11-dev libxrandr-dev
           libxinerama-dev libxcursor-dev libxi-dev libusb-1.0-0
-          libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth)
+          libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth python3-yaml)
+if $docker; then packages=(python3-yaml); fi
 missing=()
 for package in "${packages[@]}"; do
     if [[ "$(dpkg-query -W -f='${db:Status-Status}' "${package%%=*}" 2>/dev/null || true)" != installed ]]; then
@@ -70,6 +71,20 @@ if ((${#missing[@]})); then
     echo "Installing system dependencies…"
     "${elevate[@]}" apt-get update
     "${elevate[@]}" apt-get install -y --no-remove --no-install-recommends "${missing[@]}"
+fi
+if $docker; then exit 0; fi
+
+# Keep the default runtime for dashboards/simulations and add isolated camera
+# support when this host has an HSB board or saved HSB node configuration.
+if $automatic; then
+    detected="$(python3 scripts/select_runtime.py --workspace "$workspace" --all-nodes)"
+    if [[ "$detected" == 4 ]]; then
+        camera_args=(--sdk 4 --workspace "$workspace")
+        if $franka; then camera_args+=(--profile franka); fi
+        if $force; then camera_args+=(--force); fi
+        echo "Preparing HSB camera support…"
+        bash "$root/setup.sh" "${camera_args[@]}"
+    fi
 fi
 
 if [[ "$sdk" == 5 ]] && ! printf '#include <format>\n' |
@@ -95,7 +110,7 @@ if $force; then cache_args+=(--force); fi
 cache_python=python3
 if [[ -x "$python_bin" ]]; then cache_python="$python_bin"; fi
 if "$cache_python" scripts/setup_cache.py check "${cache_args[@]}"; then
-    echo "Setup already up to date (SDK $sdk). Use --force to rerun installation and validation."
+    echo "Setup already up to date. Use --force to rerun installation and validation."
     exit 0
 fi
 export UV_MANAGED_PYTHON=1

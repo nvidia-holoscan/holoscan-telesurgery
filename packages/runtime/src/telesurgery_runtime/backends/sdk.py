@@ -24,6 +24,11 @@ def require_sdk():
 
 def backend(module):
     major = require_sdk().__version__.split(".")[0]
+    if module == "camera" and major != "4":
+        raise RuntimeError(
+            "HSB capture needs the camera runtime. Run ./setup.sh with the board connected, "
+            "then restart the node through ./run.sh so it can select camera support."
+        )
     return importlib.import_module(f"telesurgery_runtime.backends.sdk{major}.{module}")
 
 

@@ -736,7 +736,6 @@ function renderCurrent() {
         approved = state.session?.status === "approved";
     document.body.dataset.role = state.role;
     $("#role").textContent = isPatient ? "Patient" : "Surgeon";
-    $("#sdk").textContent = `SDK ${String(state.sdk).split(".")[0]}`;
     $("#connection").textContent = isPatient
         ? "Room online"
         : state.session?.status || "disconnected";

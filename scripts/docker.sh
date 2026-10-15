@@ -97,25 +97,6 @@ if [[ "${1:-}" == patient || "${1:-}" == surgeon || "${1:-}" == node ]] &&
 fi
 build_args=(--build-arg "SDK=$sdk")
 if [[ -n "${CUDAARCHS:-}" ]]; then build_args+=(--build-arg "CUDAARCHS=$CUDAARCHS"); fi
-own_agent=false
-cleanup() {
-    if $own_agent; then ssh-agent -k >/dev/null; fi
-}
-trap cleanup EXIT
-if grep -Eq 'git[[:space:]]*=[[:space:]]*"(ssh://|[^/"]+@)' "$root/dependencies/sdk$sdk.toml"; then
-    if [[ ! -S "${SSH_AUTH_SOCK:-}" ]]; then
-        eval "$(ssh-agent -s)" >/dev/null
-        own_agent=true
-    fi
-    if ! ssh-add -l >/dev/null 2>&1; then ssh-add; fi
-    build_args+=(--ssh default)
-fi
-if [[ -f "$HOME/.ssh/known_hosts" ]]; then
-    build_args+=(--secret "id=known_hosts,src=$HOME/.ssh/known_hosts")
-fi
-if [[ -f "$HOME/.ssh/config" ]]; then
-    build_args+=(--secret "id=ssh_config,src=$HOME/.ssh/config")
-fi
 docker build "${build_args[@]}" --tag "$image" "$root"
 mkdir -p "$workspace"
 if [[ "${1:-}" == node ]] && $simulation; then

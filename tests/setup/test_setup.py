@@ -41,7 +41,9 @@ if os.environ.get("SETUP_FAIL") in command:
     sys.exit("Setup fixture failure")
 if "scripts/setup_cache.py" in command and "check" in command:
     sys.exit(0 if os.environ.get("SETUP_CACHE_HIT") and "--force" not in command else 1)
-if command[0] == "dpkg-query":
+if "scripts/select_runtime.py" in command:
+    print(os.environ.get("SETUP_CAMERA_SDK", "5"))
+elif command[0] == "dpkg-query":
     if command[-1] in os.environ.get("SETUP_MISSING_PACKAGES", "libegl1").split():
         sys.exit(1)
     print("installed")
@@ -82,7 +84,9 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
     commands = [
         item["command"]
         for item in records
-        if item["command"][0] != "dpkg-query" and "scripts/setup_cache.py" not in item["command"]
+        if item["command"][0] != "dpkg-query"
+        and "scripts/setup_cache.py" not in item["command"]
+        and "scripts/select_runtime.py" not in item["command"]
     ]
     python = str(root / f".venv-sdk{sdk}/bin/python")
     assert commands == [
@@ -169,6 +173,7 @@ def test_docker_setup_prepares_clock_and_gamepad_hotplug(setup, options):
     _, invoke = setup
     result, records = invoke("--docker", *options)
     assert result.returncode == 0, result.stderr
+    records = [item for item in records if item["command"][0] != "dpkg-query"]
     assert records == [
         {"command": ["python3", "scripts/clock_sync.py"], "sdk": "5"},
         {"command": ["python3", "scripts/setup_gamepads.py"], "sdk": "5"},
@@ -255,3 +260,20 @@ def test_invalid_options_do_not_change_host(setup, options):
     result, records = invoke(*options)
     assert result.returncode != 0
     assert records == []
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_hsb_setup_prepares_isolated_camera_and_default_runtimes(setup, monkeypatch, cached):
+    _, invoke = setup
+    monkeypatch.setenv("SETUP_CAMERA_SDK", "4")
+    if cached:
+        monkeypatch.setenv("SETUP_CACHE_HIT", "1")
+    result, records = invoke("--workspace", "/tmp/camera workspace", "--profile", "franka")
+    assert result.returncode == 0, result.stderr
+    checks = [item for item in records if "scripts/setup_cache.py" in item["command"]]
+    assert {item["sdk"] for item in checks} == {"4", "5"}
+    assert all("/tmp/camera workspace" in item["command"] for item in checks)
+    assert all("--franka" in item["command"] for item in checks)
+    commands = [item["command"] for item in records]
+    for sdk in ("4", "5"):
+        assert (["python", f"scripts/builders/sdk{sdk}.py"] in commands) is not cached
