@@ -23,6 +23,7 @@ from telesurgery.controller.replay import (
     check_initial,
     read_rows,
 )
+from telesurgery.controller.replay_handoff import ReplayHandoff
 from telesurgery.nodes.address import endpoint
 from telesurgery.nodes.registry import NodeRegistry
 from telesurgery.server.media import Media
@@ -56,6 +57,7 @@ class Application:
         self.controller_server = None
         self.controller_certificate = None
         self.peers, self.peer_nodes, self.nodes, self.owners = {}, {}, {}, {}
+        self.replay_handoff = ReplayHandoff(self.owners, self._handoff_call)
         self.tokens, self.sequences, self.selected = {}, {}, set()
         self.control_lock = asyncio.Lock()
         self.tasks = set()
@@ -233,6 +235,7 @@ class Application:
                 await self.run(owner.validate, peer.id, params.get("token"))
                 if method == "replay.cancel":
                     self.replay_barrier.cancel(params["run"], peer.id, key)
+                    await self.replay_handoff.clear(key)
                     return True
                 if method == "replay.poll":
                     barrier = self.replay_barrier.poll(
@@ -247,15 +250,30 @@ class Application:
                     if robot.get("stale") or robot.get("error") or robot.get("status") != "online":
                         raise RuntimeError("Replay stopped because robot feedback is unavailable")
                     state = robot.get("state", self.robot_state.get(key, {}))
-                    if params.get("fresh") is True:
+                    handoff_context = self.replay_barrier.handoff(params["run"])
+                    if params.get("fresh") is True or handoff_context:
                         # A motion acknowledgement may precede its physics step.
                         # Observe again before calculating a checkpoint correction.
                         state = await self._robot(peer.id, "robot.renew", params)
-                    return {**barrier, "state": state}
+                    handoff = await self.replay_handoff.update(
+                        handoff_context,
+                        state,
+                        finished=params.get("finished") is True,
+                        take=params.get("take") is True,
+                    )
+                    return {
+                        **barrier,
+                        "state": state,
+                        "handoff_done": handoff,
+                        "shadow": handoff_context.get("shadow") if handoff_context else None,
+                    }
                 robot = next((r for r in self.inventory()["robots"] if r["id"] == key), None)
                 if robot is None or robot["status"] != "online":
                     raise ValueError("Robot is unavailable")
-                return self.replay_barrier.join(params["recording"], robot, peer.id, owner.token)
+                await self.replay_handoff.clear(key)
+                run = self.replay_barrier.join(params["recording"], robot, peer.id, owner.token)
+                await self.replay_handoff.prepare(self.replay_barrier.handoff(run))
+                return run
         if method in {"robot.acquire", "robot.move", "robot.renew", "robot.hold", "robot.release"}:
             async with self.control_lock:
                 started = time.monotonic()
@@ -510,6 +528,12 @@ class Application:
                 )
         raise ConnectionError("Node is offline")
 
+    async def _handoff_call(self, key, method, params):
+        node, device = key.split(":", 1)
+        result = await self.node_call(node, method, {"key": device, **params})
+        self.robot_state[key] = result["state"] if method == "robot.replay_release" else result
+        return result
+
     async def _robot(self, peer, method, params):
         await self.run(lambda: self.access.require(peer, robot=True))
         key = params["id"]
@@ -579,6 +603,9 @@ class Application:
             raise ValueError("Robot input expired in transit")
         if mode == "reset":
             self.replay_barrier.released(key)
+        if params.get("replay") is not True:
+            await self.replay_handoff.clear(key)
+            self.replay_barrier.released(key)
         self.robot_state[key] = await self.node_call(
             node,
             method,
@@ -607,6 +634,7 @@ class Application:
         owner.ready = False
         node, device = key.split(":", 1)
         try:
+            await self.replay_handoff.clear(key)
             result = await self.node_call(node, "robot.release", {"key": device, "token": token})
             owner.ready = True
             self.faults.pop(key, None)
@@ -1167,6 +1195,9 @@ class Application:
             raise RuntimeError("Replay stopped")
         try:
             feedback = isinstance(playback, FeedbackPlayback)
+            if isinstance(playback, CheckpointPlayback) and playback.taking:
+                if playback.clock() - playback.read_at > 0.3:
+                    raise TimeoutError("Replay paused because the dashboard stopped polling")
             now = time.monotonic()
             if (
                 not feedback
@@ -1182,7 +1213,11 @@ class Application:
                         "run": playback.run,
                         "finished": playback.finished,
                         **(
-                            {"checkpoint": playback.checkpoint, "fresh": True}
+                            {
+                                "checkpoint": playback.checkpoint,
+                                "fresh": True,
+                                "take": playback.taking,
+                            }
                             if isinstance(playback, CheckpointPlayback)
                             else {}
                         ),
@@ -1193,6 +1228,18 @@ class Application:
                         "Patient service does not support checkpoint replay; "
                         "restart it with the updated code"
                     )
+                if (
+                    isinstance(playback, CheckpointPlayback)
+                    and playback.independent_actions
+                    and not barrier.get("independent_actions")
+                ):
+                    raise RuntimeError("Restart the patient service to support independent replay")
+                if (
+                    isinstance(playback, CheckpointPlayback)
+                    and playback.independent_actions
+                    and playback.role == "right"
+                ):
+                    playback.select_pickup(barrier.get("shadow"))
                 if feedback:
                     playback.barrier, playback.polled_at = barrier, time.monotonic()
                     if isinstance(playback, CheckpointPlayback):
@@ -1220,6 +1267,9 @@ class Application:
                 playback.renewed = time.monotonic()
             if isinstance(playback, CheckpointPlayback):
                 playback.synchronized = barrier.get("checkpoint", 0)
+                if playback.taking and "handoff_done" not in barrier:
+                    raise RuntimeError("Restart the patient service to support independent replay")
+                playback.handoff_done = barrier.get("handoff_done", False)
             result = playback.read(-1 if elapsed is None else elapsed, state)
             if barrier["done"]:
                 self.replays.pop(key, None)

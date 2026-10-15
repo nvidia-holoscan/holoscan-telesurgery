@@ -47,6 +47,52 @@ def test_installed_adapters_and_unknown_kind():
         adapter_type("uninstalled-robot")
 
 
+def test_replay_release_is_bounded_and_preserves_manual_command_sequence():
+    from telesurgery_robots.simulation.state import SimRobot
+
+    simulated = SimRobot("versius")
+    simulated.finger_target = 0.004
+
+    class Adapter:
+        simulation = True
+        groups = {"joints": 8}
+
+        def read(self):
+            return simulated.apply({"method": "get_state"})
+
+        def hold(self):
+            return simulated.apply({"method": "hold"})
+
+        def grip(self, command):
+            return simulated.apply({"method": "jog_gripper", "params": command})
+
+    adapter = Adapter()
+    controller = Controller(adapter, lambda: {"kind": "versius-sim"}, lambda: 0)
+    controller.prepare("lease")
+    controller.sequence = 17
+    with pytest.raises(ValueError, match="expired"):
+        controller.replay_release("lease", time.time() - 0.31)
+    with pytest.raises(PermissionError, match="lease expired"):
+        controller.replay_release("different-lease", time.time())
+    assert not simulated.grip.rates
+    result = controller.replay_release("lease", time.time())
+    assert not result["done"]
+    assert 0 < simulated.grip.rates["hand"] <= 0.375
+    assert controller.sequence == 17
+    # No further replay poll: the existing local watchdog stops the opening.
+    time.sleep(0.21)
+    simulated.apply({"method": "get_state"})
+    assert not simulated.grip.rates
+    simulated.finger_target = 0.04
+    assert controller.replay_release("lease", time.time())["done"]
+    assert controller.sequence == 17 and not simulated.grip.rates
+    for spec, simulation in (({"kind": "franka-sim"}, True), ({"kind": "versius-sim"}, False)):
+        adapter.simulation = simulation
+        controller.specification = lambda spec=spec: spec
+        with pytest.raises(PermissionError, match="only available"):
+            controller.replay_release("lease", time.time())
+
+
 @pytest.mark.parametrize("failure", [ConnectionError, TimeoutError])
 def test_initial_connection_retries_are_bounded_and_do_not_hide_later_faults(monkeypatch, failure):
     now = 100.0

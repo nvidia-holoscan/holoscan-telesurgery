@@ -510,26 +510,22 @@ def test_joint_preparation_rejects_incomplete_or_out_of_bounds_targets(target):
         validate_checkpoints([row(joint_pose=target)], environment="versius", device="haply")
 
 
-@pytest.mark.parametrize("role", ["left", "right"])
-def test_handoff_messages_identify_the_other_arm_and_next_action(role):
-    from telesurgery.controller.replay import Catalog
-
-    _, manifest = Catalog().recordings["versius/gamepad"]
+def test_take_checkpoint_requires_release_acknowledgement_without_waiting_for_peer():
     playback = CheckpointPlayback(
         cartesian_robot("versius"),
-        manifest,
-        role,
-        [row(barrier=i) for i in (1, 2, 3)],
+        {"device": "gamepad"},
+        "right",
+        [row(handoff="take"), row(hold_s=0)],
         "run",
     )
-    for checkpoint in (1, 2, 3):
-        waiting = playback.read(0, {})
-        assert waiting["waiting_peer"] and waiting["request"] is None
-        assert waiting["waiting_reason"] == manifest["handoff_waits"][role][str(checkpoint)]
-        assert ("right" if role == "left" else "left") in waiting["waiting_reason"]
-        playback.synchronized = checkpoint
-        playback.read(0, {})
-    assert playback.finished
+    assert playback.taking
+    result = playback.read(0, {})
+    assert result["waiting_feedback"] and not result.get("waiting_peer")
+    assert playback.index == 0
+    playback.handoff_done = True
+    playback.read(0, {})
+    assert playback.index == 1 and not playback.taking
+    assert playback.read(0, {})["done"]
 
 
 def test_grouped_device_recordings_share_handoff_geometry_and_starting_scene():
@@ -537,7 +533,7 @@ def test_grouped_device_recordings_share_handoff_geometry_and_starting_scene():
 
     definitions = []
     for path, manifest in Catalog().recordings.values():
-        if manifest.get("handoff_group") != "versius-needle-handoff-v1":
+        if not manifest.get("independent_actions"):
             continue
         definitions.append(
             {
@@ -555,9 +551,46 @@ def test_grouped_device_recordings_share_handoff_geometry_and_starting_scene():
                     }
                     for role, spec in manifest["streams"].items()
                 },
-                "barriers": manifest["barriers"],
-                "handoff_waits": manifest["handoff_waits"],
+                "barriers": manifest.get("barriers", 0),
             }
         )
     assert len(definitions) == 3
     assert all(definition == definitions[0] for definition in definitions)
+
+
+def test_bundled_cmr_actions_do_not_wait_for_other_replay_or_withdraw_left():
+    from telesurgery.controller.replay import Catalog, read_rows
+
+    for device in ("keyboard", "gamepad", "haply"):
+        path, manifest = Catalog().recordings[f"versius/{device}"]
+        left, right = (
+            read_rows(path.parent / manifest["streams"][role]["file"]) for role in ("left", "right")
+        )
+        assert all("barrier" not in row for row in left + right)
+        assert left[-1]["hold_s"] == 0.5
+        assert [row["grip"]["hand"] for row in left if "grip" in row][-1] == 0
+        assert sum("handoff" in row for row in right) == 1
+        take = next(i for i, row in enumerate(right) if "handoff" in row)
+        assert right[take - 2]["grip"]["hand"] == 0
+        assert right[take + 1]["grip"]["hand"] == 0
+        assert "tool_pose" in right[take + 2]
+
+
+@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
+def test_shadow_pickup_offsets_only_task_poses_once_and_keeps_joint_preparation(device):
+    from telesurgery.controller.replay import Catalog, read_rows
+
+    path, manifest = Catalog().recordings[f"versius/{device}"]
+    rows = read_rows(path.parent / manifest["streams"]["right"]["file"])
+    original = copy.deepcopy(rows)
+    playback = CheckpointPlayback(cartesian_robot("versius"), manifest, "right", rows, "run")
+    playback.select_pickup(True)
+    playback.select_pickup(True)
+    prepared = False
+    for row, expected in zip(rows, original, strict=True):
+        prepared |= "joint_pose" in row
+        if prepared and "tool_pose" in expected:
+            expected["tool_pose"]["position_m"][1] -= 0.03
+        assert row == expected
+    with pytest.raises(RuntimeError, match="mode changed"):
+        playback.select_pickup(False)

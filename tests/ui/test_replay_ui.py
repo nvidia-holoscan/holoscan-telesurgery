@@ -210,11 +210,8 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["left", "right"])
-async def test_handoff_status_explains_which_arm_and_action_is_pending(role):
-    from telesurgery.controller.replay import Catalog
-
-    _, manifest = Catalog().recordings["versius/gamepad"]
-    message = manifest["handoff_waits"][role]["1"]
+async def test_legacy_checkpoint_wait_message_is_displayed(role):
+    message = f"Waiting for the {'right' if role == 'left' else 'left'} arm checkpoint"
     done = False
 
     async def route(request):

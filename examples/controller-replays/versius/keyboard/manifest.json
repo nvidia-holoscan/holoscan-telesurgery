@@ -2,10 +2,10 @@
   "version": 2,
   "environment": "versius",
   "device": "keyboard",
-  "task": "Left pickup, handoff, left withdrawal and right lift",
-  "source": "Reference two-surgeon keyboard handoff with raised joint preparation, calibrated grasp endpoints, measured tool/gripper feedback and handoff barriers; normalized for each selected device",
+  "task": "Independent left pickup and right pickup/lift",
+  "source": "Measured simulation tool/gripper endpoints normalized for each input device; left pickup retains the needle and right replay releases the left gripper after a measured grasp",
   "starting_scene": "Fresh Versius scene with both arms at Home and the needle on its raised rest",
-  "duration_s": 80.69,
+  "duration_s": 38.764,
   "streams": {
     "left": {
       "file": "left.jsonl.gz",
@@ -102,109 +102,119 @@
       }
     }
   },
-  "observed": {
-    "needle_start_m": [
-      1.280568540096283e-09,
-      -0.03999999538064003,
-      0.5045161843299866
-    ],
-    "needle_after_left_lift_m": [
-      -5.942815914750099e-05,
-      -0.04042584449052811,
-      0.5352873802185059
-    ],
-    "needle_final_m": [
-      0.00011757074389606714,
-      -0.04053265601396561,
-      0.5548791885375977
-    ],
-    "final_lift_m": 0.050363,
-    "retention_observed_s": 3
-  },
   "replay_verified": true,
-  "replayed": {
-    "date": "2026-10-14",
-    "patient_host": "UNI",
-    "surgeon_host": "UNI",
-    "path": "Surgeon Application → TLS patient → NodeClient → Isaac simulation",
-    "local": {
-      "added_round_trip_delay_ms": 0,
-      "replay_elapsed_s": 80.69,
-      "elapsed_including_setup_and_retention_s": 92.54,
-      "checkpoints_reached": {
-        "right": 15,
-        "left": 18
-      },
-      "retention_observed_s": 3,
-      "cameras_enabled": true,
-      "needle_start_m": [
-        1.280568540096283e-09,
-        -0.03999999538064003,
-        0.5045161843299866
-      ],
-      "needle_after_left_lift_m": [
-        -5.942815914750099e-05,
-        -0.04042584449052811,
-        0.5352873802185059
-      ],
-      "needle_final_m": [
-        0.00011757074389606714,
-        -0.04053265601396561,
-        0.5548791885375977
-      ],
-      "final_lift_m": 0.050363
-    },
-    "delayed": {
-      "added_round_trip_delay_ms": 80,
-      "replay_elapsed_s": 94.7,
-      "elapsed_including_setup_and_retention_s": 108.0,
-      "checkpoints_reached": {
-        "right": 15,
-        "left": 18
-      },
-      "retention_observed_s": 3,
-      "cameras_enabled": true,
-      "needle_start_m": [
-        1.280568540096283e-09,
-        -0.03999998793005943,
-        0.504516065120697
-      ],
-      "needle_after_left_lift_m": [
-        -2.6587513275444508e-05,
-        -0.04041789472103119,
-        0.5347437858581543
-      ],
-      "needle_final_m": [
-        0.00040433777030557394,
-        -0.04020652920007706,
-        0.5544840097427368
-      ],
-      "final_lift_m": 0.049968
-    }
-  },
-  "barriers": 3,
-  "barrier_labels": [
-    "Left pickup and lift complete",
-    "Right grasp complete before left release",
-    "Left withdrawal complete before right lift"
-  ],
   "asset_bundle": {
     "file": "CMR_Versius_All_Assets.zip",
     "sha256": "a0de8cac372313f52ef804d82951ec87ca7477df09be2f1dc51b5e462bb68810",
     "layout": "nvidia-cmr/assets/URDF",
     "embedded_glb_materials": true
   },
-  "handoff_group": "versius-needle-handoff-v1",
-  "handoff_waits": {
-    "left": {
-      "1": "Needle ready · waiting for right-arm replay to join",
-      "2": "Holding needle · waiting for right arm to grasp it",
-      "3": "Left arm clear · waiting for right arm to be ready to lift"
+  "independent_actions": true,
+  "handoff_group": "versius-needle-pickup-v2",
+  "replayed": {
+    "date": "2026-10-14",
+    "patient_host": "UNI",
+    "surgeon_host": "UNI",
+    "path": "Native/browser controller \u2192 surgeon \u2192 TLS patient \u2192 NodeClient \u2192 Isaac physics",
+    "cameras_enabled": 6,
+    "transfer_checks": [
+      {
+        "left_device": "gamepad",
+        "right_device": "keyboard",
+        "interfaces": {
+          "left": "native",
+          "right": "native"
+        },
+        "added_round_trip_delay_ms": 0,
+        "elapsed_s": {
+          "left": 35.0,
+          "right": 41.52
+        },
+        "left_completed_before_right_start": true,
+        "left_hold_before_right_start_s": 10,
+        "retention_after_right_completion_s": 10,
+        "needle_final_m": [
+          -0.0006107245571911335,
+          -0.038826704025268555,
+          0.5510234236717224
+        ]
+      },
+      {
+        "left_device": "keyboard",
+        "right_device": "haply",
+        "interfaces": {
+          "left": "native",
+          "right": "native"
+        },
+        "added_round_trip_delay_ms": 80,
+        "elapsed_s": {
+          "left": 40.31,
+          "right": 48.07
+        },
+        "left_completed_before_right_start": true,
+        "left_hold_before_right_start_s": 10,
+        "retention_after_right_completion_s": 10,
+        "needle_final_m": [
+          0.00013670918997377157,
+          -0.03905349597334862,
+          0.5516870617866516
+        ]
+      },
+      {
+        "left_device": "haply",
+        "right_device": "gamepad",
+        "interfaces": {
+          "left": "native",
+          "right": "browser"
+        },
+        "added_round_trip_delay_ms": 160,
+        "elapsed_s": {
+          "left": 54.25,
+          "right": 86.64
+        },
+        "left_completed_before_right_start": true,
+        "left_hold_before_right_start_s": 10,
+        "retention_after_right_completion_s": 10,
+        "needle_final_m": [
+          -0.002376941032707691,
+          -0.03780627250671387,
+          0.5497037768363953
+        ]
+      }
+    ],
+    "shadow_check": {
+      "device": "keyboard",
+      "interface": "browser",
+      "added_round_trip_delay_ms": 0,
+      "elapsed_s": 36.66,
+      "needle_final_m": [
+        8.149072527885437e-10,
+        -0.04000000283122063,
+        0.504516065120697
+      ],
+      "left_remained_at_home": true,
+      "left_max_joint_error_deg": 0.00012
     },
-    "right": {
-      "1": "Waiting for left arm to pick up and lift the needle",
-      "2": "Right grasp ready · waiting for left arm to be ready to release",
-      "3": "Holding needle · waiting for left arm to withdraw"
+    "simultaneous_start_check": {
+      "left_device": "gamepad",
+      "right_device": "haply",
+      "interfaces": {
+        "left": "native",
+        "right": "native"
+      },
+      "added_round_trip_delay_ms": 0,
+      "elapsed_s": {
+        "left": 34.83,
+        "right": 37.29
+      },
+      "left_retained_needle": true,
+      "right_completed_empty_pickup": true,
+      "needle_final_m": [
+        -0.0004533908795565367,
+        -0.04011252522468567,
+        0.5349011421203613
+      ]
     }
-  }
+  },
+  "shadow_pickup": "When no completed left pickup is available at right replay start, run the task 0.03 m along -Y in the right base frame; leave the left arm and needle alone."
 }
