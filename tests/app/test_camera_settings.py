@@ -267,7 +267,8 @@ async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restar
 
 
 @pytest.mark.asyncio
-async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, monkeypatch):
+@pytest.mark.parametrize("receiver", ["auto", "linux", "fusa"])
+async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, monkeypatch, receiver):
     from telesurgery.nodes import local
 
     def discover(*args):
@@ -285,7 +286,18 @@ async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, mon
 
     monkeypatch.setattr(local, "discover", discover)
     monkeypatch.setattr(local, "supported_codecs", lambda: ["raw-bgr8", "h264", "h265", "nvjpeg"])
-    save(tmp_path / "streams.yaml", {"sensor": {"width": 3840, "height": 2160}})
+    save(
+        tmp_path / "streams.yaml",
+        {
+            "sensor": {
+                "width": 3840,
+                "height": 2160,
+                "receiver": receiver,
+                "codec": "nvjpeg",
+                "qp": 18,
+            }
+        },
+    )
     node = local.LocalNode(tmp_path, None)
     try:
         for _ in range(2):
@@ -293,6 +305,9 @@ async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, mon
             camera = node.inventory()["cameras"][0]
             assert (camera["width"], camera["height"]) == (3840, 2160)
             assert len(camera["modes"]) == 2
+            assert camera["receiver"] == "linux"
+            assert camera["codec"] == "nvjpeg"
+            assert camera["qp"] == 18
         # HSB announcements are intermittent. A retained camera keeps its codec choices.
         monkeypatch.setattr(local, "discover", lambda *args: ([], []))
         await node.refresh()

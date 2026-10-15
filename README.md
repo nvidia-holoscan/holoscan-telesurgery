@@ -19,11 +19,10 @@ Use physical devices or **MIRA, Franka and Versius simulations**, with browser o
 | Simulation nodes | x86 with an RTX GPU, or DGX Spark, meeting [Isaac Sim requirements](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/installation/requirements.html).                                                     |
 | Viewing          | A browser for dashboards; a local desktop display for Holoviz or the Isaac Sim window.                                                                                                                    |
 | Robot input      | Keyboard, Xbox/PlayStation/Nintendo Switch gamepad, or Haply Inverse3 (MIRA, Franka and Versius simulations).                                                                                             |
-| Build access     | SSH access to NVIDIA GitLab for the current SDK 5 Hololink dependency.                                                                                                                                    |
 
 ## Setup
 
-Run commands from the repository root on each machine. [Holoscan SDK 5 EA3](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea3) is the default; add `--sdk 4` to setup and run commands for SDK 4.
+Run commands from the repository root on each machine. Camera support is selected automatically from the node’s saved configuration and connected hardware. Connect HSB boards to the configured camera network before setup and node startup.
 
 ### Docker execution
 
@@ -33,7 +32,7 @@ Prepare the host once:
 ./setup.sh --docker
 ```
 
-`run.sh --docker` builds the image automatically: `holoscan-telesurgery:0.1.0`.
+`run.sh --docker` builds and selects the appropriate image automatically.
 
 ### Native execution
 

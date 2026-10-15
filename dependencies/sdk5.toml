@@ -7,13 +7,3 @@ provider = "git"
 git = "https://github.com/nvidia-holoscan/holoscan-sdk.git"
 rev = "163dac10195d6b603f9e6158a1d5dfb390732203" # v5.0.0-ea3
 version = "5.0.0a3" # Local wheel version for the source-only EA3 release.
-
-[hololink]
-provider = "git"
-git = "ssh://git@gitlab-master.nvidia.com:12051/holoscan/hololink.git"
-rev = "be6510635e7f877593e9ea45622f12522cb8cf4c"
-patches = [
-    "native/patches/hololink-optional-crc.patch",
-    "native/patches/hololink-linux-receiver-factory.patch",
-    "native/patches/hololink-fusa-nvsci-compat.patch",
-]

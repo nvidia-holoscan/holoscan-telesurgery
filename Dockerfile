@@ -33,30 +33,22 @@ ARG CUDAARCHS=all-major
 ENV CUDAARCHS=$CUDAARCHS
 COPY dependencies ./dependencies
 COPY scripts/builders/sdk4.py scripts/builders/sdk5.py ./scripts/builders/
-RUN mkdir -p /root/.ssh /opt/holoscan /opt/hololink /opt/sdk4-development
-RUN --mount=type=ssh \
-    --mount=type=secret,id=known_hosts,target=/root/.ssh/known_hosts \
-    --mount=type=secret,id=ssh_config,target=/root/.ssh/config \
-    --mount=type=cache,target=/root/.cache/uv \
+RUN mkdir -p /opt/holoscan /opt/hololink /opt/sdk4-development
+RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
     mkdir -p /opt/cuda-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /opt/cuda-stubs/libcuda.so.1 \
-    && GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
-    LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
-    'if [ "$TELESURGERY_SDK" = 4 ]; then python scripts/builders/sdk4.py --component sdk; else python scripts/builders/sdk5.py --component sdk --prefix /opt/holoscan; fi' \
+    && LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
+    'if [ "$TELESURGERY_SDK" = 4 ]; then python scripts/builders/sdk4.py --component sdk; else python scripts/builders/sdk5.py --prefix /opt/holoscan; fi' \
     && rm -rf /opt/cuda-stubs
 # Native sources invalidate their own builds, while application edits reuse them.
 COPY native ./native
-RUN --mount=type=ssh \
-    --mount=type=secret,id=known_hosts,target=/root/.ssh/known_hosts \
-    --mount=type=secret,id=ssh_config,target=/root/.ssh/config \
-    --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
     mkdir -p /opt/cuda-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /opt/cuda-stubs/libcuda.so.1 \
-    && GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
-    LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
-    'if [ "$TELESURGERY_SDK" = 4 ]; then apt-get update && TELESURGERY_SDK4_DEVELOPMENT=/opt/sdk4-development python scripts/builders/sdk4.py --component camera --prefix /opt/hololink; else python scripts/builders/sdk5.py --component camera --prefix /opt/holoscan; fi' \
+    && LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
+    'if [ "$TELESURGERY_SDK" = 4 ]; then apt-get update && TELESURGERY_SDK4_DEVELOPMENT=/opt/sdk4-development python scripts/builders/sdk4.py --component camera --prefix /opt/hololink; fi' \
     && rm -rf /opt/cuda-stubs /var/lib/apt/lists/*
 COPY scripts/build_franka.sh ./scripts/
 COPY packages/robots/native ./packages/robots/native

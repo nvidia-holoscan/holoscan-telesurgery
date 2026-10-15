@@ -34,7 +34,6 @@ def installation(tmp_path, monkeypatch):
     write(root, ".venv-sdk5/bin/python")
     write(root, ".venv-sdk5/lib/python3.12/site-packages/codec.so")
     write(root, "workspace/sim-deps/zmq/__init__.py")
-    write(root, "packages/runtime/src/telesurgery_runtime/backends/sdk5/_hsb.abi3.so")
     for sdk in (4, 5):
         write(root, f"dependencies/sdk{sdk}.toml", '[holoscan]\nprovider="installed"\n')
     monkeypatch.setattr(cache.subprocess, "check_output", lambda *a, **kw: "GPU-1, RTX, 590\n")
@@ -62,9 +61,9 @@ def test_inputs_and_installed_files_invalidate_success(installation, changed):
     assert not cache.check(*installation)
 
 
-def test_deleted_binding_and_interrupted_rebuild_cannot_reuse_old_success(installation):
+def test_deleted_codec_and_interrupted_rebuild_cannot_reuse_old_success(installation):
     root, sdk, workspace, franka, _ = installation
-    binding = root / "packages/runtime/src/telesurgery_runtime/backends/sdk5/_hsb.abi3.so"
+    binding = root / ".venv-sdk5/lib/python3.12/site-packages/codec.so"
     binding.unlink()
     assert not cache.check(*installation)
     assert not cache.stamp_path(root, sdk, workspace, franka).exists()

@@ -201,7 +201,7 @@ def test_profiles_join_physical_inventory_and_reject_conflicts(tmp_path, monkeyp
 
     monkeypatch.setattr(local, "camera_devices", lambda: [])
     monkeypatch.setattr(local, "enrich", lambda cameras: None)
-    monkeypatch.setattr(local, "backend", lambda kind: SimpleNamespace(discover=lambda: {}))
+    monkeypatch.setattr(local, "discover_hsb", lambda: {})
     directory = tmp_path / "nodes/test"
     prepare(tmp_path, directory, ["franka"], franka_ip="172.16.0.3")
     camera = {"id": "configured-camera"}
@@ -226,7 +226,7 @@ def test_invalid_manual_robots_report_configuration_error(tmp_path, monkeypatch,
     monkeypatch.setenv("TELESURGERY_WORKSPACE", str(tmp_path))
     monkeypatch.setattr(local, "camera_devices", lambda: [])
     monkeypatch.setattr(local, "enrich", lambda cameras: None)
-    monkeypatch.setattr(local, "backend", lambda kind: SimpleNamespace(discover=lambda: {}))
+    monkeypatch.setattr(local, "discover_hsb", lambda: {})
     directory = tmp_path / "nodes/test"
     prepare(tmp_path, directory, ["franka"])
     save(directory / "connections.yaml", {"franka": True})

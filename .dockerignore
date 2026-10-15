@@ -13,5 +13,6 @@
 !packages/**
 !native/**
 !scripts/**
+!examples/controller-replays/**
 **/*.so
 **/__pycache__/**

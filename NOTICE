@@ -41,10 +41,6 @@ Version 2026.14.
 Licensed under Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause (https://github.com/shader-slang/slang/blob/v2026.14/LICENSE)
 The source code for Slang is available at <https://github.com/shader-slang/slang/archive/refs/tags/v2026.14.tar.gz>.
 
-Hololink, SDK 5 (ssh://git@gitlab-master.nvidia.com:12051/holoscan/hololink.git)
-Commit be6510635e7f877593e9ea45622f12522cb8cf4c, plus the patches in native/patches/.
-This checkout is internal to NVIDIA GitLab. Its license text is not published in this repository.
-
 holoscan-sensor-bridge, SDK 4 (https://github.com/nvidia-holoscan/holoscan-sensor-bridge)
 Commit 4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc, plus native/patches/hololink-sdk4-optional-crc.patch.
 Licensed under Apache-2.0 (https://github.com/nvidia-holoscan/holoscan-sensor-bridge/blob/4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc/LICENSE)

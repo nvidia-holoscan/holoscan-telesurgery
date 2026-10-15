@@ -18,7 +18,7 @@ Patient has **Overview**, **Nodes** and **Surgeons** pages. Each node's equipmen
 | `telesurgery-app`     | CLI, `nodes` management, local `server` and browser UI            |
 | `telesurgery-sim`     | Room `environments` and Isaac Sim `runtime`                       |
 
-SDK-specific imports stay in the runtime backends. SDK 5 HSB bindings live in `native/`; Franka's local servo controller lives in `packages/robots/native/`. Build helpers are grouped in `scripts/builders/`, and tests by subsystem under `tests/`.
+SDK-specific imports stay in the runtime backends. HSB capture uses the public sensor-bridge library through the SDK 4 backend; Franka's local servo controller lives in `packages/robots/native/`. Build helpers are grouped in `scripts/builders/`, and tests by subsystem under `tests/`.
 
 ## Nodes and environments
 
@@ -84,7 +84,7 @@ cameras:
     fps: 60
 ```
 
-Use a distinct ID and `expander: 1` for a second sensor. The board network must already be configured. SDK 5 offers FuSa CoE on supported Thor MGBE/SIPL installations and LinuxReceiver (UDP). SDK 4 uses LinuxReceiver. Both paths share GPU processing and stream settings.
+Use a distinct ID and `expander: 1` for a second sensor. The board network must already be configured. HSB nodes automatically use an isolated SDK 4 runtime with LinuxReceiver (UDP). Other nodes, simulations and dashboards default to SDK 5. The launcher checks saved camera settings and listens for valid board announcements before loading a runtime. Connect the board before starting the node; if a board is attached later, restart the node to select its camera support. Saved FuSa selections fall back to LinuxReceiver while preserving the remaining stream settings.
 
 ## Robot control
 

@@ -2,17 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Download and build pinned SDK 5 and IMX274 bindings under build/.
+"""Download and build pinned public SDK 5 under build/.
 
 Prerequisites: Python 3.12, uv, CMake 4, Ninja, Rust/cargo, a C++20 compiler,
-CUDA 13 toolkit, patchelf, and NVIDIA GitLab SSH access for Hololink.
+CUDA 13 toolkit and patchelf.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import platform
@@ -190,62 +189,12 @@ def build_holoscan(sdk_spec, work, args):
     return prefix
 
 
-def build_camera(specs, work, prefixes, args):
-    hsb = (
-        checkout("hololink", specs["hololink"], work)
-        if specs["hololink"]["provider"] == "git"
-        else None
-    )
-    # Importing also verifies that a package/apt provider supplies the required Python API.
-    hs = require_sdk()
-    # Package providers must supply the visualization companion alongside Core.
-    from holoscan_visualization.operators import HolovizOp  # noqa: F401
-
-    prefixes.insert(0, str(Path(hs.__file__).parent))
-    hololink = importlib.util.find_spec("hololink")
-    if hololink and hololink.origin:
-        prefixes.append(str(Path(hololink.origin).parent))
-    key = hashlib.sha256(json.dumps(specs, sort_keys=True).encode()).hexdigest()[:12]
-    native = work / f"native-{key}"
-    run(
-        "cmake",
-        "-S",
-        ROOT / "native",
-        "-B",
-        native,
-        "-G",
-        "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release",
-        f"-DCMAKE_CUDA_ARCHITECTURES={args.cuda_architectures}",
-        f"-DCMAKE_PREFIX_PATH={';'.join(prefixes)}",
-        f"-DHOLOLINK_SOURCE_DIR={hsb or ''}",
-        f"-DPython_EXECUTABLE={sys.executable}",
-    )
-    run("cmake", "--build", native, "--target", "_hsb", "-j", args.jobs)
-    extension = native / "_hsb.abi3.so"
-    # Resolve SDK runtimes through the imported holoscan wheel in native and Docker installs.
-    sdk_lib = Path(importlib.util.find_spec("holoscan").origin).parent / "lib"
-    run(
-        "patchelf",
-        "--set-rpath",
-        f"$ORIGIN/../../../holoscan/lib:{sdk_lib}:" + ":".join(f"{p}/lib" for p in prefixes),
-        extension,
-    )
-    target = ROOT / "packages/runtime/src/telesurgery_runtime/backends/sdk5/_hsb.abi3.so"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(".so.tmp")
-    shutil.copy2(extension, temporary)
-    temporary.replace(target)
-    print(f"SDK {hs.__version__} and IMX274 support installed for {sys.executable}")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--dependencies", type=Path, default=ROOT / "dependencies/sdk5.toml")
     parser.add_argument("--cuda-architectures", default=os.environ.get("CUDAARCHS", "native"))
-    parser.add_argument("--component", choices=("all", "sdk", "camera"), default="all")
     parser.add_argument(
         "--prefix", type=Path, help="persist SDK development files outside the cache"
     )
@@ -262,34 +211,13 @@ def main():
     # Upstream validates patches in temporary non-Git copies below this checkout.
     os.environ["GIT_CEILING_DIRECTORIES"] = str(ROOT)
     specs = load(args.dependencies)
-    if args.component != "camera":
-        install(specs["holoscan"])
-    if args.component != "sdk":
-        install(specs["hololink"])
     sdk_spec = specs["holoscan"]
-    prefixes = [
-        str(Path(spec["prefix"]).expanduser().resolve())
-        for spec in specs.values()
-        if spec.get("prefix")
-    ]
-    prefixes += ["/opt/nvidia/holoscan", "/opt/nvidia/hololink"]
-    if os.environ.get("CMAKE_PREFIX_PATH"):
-        prefixes.extend(os.environ["CMAKE_PREFIX_PATH"].split(os.pathsep))
+    install(sdk_spec)
     if sdk_spec["provider"] == "git":
-        if args.component == "camera":
-            if args.prefix:
-                prefixes.insert(0, str(args.prefix.resolve()))
-            else:
-                source = checkout("holoscan", sdk_spec, work)
-                prefixes.insert(0, str(work / source.name / "install"))
-        else:
-            prefixes.insert(0, str(build_holoscan(sdk_spec, work, args)))
-    if args.component != "camera":
-        from holoscan_visualization.operators import HolovizOp  # noqa: F401
+        build_holoscan(sdk_spec, work, args)
+    from holoscan_visualization.operators import HolovizOp  # noqa: F401
 
-        print(f"SDK {require_sdk().__version__} installed for {sys.executable}")
-    if args.component != "sdk":
-        build_camera(specs, work, prefixes, args)
+    print(f"SDK {require_sdk().__version__} installed for {sys.executable}")
 
 
 if __name__ == "__main__":

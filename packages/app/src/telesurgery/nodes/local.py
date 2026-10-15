@@ -24,11 +24,11 @@ from telesurgery_core.adapters.realsense import enrich
 from telesurgery_core.adapters.v4l2 import camera_devices
 from telesurgery_core.configuration import load, save
 from telesurgery_core.diagnostics.logs import read_log
+from telesurgery_core.hsb import discover as discover_hsb
 from telesurgery_core.transport.protocol import MAX_FRAME, decode_video
 from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_core.video.capabilities import supported_codecs
 from telesurgery_core.video.config import Config
-from telesurgery_runtime.backends.sdk import backend
 
 
 async def _terminate(process):
@@ -59,7 +59,7 @@ def discover(directory, simulation=None):
     cameras = camera_devices()
     enrich(cameras)
     # Listen to the vendor's board announcements; do not infer a camera from a ping.
-    for address, receivers in backend("camera").discover().items():
+    for address, receivers in discover_hsb().items():
         cameras.append(
             {
                 "id": f"hsb-{address}-0",
@@ -75,6 +75,11 @@ def discover(directory, simulation=None):
             }
         )
     cameras.extend(data.get("cameras", []))
+    for camera in cameras:
+        if camera.get("source") == "imx274":
+            camera["receivers"] = ["linux"]
+            if camera.get("receiver") == "fusa":
+                camera["receiver"] = "auto"
     robots = [*data.get("robots", []), *profile_devices(directory)]
     ids = [item["id"] for item in robots]
     if len(ids) != len(set(ids)):
@@ -126,8 +131,18 @@ class LocalNode:
             if camera.get("codec", Config.codec) not in codecs and codecs:
                 camera["codec"] = codecs[0]
             camera["modes"] = modes(camera)
+            saved = self.settings.get(key)
+            if (
+                camera.get("source") == "imx274"
+                and isinstance(saved, dict)
+                and saved.get("receiver") == "fusa"
+                and "fusa" not in camera.get("receivers", ["linux"])
+            ):
+                # Preserve resolution, codec and quality when loading a stream
+                # saved with the former receiver; subsequent saves use Linux.
+                saved = {**saved, "receiver": "auto"}
             try:
-                camera.update(select(camera, self.settings.get(key)))
+                camera.update(select(camera, saved))
             except ValueError:
                 pass  # A reconnected device may no longer advertise the saved mode.
         self.robots = {item["id"]: item for item in robots}

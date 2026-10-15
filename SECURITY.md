@@ -41,7 +41,7 @@ The principal security boundaries are:
 4. **Untrusted video bitstreams:** Camera nodes and WebRTC peers supply H.264, H.265, NVJPEG, and raw frames. `video/formats.py` parses those payloads, and `video/codecs.py` feeds them to NVDEC, NVENC, and nvImageCodec. A malicious node can submit crafted encoded video to those parsers and to the browser decoder.
 5. **Docker socket on the node container:** `scripts/docker.sh` bind-mounts `/var/run/docker.sock` into a node container so it can start Isaac Sim and managed MIRA controllers. A process in that container can start other containers on the host, including privileged ones.
 6. **Host real-time priority for Franka:** `scripts/build_franka.sh` installs an `rtprio` 99 limit for the invoking user. That user can then run real-time threads outside this application.
-7. **Build fetches and patched codecs:** SDK 5 clones internal Hololink over SSH and applies `native/patches/`. `scripts/builders/codecs.py` downloads `PyNvVideoCodec` 2.2.3 from NGC, patches NVENC, and installs the result. `packages/sim` downloads USD assets from the Isaac content host. A substituted URL, patch, or archive changes the binary that the image runs. CI dependency audits do not cover the CUDA image, Isaac Sim, or those vendor archives.
+7. **Build fetches and patched codecs:** SDK and HSB builds fetch pinned public sources and packages; the HSB build applies `native/patches/hololink-sdk4-optional-crc.patch`. `scripts/builders/codecs.py` downloads `PyNvVideoCodec` 2.2.3 from NGC, patches NVENC, and installs the result. `packages/sim` downloads USD assets from the Isaac content host. A substituted URL, patch, or archive changes the binary that the image runs. CI dependency audits do not cover the CUDA image, Isaac Sim, or those vendor archives.
 
 ### Critical Security Assumptions
 
@@ -52,7 +52,7 @@ The principal security boundaries are:
 - Holoscan SDK, CUDA, the NVIDIA driver, NVENC, NVDEC, and the CUDA container enforce their own device and memory contracts.
 - Robot adapters assume the connected Franka or MIRA controller honors protocol limits. This application adds command expiry and exclusive control; it does not replace the robot's own safety system.
 - Isaac Sim and its EULA are accepted by the operator. The simulator container is not a security boundary for the host Docker daemon.
-- Secrets used to clone internal Hololink and to run Blossom CI are supplied by the build environment. They are not committed. Pre-commit rejects private keys.
+- Secrets used to run Blossom CI are supplied by the CI environment. They are not committed. Pre-commit rejects private keys.
 - Third-party packages are installed at build or setup time from the pins in `uv.lock`, `dependencies/*.toml`, and the Dockerfile. They are not vendored in this source tree. Their licenses are listed in `NOTICE`.
 
 ## Dependency and Distribution Security
