@@ -21,7 +21,7 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
-@pytest.mark.parametrize("ending", ["escape", "complete", "blur", "hidden", "error"])
+@pytest.mark.parametrize("ending", ["escape", "complete", "blur", "hidden", "error", "stall"])
 @pytest.mark.parametrize(
     "environment,name,adapter,width",
     [
@@ -123,6 +123,9 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await context.route("http://localhost:8777/**", route)
             page = await context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
+            # CI scheduling must not impersonate a stalled input timer.
+            await page.clock.install(time=1000)
+            await page.clock.pause_at(1000)
             await page.goto("http://localhost:8777/")
             control = page.get_by_role("button", name="Replay inputs", exact=True)
             await expect(control).to_be_hidden()
@@ -135,13 +138,20 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                     "streams": [role],
                 }
             ]
-            await page.wait_for_timeout(1100)
+            await page.clock.run_for(1100)
             await expect(control).to_be_hidden()
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             selector = page.get_by_label(f"{name} input", exact=True)
             await selector.select_option("0" if device == "gamepad" else device)
             await expect(control).to_be_visible()
-            await control.click()
+            async with page.expect_response(
+                lambda response: (
+                    response.url.endswith("/api/action")
+                    and response.request.post_data_json["action"] == "replay.start"
+                )
+            ):
+                await control.click()
+            await page.clock.run_for(50)
             await asyncio.wait_for(reading.wait(), 3)
             selector = page.get_by_label(f"{name} input", exact=True)
             await expect(selector).to_be_disabled()
@@ -153,7 +163,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 "e => e.scrollWidth <= e.clientWidth"
             )
             await page.locator("#robots-panel").screenshot(path=str(tmp_path / "replay-layout.png"))
-            await page.wait_for_timeout(250)
+            await page.clock.run_for(250)
             assert any(c["action"] == "replay.heartbeat" for c in calls)
             if ending == "escape":
                 await page.keyboard.press("Escape")
@@ -162,7 +172,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                     "document.hasFocus = () => false; window.dispatchEvent(new Event('blur'))"
                 )
                 gate.set()
-                await page.wait_for_timeout(250)
+                await page.clock.run_for(250)
                 assert any(c["action"] == "robot.move" for c in calls)
                 assert not any(c["action"] == "replay.cancel" for c in calls)
                 assert not any(c["action"] == "robot.hold" for c in calls)
@@ -170,19 +180,23 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 await page.evaluate("document.hasFocus = () => true")
                 await page.keyboard.press("Escape")
                 move_gate.set()
+            elif ending == "stall":
+                await page.clock.fast_forward(250)
             elif ending == "hidden":
                 await page.evaluate(
                     "Object.defineProperty(document, 'hidden', {value: true, configurable: true});"
                     "document.dispatchEvent(new Event('visibilitychange'))"
                 )
             gate.set()
-            await page.wait_for_timeout(250)
+            await page.clock.run_for(250)
             assert any(c["action"] == "replay.cancel" for c in calls) == (ending != "complete")
             if ending == "complete":
                 await expect(page.locator(".replay-status")).to_have_text("Replay complete")
             else:
                 reason = (
-                    "dashboard hidden"
+                    "dashboard timer delayed"
+                    if ending == "stall"
+                    else "dashboard hidden"
                     if ending == "hidden"
                     else "Measured feedback unavailable"
                     if ending == "error"
@@ -195,7 +209,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 assert not any(c["action"] == "robot.move" for c in calls)
             else:
                 stopped = sum(c["action"] == "robot.move" for c in calls)
-                await page.wait_for_timeout(150)
+                await page.clock.run_for(150)
                 assert sum(c["action"] == "robot.move" for c in calls) == stopped
                 await expect(page.locator("#notice")).to_be_hidden()
             await expect(selector).to_be_enabled()

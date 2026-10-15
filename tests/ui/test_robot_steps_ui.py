@@ -83,10 +83,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             async def wait_moves(count):
                 async with asyncio.timeout(3):
                     while len(moves()) < count:
-                        await page.wait_for_timeout(50)
+                        await page.clock.run_for(50)
 
             page.on("pageerror", lambda error: errors.append(str(error)))
             await page.route("http://localhost:8777/**", route)
+            # CI scheduling must not impersonate a stalled input timer.
+            await page.clock.install(time=1000)
+            await page.clock.pause_at(1000)
             await page.goto("http://localhost:8777/")
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             await expect(page.get_by_label("Franka input", exact=True)).to_have_value("keyboard")
@@ -102,7 +105,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             await expect(speed).to_have_value(str(percent))
             plus = page.get_by_role("button", name="Franka joints 5 increase (T)", exact=True)
             await plus.click()
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert len(moves()) == 1
             assert moves()[0]["params"] == {
                 "id": robot["id"],
@@ -119,13 +122,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             assert moves()[1]["params"]["mode"] == "step"
             assert all(c["params"]["mode"] == "jog" for c in moves()[2:])
             await page.mouse.up()
-            await page.wait_for_timeout(150)
+            await page.clock.run_for(150)
             assert calls[-1]["action"] == "robot.hold"
             count = len(moves())
-            await page.wait_for_timeout(700)
+            await page.clock.run_for(700)
             assert len(moves()) == count  # Release stops jogging, with no queued input.
             await page.keyboard.down("t")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             await page.keyboard.down("t")  # OS autorepeat must not duplicate a step.
             assert len(moves()) == count + 1
             assert moves()[-1]["params"]["mode"] == "step"
@@ -140,13 +143,13 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
                     assert 0 < delta <= step_size * 2
                 assert move["params"]["speed_deg_s"] == speed_value
             await page.keyboard.up("t")
-            await page.wait_for_timeout(150)
+            await page.clock.run_for(150)
             assert calls[-1]["action"] == "robot.hold"
             count = len(moves())
-            await page.wait_for_timeout(700)
+            await page.clock.run_for(700)
             assert len(moves()) == count
             await page.keyboard.press("Escape")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert calls[-1]["action"] == "robot.hold"
             # Slider endpoints respect node limits and never send motion.
             count = len(moves())
@@ -162,8 +165,10 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             assert len(moves()) == count
             # Home is one fixed-pose request, with manual input paused until
             # completion. Escape stops it while retaining ownership.
+            await page.clock.run_for(2000)  # Let the Stop indicator finish before Home.
             await page.get_by_role("button", name="Home", exact=True).click()
             await expect(page.get_by_role("button", name="Going home…")).to_be_disabled()
+            await page.clock.run_for(50)
             assert moves()[-1]["params"] == {
                 "id": robot["id"],
                 "command": {},
@@ -172,16 +177,18 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             }
             await expect(plus).to_be_disabled()
             await page.keyboard.press("t")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert len(moves()) == count + 1
             await page.get_by_role("button", name="Stop", exact=True).click()
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
             assert calls[-1]["action"] == "robot.hold"
             robot["error"] = "Franka Home did not reach its target before timeout"
+            await page.clock.run_for(1000)
             await expect(page.locator("#robots .status")).to_have_text("Control error")
             await expect(page.locator("#robots .status")).to_have_class("status error")
             await expect(plus).to_be_disabled()
             robot["error"] = ""
+            await page.clock.run_for(1000)
             await expect(page.locator("#robots .status")).to_have_text("Available")
             await expect(page.locator("#robots .status")).to_have_class("status online")
             await page.screenshot(path=str(tmp_path / "franka-steps.png"), full_page=True)

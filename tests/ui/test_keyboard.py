@@ -65,6 +65,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             page = await browser.new_page(viewport={"width": 1440, "height": 1000})
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.route("http://localhost:8777/**", route)
+            # CI scheduling must not impersonate a stalled input timer.
+            await page.clock.install(time=1000)
+            await page.clock.pause_at(1000)
             await page.goto("http://localhost:8777/")
             await page.get_by_label("Selected robot").select_option("host:robot")
             await page.get_by_role("button", name="Acquire control", exact=True).click()
@@ -82,9 +85,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                     ["Left°−+", "Right°−+"]
                 )
             await page.keyboard.down("q")
-            await page.wait_for_timeout(160)
+            await page.clock.run_for(160)
             await page.keyboard.up("q")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             moves = [c for c in calls if c["action"] == "robot.move"]
             assert len(moves) == 1
             assert moves[0]["params"]["mode"] == "step"
@@ -98,21 +101,21 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                     v == 0 for key, values in command.items() if key != first for v in values
                 )
             await page.keyboard.press("Escape")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert calls[-1]["action"] == "robot.hold"
             calls.clear()
             if not kind.startswith("franka"):
                 await page.keyboard.down("q")
-                await page.wait_for_timeout(80)
+                await page.clock.run_for(80)
                 await page.keyboard.down("u")
-                await page.wait_for_timeout(650)
+                await page.clock.run_for(650)
                 moves = [c for c in calls if c["action"] == "robot.move"]
                 command = moves[-1]["params"]["command"]
                 distance = command["left"][0]
                 assert 0.076 <= distance <= 0.16
                 assert command == {"left": [distance, 0, 0, 0], "right": [distance, 0, 0, 0]}
                 await page.keyboard.up("q")
-                await page.wait_for_timeout(150)
+                await page.clock.run_for(150)
                 moves = [c for c in calls if c["action"] == "robot.move"]
                 command = moves[-1]["params"]["command"]
                 assert 0.076 <= command["right"][0] <= 0.16
@@ -121,7 +124,7 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                     "right": [command["right"][0], 0, 0, 0],
                 }
                 await page.keyboard.up("u")
-                await page.wait_for_timeout(150)
+                await page.clock.run_for(150)
                 assert calls[-1]["action"] == "robot.hold"
                 calls.clear()
             # Older nodes advertise only step_deg; their limit still applies.
@@ -134,6 +137,7 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             await step.press("Enter")
             if not kind.startswith("franka"):
                 robot["state"]["joints_deg"]["right"][3] = 12.34
+                await page.clock.run_for(1000)
                 await expect(
                     page.locator('.joint-position[data-group="right"][data-joint="3"]')
                 ).to_have_text("12.34")
@@ -141,10 +145,10 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                 await page.keyboard.press("t")
                 assert not [c for c in calls if c["action"] == "robot.move"]
             await page.keyboard.down("j" if kind.startswith("franka") else ";")
-            await page.wait_for_timeout(130)
+            await page.clock.run_for(130)
             await page.keyboard.press("Escape")
             await page.keyboard.up("j" if kind.startswith("franka") else ";")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             moves = [c for c in calls if c["action"] == "robot.move"]
             assert len(moves) == 1
             key, count = ("joints", 7) if kind.startswith("franka") else ("right", 4)
@@ -157,9 +161,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             # Input listeners are removed when switching robots. Held keys cannot
             # transfer to a different robot or resume after an approval changes.
             await page.keyboard.down("q")
-            await page.wait_for_timeout(80)
+            await page.clock.run_for(80)
             await page.get_by_label("Selected robot").select_option("host:other")
-            await page.wait_for_timeout(100)
+            await page.clock.run_for(100)
             assert all(c["params"]["id"] == "host:robot" for c in calls)
             await page.keyboard.up("q")
             await expect(page.get_by_label(f"Other {setting}", exact=True)).to_have_value("20")
@@ -174,9 +178,9 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             for index, key in enumerate(negative_keys):
                 calls.clear()
                 await page.keyboard.down(key)
-                await page.wait_for_timeout(700)
+                await page.clock.run_for(700)
                 await page.keyboard.up(key)
-                await page.wait_for_timeout(100)
+                await page.clock.run_for(100)
                 moves = [c for c in calls if c["action"] == "robot.move"]
                 assert len(moves) >= 3
                 assert moves[0]["params"]["mode"] == "step"
@@ -190,9 +194,10 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                     for name, values in expected.items():
                         assert move["params"]["command"][name] == pytest.approx(values, abs=0.008)
                 assert calls[-1]["action"] == "robot.hold"
-                await page.wait_for_timeout(100)
+                await page.clock.run_for(100)
                 assert len([c for c in calls if c["action"] == "robot.move"]) == len(moves)
             state["session"]["robot"] = False
+            await page.clock.run_for(1000)
             await expect(page.locator("#robots")).to_contain_text("View-only access")
             await expect(page.locator(".keyboard-controls")).to_have_count(0)
             assert not errors

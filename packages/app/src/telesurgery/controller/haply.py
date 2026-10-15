@@ -162,6 +162,11 @@ class Haply:
                         None,
                         "Haply service unavailable; open Haply Hub or run setup.sh on this host.",
                     )
+                    if self.process is not None and self.process.poll() is not None:
+                        self.process = None
+                        if self.log is not None:
+                            self.log.close()
+                            self.log = None
                     if executable and self.process is None:
                         self.log = tempfile.TemporaryFile()
                         self.process = subprocess.Popen(

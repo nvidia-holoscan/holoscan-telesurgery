@@ -497,6 +497,48 @@ def test_reader_uses_monitoring_probes_and_closes_only_its_connection(monkeypatc
     connection.close.assert_called_once()
 
 
+@pytest.mark.parametrize("exit_code", [None, 1])
+@pytest.mark.parametrize("executable_available", [False, True])
+def test_reader_restarts_only_an_exited_managed_service(
+    monkeypatch, exit_code, executable_available
+):
+    # Run three refused connections synchronously, without hardware or real processes.
+    monkeypatch.setattr("telesurgery.controller.haply.threading.Thread", Mock())
+    monkeypatch.setattr("websocket.create_connection", Mock(side_effect=ConnectionRefusedError))
+    executable = "/usr/bin/haply-inverse-service"
+    monkeypatch.setattr(
+        "telesurgery.controller.haply.shutil.which",
+        Mock(side_effect=[executable] + [executable if executable_available else None] * 2),
+    )
+    first, second = Mock(), Mock()
+    first.poll.return_value = exit_code
+    second.poll.return_value = None
+    spawn = Mock(side_effect=[first, second])
+    monkeypatch.setattr("telesurgery.controller.haply.subprocess.Popen", spawn)
+    logs = [Mock(), Mock()]
+    create_log = Mock(side_effect=logs)
+    monkeypatch.setattr("telesurgery.controller.haply.tempfile.TemporaryFile", create_log)
+    reader = Haply()
+    reader.done = Mock()
+    reader.done.is_set.side_effect = [False, False, False, True]
+    reader._run()
+    restarted = exit_code is not None and executable_available
+    assert spawn.call_count == create_log.call_count == (2 if restarted else 1)
+    logs[0].close.assert_called_once()
+    if exit_code is None:
+        first.terminate.assert_called_once()
+        first.wait.assert_called_once_with(timeout=3)
+    else:
+        first.terminate.assert_not_called()
+    if restarted:
+        logs[1].close.assert_called_once()
+        second.terminate.assert_called_once()
+        second.wait.assert_called_once_with(timeout=3)
+    else:
+        second.terminate.assert_not_called()
+    assert reader.latest[0] is None
+
+
 def test_browser_token_change_disabled_input_and_poll_gap_rearm(monkeypatch, robot):
     now = [1.0]
     sample = [Sample(("base", "grip"), (0, 0, 0), (0, 0, 0, 1), frozenset(), now[0])]
