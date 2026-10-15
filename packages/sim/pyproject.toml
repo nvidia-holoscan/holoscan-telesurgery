@@ -10,7 +10,7 @@ name = "telesurgery-sim"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = ["telesurgery-core", "telesurgery-robots", "websockets>=17.2,<18", "trimesh==5.1.0"]
+dependencies = ["telesurgery-core", "telesurgery-robots", "websockets>=17.2,<18", "trimesh==5.1.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telesurgery_sim"]
