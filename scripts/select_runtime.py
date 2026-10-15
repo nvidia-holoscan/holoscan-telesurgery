@@ -32,8 +32,8 @@ def main():
     args = parser.parse_args()
     try:
         print(select(args.workspace.expanduser().resolve(), args.name, all_nodes=args.all_nodes))
-    except ImportError:
-        parser.exit(1, "Camera discovery requires host dependencies; run ./setup.sh first.\n")
+    except ImportError as exc:
+        parser.exit(1, f"Cannot load camera discovery dependencies with {sys.executable}: {exc}\n")
     except (OSError, ValueError) as exc:
         parser.exit(1, f"Cannot select camera support: {exc}\n")
 

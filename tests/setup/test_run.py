@@ -144,3 +144,19 @@ def test_only_physical_nodes_select_detected_camera_runtime(
     result = subprocess.run([*command, *options], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert f"Runtime: {expected}" in result.stdout
+
+
+def test_camera_selection_without_native_environment_ignores_path_python(launcher, monkeypatch):
+    root, command = launcher
+    tools = root / "conda/bin"
+    tools.mkdir(parents=True)
+    python = tools / "python3"
+    python.write_text("#!/bin/sh\necho 'PATH Python has no yaml module' >&2\nexit 1\n")
+    python.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("TEST_CAMERA_SDK", "4")
+    result = subprocess.run(
+        [*command, "node", "--patient", "localhost"], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stdout
+    assert "Runtime: 4" in result.stdout
