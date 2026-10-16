@@ -179,6 +179,35 @@
       "attempts": 2,
       "rejected_before_motion": true,
       "retry_not_blocked": true
-    }
+    },
+    "released_presentation_checks": [
+      {
+        "scenario": "Resume an unowned presentation after patient restart",
+        "device": "gamepad",
+        "elapsed_s": {
+          "right": 30.163
+        },
+        "retention_after_right_completion_s": 10,
+        "needle_final_m": [
+          -0.0015230553690344095,
+          -0.03945519030094147,
+          0.5509033799171448
+        ]
+      },
+      {
+        "scenario": "One surgeon releases left, reloads status and acquires right",
+        "device": "gamepad",
+        "elapsed_s": {
+          "left": 25.54,
+          "right": 30.115
+        },
+        "retention_after_right_completion_s": 10,
+        "needle_final_m": [
+          -0.0016169969458132982,
+          -0.038125112652778625,
+          0.5500295758247375
+        ]
+      }
+    ]
   }
 }

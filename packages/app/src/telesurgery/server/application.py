@@ -547,6 +547,15 @@ class Application:
         raise ConnectionError("Node is offline")
 
     async def _handoff_call(self, key, method, params):
+        if method == "handoff.acquire":
+            return await self._robot(params["peer"], "robot.acquire", {"id": key})
+        if method == "handoff.release":
+            owner = self.owners[key]
+            owner.validate(params["peer"], params["token"])
+            result = await self._release(key)
+            if not owner.ready:
+                raise RuntimeError(self.faults[key])
+            return result
         node, device = key.split(":", 1)
         result = await self.node_call(node, method, {"key": device, **params})
         self.robot_state[key] = result["state"] if method == "robot.replay_release" else result
@@ -626,6 +635,7 @@ class Application:
         ):
             raise ValueError("Robot input expired in transit")
         if mode == "reset":
+            await self.replay_handoff.clear_scene(key)
             self.replay_barrier.released(key)
         if params.get("replay") is not True:
             await self.replay_handoff.clear(key)
@@ -658,7 +668,7 @@ class Application:
         owner.ready = False
         node, device = key.split(":", 1)
         try:
-            await self.replay_handoff.clear(key)
+            await self.replay_handoff.released(key)
             result = await self.node_call(node, "robot.release", {"key": device, "token": token})
             owner.ready = True
             self.faults.pop(key, None)

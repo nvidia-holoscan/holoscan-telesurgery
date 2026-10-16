@@ -35,6 +35,12 @@ def handoff():
     async def call(key, method, params):
         role = key.split(":")[-1]
         calls.append((role, method))
+        if method == "handoff.acquire":
+            token = owners[key].acquire(params["peer"])
+            return {"token": token, "state": copy.deepcopy(states[role])}
+        if method == "handoff.release":
+            owners[key].validate(params["peer"], params["token"])
+            owners[key].release()
         if method == "robot.replay_release":
             states[role]["grippers"]["hand"] += 0.2
             return {"done": states[role]["grippers"]["hand"] >= 0.998, "state": states[role]}
@@ -94,7 +100,7 @@ async def test_right_start_requires_a_completed_owned_left_presentation(handoff,
         contexts["right"]["key"] = "another-node:right"
     elif condition == "other_task":
         contexts["right"]["group"] = "different-task"
-    with pytest.raises(RuntimeError, match="Run the left needle pickup first"):
+    with pytest.raises(RuntimeError, match="Left arm must hold the needle"):
         await helper.prepare(contexts["right"])
     assert not any(method == "robot.replay_release" for _, method in calls)
 
@@ -227,3 +233,74 @@ async def test_presented_pickup_stops_if_donor_is_manually_moved_before_grasp(ha
     with pytest.raises(RuntimeError, match="presented needle is no longer available"):
         await helper.update(contexts["right"], states["right"])
     assert not any(method == "robot.replay_release" for _, method in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh", [False, True])
+async def test_released_pickup_transfers_after_switch_or_patient_refresh(handoff, refresh):
+    helper, contexts, states, calls, now = handoff
+    await helper.update(contexts["left"], states["left"], finished=True)
+    helper.owners["node:left"].release()
+    await helper.released("node:left")
+    assert helper.offers
+    now[0] = 60
+    if refresh:
+        helper.offers.clear()
+        helper.owners.pop("node:left")
+    await helper.prepare(contexts["right"])
+    assert helper.owners["node:left"].owner is None  # No lease during the approach.
+    for _ in range(5):
+        done = await helper.update(contexts["right"], states["right"], take=True)
+        now[0] += 0.1
+    assert done and not helper.offers
+    assert states["left"]["grippers"]["hand"] >= 0.998
+    assert helper.owners["node:left"].owner is None
+    assert calls.count(("left", "handoff.acquire")) == 1
+    assert calls[-1] == ("left", "handoff.release")
+
+
+@pytest.mark.asyncio
+async def test_released_donor_cancellation_releases_temporary_control(handoff):
+    helper, contexts, states, calls, _ = handoff
+    await helper.update(contexts["left"], states["left"], finished=True)
+    helper.owners["node:left"].release()
+    await helper.released("node:left")
+    await helper.prepare(contexts["right"])
+    assert not await helper.update(contexts["right"], states["right"], take=True)
+    await helper.clear("node:right")
+    assert helper.owners["node:left"].owner is None
+    assert calls[-1] == ("left", "handoff.release")
+    assert not helper.offers
+
+
+@pytest.mark.asyncio
+async def test_reset_from_right_invalidates_left_presentation(handoff):
+    helper, contexts, states, _, _ = handoff
+    await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.clear_scene("node:right")
+    assert not helper.offers
+
+
+@pytest.mark.asyncio
+async def test_recovery_never_takes_another_surgeons_arm(handoff):
+    helper, contexts, _, calls, _ = handoff
+    with pytest.raises(RuntimeError, match="Left arm must hold"):
+        await helper.prepare(contexts["right"])
+    assert not calls
+
+
+@pytest.mark.asyncio
+async def test_brief_physics_delay_keeps_donor_closed_until_fresh_feedback(handoff):
+    helper, contexts, states, calls, now = handoff
+    await helper.update(contexts["left"], states["left"], finished=True)
+    helper.owners["node:left"].release()
+    await helper.released("node:left")
+    await helper.prepare(contexts["right"])
+    states["right"]["cartesian_feedback"] = {"ready": False}
+    assert not await helper.update(contexts["right"], states["right"], take=True)
+    assert not any(method == "robot.replay_release" for _, method in calls)
+    now[0] += 0.4
+    states["right"]["cartesian_feedback"]["ready"] = True
+    assert not await helper.update(contexts["right"], states["right"], take=True)
+    assert calls[-1] == ("left", "robot.replay_release")
+    await helper.clear("node:right")

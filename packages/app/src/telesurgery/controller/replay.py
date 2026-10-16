@@ -429,6 +429,11 @@ class Rendezvous:
                 "run": run["id"],
                 "group": group,
             }
+            if role == "right":
+                donor_rows = read_rows(path.parent / manifest["streams"]["left"]["file"])
+                run["handoff"]["donor_pose"] = next(
+                    row["tool_pose"] for row in reversed(donor_rows) if "tool_pose" in row
+                )
         # Feedback-paced streams can begin independently. A surgeon joining
         # later shares the existing handoff barriers, without restarting it.
         if run["independent"] and run["started"] is None:
