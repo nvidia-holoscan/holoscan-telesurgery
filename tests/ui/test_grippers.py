@@ -98,6 +98,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
         "role": "surgeon",
         "sdk": "5",
         "selected": [],
+        "controlled_robots": [],
         "session": {
             "id": "surgeon",
             "status": "approved",
@@ -117,6 +118,12 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             call = request.request.post_data_json
             if call["action"] != "robot.renew":
                 calls.append(call)
+            if call["action"] == "robot.acquire":
+                state["controlled_robots"] = [robot["id"]]
+                robot["owner"], robot["owner_id"] = "Surgeon", state["session"]["id"]
+            elif call["action"] == "robot.release":
+                state["controlled_robots"] = []
+                robot["owner"] = robot["owner_id"] = None
             if reject and call["action"] == "robot.move":
                 await request.fulfill(
                     status=400, json={"error": "Controller rejected request: Tools not homed"}
@@ -206,6 +213,7 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             await expect(page.get_by_role("button", name="Close right gripper")).to_be_disabled()
             robot["state"].update(home_active=False, control_active=False, sequence=3)
             robot["owner"], robot["owner_id"] = "Other", "other"
+            state["controlled_robots"] = []
             await page.clock.run_for(1100)
             await expect(page.locator("#robots .status")).to_contain_text("Other")
             await expect(page.get_by_role("button", name="Open right gripper")).to_be_disabled()
