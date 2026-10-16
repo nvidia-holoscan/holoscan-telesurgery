@@ -83,9 +83,11 @@ def test_node_watchdog_stale_feedback_stop_and_mode_guards(monkeypatch):
     }
     with pytest.raises(ValueError, match="feedback"):
         robot.apply(request)
+    assert robot._state()["cartesian_feedback"] == {"ready": False, "age_ms": None}
     robot.kinematics = (np.array(robot.pose["joints"]), np.eye(6, 7), now[0] - 1)
     with pytest.raises(ValueError, match="feedback"):
         robot.apply(request)
+    assert robot._state()["cartesian_feedback"] == {"ready": False, "age_ms": 1000}
 
     def tick():
         now[0] += 0.02
@@ -93,6 +95,7 @@ def test_node_watchdog_stale_feedback_stop_and_mode_guards(monkeypatch):
         robot.advance()
 
     tick()
+    assert robot._state()["cartesian_feedback"] == {"ready": True, "age_ms": 0}
     start = robot.pose["joints"][0]
     for _ in range(50):
         robot.apply(request)

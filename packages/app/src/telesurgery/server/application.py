@@ -1048,18 +1048,34 @@ class Application:
                             method == "robot.move"
                             and params.get("replay") is True
                             and isinstance(playback, CheckpointPlayback)
-                            and str(exc) == "Robot input expired in transit"
+                            and (
+                                str(exc) == "Robot input expired in transit"
+                                or (
+                                    playback.environment in {"franka", "versius"}
+                                    and params.get("mode", "jog") == "jog"
+                                    and str(exc)
+                                    == "Controller rejected request: "
+                                    "Cartesian physics feedback is unavailable or stale"
+                                )
+                            )
                         ):
-                            # The patient explicitly rejected this input before
-                            # dispatch. Observe the held robot and let the next
-                            # checkpoint tick compute a new bounded step. Never
-                            # retry a transport failure or an unknown outcome.
+                            # Both errors explicitly reject this motion. For a
+                            # simulator rejection, the node confirms a hold
+                            # before returning the error. Discard the old jog;
+                            # the next tick observes physics and computes a new
+                            # correction to the same checkpoint. Transport
+                            # failures and unknown outcomes still stop replay.
                             state = await self.remote.call(
                                 "robot.renew", {"id": key, "token": self.tokens[key]}
                             )
                             if self.replays.get(key) is not playback:
                                 raise RuntimeError("Replay input is no longer current") from exc
+                            if str(exc) != "Robot input expired in transit" and not isinstance(
+                                state.get("cartesian_feedback"), dict
+                            ):
+                                raise exc
                             playback.acknowledge(state)
+                            playback.input_display = None
                             playback.barrier = None
                             playback.renewed = time.monotonic()
                             self.robot_state[key] = state

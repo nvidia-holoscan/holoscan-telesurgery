@@ -87,7 +87,7 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback, sh
             if (result.state) feedback(result.state);
             status.textContent = result.waiting ? "Waiting for the other surgeon…"
                 : result.waiting_peer ? (result.waiting_reason || "Waiting at handoff checkpoint…")
-                : result.waiting_feedback ? `Replaying · ${Math.floor(result.elapsed)} s · waiting for feedback`
+                : result.waiting_feedback ? (result.waiting_reason || `Replaying · ${Math.floor(result.elapsed)} s · waiting for feedback`)
                 : `Replaying · ${Math.floor(result.elapsed)} s`;
             if (result.request) {
                 const [mode, command] = result.request;

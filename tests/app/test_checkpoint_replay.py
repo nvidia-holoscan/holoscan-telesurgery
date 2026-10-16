@@ -324,6 +324,81 @@ def test_cartesian_arrival_waits_for_braking_and_corrects_stop_drift():
     assert playback.index == 0
 
 
+@pytest.mark.parametrize("environment", ["franka", "versius"])
+@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
+def test_tool_checkpoint_waits_for_physics_and_braking_before_correcting(environment, device):
+    now = [0.0]
+    goal = tool_state([0.01, 0, 0])["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot(environment),
+        {"device": device},
+        "arm",
+        [row(tool_pose=goal), row(grip={"hand": 0})],
+        "run",
+        lambda: now[0],
+    )
+    fresh = {"cartesian_feedback": {"ready": True, "age_ms": 10}}
+    result = playback.read(0, {**tool_state([0, 0, 0]), **fresh})
+    playback.display_input(result)
+    playback.acknowledge({})
+    # A cached endpoint must not advance to the grasp, even with a new RPC sequence.
+    now[0] = 0.1
+    delayed = {
+        **tool_state([0.01, 0, 0]),
+        "sequence": 42,
+        "cartesian_feedback": {"ready": False, "age_ms": 350},
+    }
+    result = playback.read(now[0], delayed)
+    assert result["waiting_reason"] == "Waiting for simulator physics…"
+    assert result["request"] is None and not result["done"]
+    assert playback.index == 0 and playback.display_input(result) is None
+    # A new sample is insufficient while the stale-feedback stop is still braking.
+    now[0] = 0.2
+    braking = {
+        **tool_state([0.012, 0, 0], velocity=1),
+        **fresh,
+        "stopping": True,
+        "stop_reason": "physics feedback stale",
+    }
+    assert playback.read(now[0], braking)["request"] is None
+    # Resume with a newly computed correction after drift, not the earlier positive jog.
+    now[0] = 0.3
+    result = playback.read(now[0], {**tool_state([0.012, 0, 0]), **fresh})
+    assert result["request"][1]["translation"][0] < 0
+    assert playback.index == 0 and playback.physics_wait_since is None
+
+
+@pytest.mark.parametrize("failure", ["stale", "missing", "tracking"])
+def test_tool_physics_wait_is_bounded_and_does_not_hide_controller_faults(failure):
+    now = [0.0]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "keyboard"},
+        "left",
+        [row(tool_pose=tool_state([0.01, 0, 0])["tool_pose"])],
+        "run",
+        lambda: now[0],
+    )
+    measured = {
+        **tool_state([0, 0, 0]),
+        "cartesian_feedback": {"ready": False, "age_ms": None if failure == "missing" else 400},
+    }
+    if failure == "tracking":
+        measured.update(stopping=True, stop_reason="joint tracking error")
+        with pytest.raises(RuntimeError, match="joint tracking error"):
+            playback.read(0, measured)
+        return
+    for tick in range(5):
+        now[0] = tick * 0.2
+        result = playback.read(now[0], measured)
+        assert result["waiting_feedback"] and result["request"] is None
+        assert playback.pending["deadline"] == 8
+    now[0] = 1
+    with pytest.raises(TimeoutError, match="physics feedback did not recover"):
+        playback.read(now[0], measured)
+    assert playback.index == 0
+
+
 def test_stalled_tool_checkpoint_times_out_and_invalid_feedback_is_rejected():
     now = [0.0]
     playback = CheckpointPlayback(

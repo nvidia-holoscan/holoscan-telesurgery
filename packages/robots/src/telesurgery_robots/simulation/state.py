@@ -191,6 +191,11 @@ class SimRobot:
 
     def _state(self):
         tool_targets = {}
+        cartesian_age = (
+            max(0.0, time.monotonic() - self.kinematics[2])
+            if "joints" in self.pose and self.kinematics is not None
+            else None
+        )
         if "left" in self.pose and self.kinematics is not None:
             for arm, (measured, position, jacobian, _) in self.kinematics[0].items():
                 # Linearize the nearby commanded pose using the same live
@@ -215,6 +220,12 @@ class SimRobot:
             ),
             **(
                 {
+                    # A successful RPC is not a new physics sample. Replay
+                    # must see the same freshness bound used by Cartesian jogs.
+                    "cartesian_feedback": {
+                        "ready": cartesian_age is not None and cartesian_age <= 0.3,
+                        "age_ms": cartesian_age * 1000 if cartesian_age is not None else None,
+                    },
                     "control_active": self.mode == "home"
                     or self.trajectory is not None
                     or self.cartesian is not None

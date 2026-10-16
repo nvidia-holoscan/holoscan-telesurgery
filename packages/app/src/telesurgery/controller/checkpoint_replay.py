@@ -126,6 +126,7 @@ class CheckpointPlayback(FeedbackPlayback):
         self.handoff_waits = manifest.get("handoff_waits", {}).get(self.role, {})
         self.feedback_at = None
         self.feedback_period = 0.05
+        self.physics_wait_since = None
 
     def display_input(self, result):
         """Checkpoint files need not contain raw device samples; show sent corrections."""
@@ -227,6 +228,27 @@ class CheckpointPlayback(FeedbackPlayback):
         if self.pending:
             self.pending["acknowledged"] = True
 
+    def waiting_for_physics(self, state, now):
+        """Keep a tool checkpoint pending during a bounded simulator delay."""
+        feedback = state.get("cartesian_feedback")
+        if self.environment not in {"franka", "versius"} or feedback is None:
+            return False
+        if not isinstance(feedback, dict) or type(feedback.get("ready")) is not bool:
+            raise ValueError("Replay requires valid Cartesian feedback status")
+        stopping = state.get("stopping")
+        reason = state.get("stop_reason")
+        if stopping and reason not in {"released", "input expired", "physics feedback stale"}:
+            raise RuntimeError(reason or "Robot motion stopped")
+        if not feedback["ready"] or stopping and reason == "physics feedback stale":
+            if self.physics_wait_since is None:
+                self.physics_wait_since = now
+            if now - self.physics_wait_since >= 1:
+                raise TimeoutError("Replay stopped: simulator physics feedback did not recover")
+            self.input_display = None
+            return True
+        self.physics_wait_since = None
+        return False
+
     @staticmethod
     def pose(state, arm, *, planned=False):
         field = "cartesian_target_mm_deg" if planned else "cartesian_mm_deg"
@@ -290,6 +312,12 @@ class CheckpointPlayback(FeedbackPlayback):
         pending = self.pending
         if now > pending["deadline"]:
             raise TimeoutError("Replay stopped: measured motion did not reach its checkpoint")
+        if "tool_pose" in row and self.waiting_for_physics(state, now):
+            return {
+                **result,
+                "waiting_feedback": True,
+                "waiting_reason": "Waiting for simulator physics…",
+            }
         if state.get("stopping"):
             if state.get("stop_reason") not in {"released", "input expired"}:
                 raise RuntimeError(state.get("stop_reason") or "Robot motion stopped")
