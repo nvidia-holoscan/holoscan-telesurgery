@@ -140,7 +140,7 @@ fi
 step "Preparing simulation dependencies…" uv pip install --python "$python_bin" \
     --target "$workspace/sim-deps" 'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4'
 step "Preparing simulation meshes…" uv pip install --python "$python_bin" \
-    --target "$workspace/sim-deps" --no-deps 'trimesh==5.1.0'
+    --target "$workspace/sim-deps" --no-deps 'trimesh==5.1.1'
 step "Checking GPU codecs…" "$python_bin" -m telesurgery doctor
 PATH="$setup_path" "$python_bin" scripts/setup_cache.py record "${cache_args[@]}"
 

@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps \
     'pyzmq>=26,<28' 'websockets>=14,<17' 'ruckig==0.19.4' \
     && uv pip install --python /opt/telesurgery/bin/python --target /opt/sim-deps --no-deps \
-    'trimesh==5.1.0'
+    'trimesh==5.1.1'
 
 # Keep the optional input service independent of SDK rebuilds.
 FROM dependencies AS haply
