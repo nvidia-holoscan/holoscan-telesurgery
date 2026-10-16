@@ -274,7 +274,7 @@ python3.12-dev and python3.12-venv: PSF-2.0
 
 Container images and proprietary NVIDIA components. These are not open-source packages.
 
-nvcr.io/nvidia/cuda:13.0.2-devel-ubuntu24.04 and nvcr.io/nvidia/cuda:13.0.2-runtime-ubuntu24.04
+nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04 and nvcr.io/nvidia/cuda:13.4.2-runtime-ubuntu24.04
 NVIDIA Software License Agreement for the CUDA container.
 
 CUDA toolkit 13, required for native setup.
