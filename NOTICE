@@ -154,8 +154,8 @@ Version 0.2.0.
 Licensed under MIT (https://github.com/pydron/ifaddr/blob/0.2.0/LICENSE.txt)
 
 numpy (https://github.com/numpy/numpy)
-Version 2.3.5.
-Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.3.5/LICENSE.txt)
+Version 2.5.4.
+Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.5.4/LICENSE.txt)
 
 opencv-python-headless (https://github.com/opencv/opencv-python)
 Version 5.0.0.93.
@@ -204,8 +204,8 @@ Version 1.4.0. Development dependency.
 Licensed under Apache-2.0 (https://github.com/pytest-dev/pytest-asyncio/blob/v1.4.0/LICENSE)
 
 ruff (https://github.com/astral-sh/ruff)
-Version 0.16.9. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.16.9/LICENSE)
+Version 0.17.0. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.17.0/LICENSE)
 
 pre-commit (https://github.com/pre-commit/pre-commit)
 Version 4.6.2. Development dependency.
@@ -217,8 +217,8 @@ Revision v6.0.0. Development dependency.
 Licensed under MIT (https://github.com/pre-commit/pre-commit-hooks/blob/v6.0.0/LICENSE)
 
 ruff-pre-commit (https://github.com/astral-sh/ruff-pre-commit)
-Revision v0.16.9. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.16.9/LICENSE)
+Revision v0.17.0. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.17.0/LICENSE)
 
 shellcheck-py (https://github.com/shellcheck-py/shellcheck-py)
 Copyright (c) 2019 Ryan Rhee
@@ -286,5 +286,5 @@ NVIDIA Isaac Sim EULA. Started with ACCEPT_EULA=Y. Not baked into the applicatio
 Isaac Healthcare assets 0.5.0, downloaded from https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/Healthcare/0.5.0/
 NVIDIA Omniverse license.
 
-Trimesh 5.1.0 (MIT), used to load operator-supplied Versius meshes.
+Trimesh 5.1.1 (MIT), used to load operator-supplied Versius meshes.
 https://github.com/mikedh/trimesh
