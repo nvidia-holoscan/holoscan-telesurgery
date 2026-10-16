@@ -193,7 +193,7 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
             count = len([a for a in actions if a["action"] == "robot.move"])
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
-            # Permission loss while moving also releases control.
+            # Permission loss stops motion; the patient controls ownership revocation.
             await page.evaluate("pad.buttons[4].pressed=false; pad.axes.fill(0)")
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
             await page.evaluate("pad.buttons[4].pressed=true; pad.axes[0]=1")
@@ -202,14 +202,19 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
                     break
                 await page.wait_for_timeout(50)
             releases = len([a for a in actions if a["action"] == "robot.release"])
+            holds = len([a for a in actions if a["action"] == "robot.hold"])
             state["session"]["robot"] = False
             await expect(page.locator("#robots-panel")).to_contain_text("View-only access")
             await expect(page.locator("#robots .gamepad-controls")).to_have_count(0)
             for _ in range(40):
-                if len([a for a in actions if a["action"] == "robot.release"]) > releases:
+                if len([a for a in actions if a["action"] == "robot.hold"]) > holds:
                     break
                 await page.wait_for_timeout(50)
-            assert len([a for a in actions if a["action"] == "robot.release"]) > releases
+            assert len([a for a in actions if a["action"] == "robot.hold"]) > holds
+            assert len([a for a in actions if a["action"] == "robot.release"]) == releases
+            count = len([a for a in actions if a["action"] == "robot.move"])
+            await page.wait_for_timeout(150)
+            assert len([a for a in actions if a["action"] == "robot.move"]) == count
             assert not errors
         finally:
             await browser.close()
