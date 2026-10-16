@@ -103,6 +103,40 @@ class Range:
         }
 
 
+def robot_workspace(state, arm, origin, *, scale=1):
+    """Read the common metre-based contract in the command API's native units."""
+    workspace = state.get("cartesian_workspace", {}).get(arm)
+    if workspace is None and arm in state.get("mira_workspace_mm", {}):
+        # Compatibility with MIRA simulations that already supply measured extents.
+        workspace = {
+            "unit": "m",
+            "frame": "MIRA simulation base",
+            **{
+                key: [v / 1000 for v in row] for key, row in state["mira_workspace_mm"][arm].items()
+            },
+        }
+    if not isinstance(workspace, dict):
+        raise ValueError(state.get("workspace_error") or "Waiting for robot movement range.")
+    if workspace.get("unit") != "m" or not workspace.get("frame"):
+        raise ValueError("Invalid robot movement range frame or units.")
+    if arm == "hand" and workspace["frame"] != state.get("tool_pose", {}).get("frame", "base"):
+        raise ValueError("Robot movement range and tool feedback use different frames.")
+    try:
+        bounds = {key: [float(v) * scale for v in workspace[key]] for key in ("min", "max")}
+        if any(len(row) != 3 or not all(math.isfinite(v) for v in row) for row in bounds.values()):
+            raise ValueError
+        if any(lo >= hi for lo, hi in zip(bounds["min"], bounds["max"], strict=True)):
+            raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid robot movement range.") from exc
+    if any(
+        not lo - 0.002 * scale <= value <= hi + 0.002 * scale
+        for value, lo, hi in zip(origin, bounds["min"], bounds["max"], strict=True)
+    ):
+        raise ValueError("Waiting for a movement range at the current arm position.")
+    return bounds
+
+
 def mapped_position(position, anchor, origin, bounds, workspace, basis):
     """Keep Start motionless while mapping both endpoints exactly, per axis."""
     result = []

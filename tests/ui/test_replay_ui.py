@@ -35,6 +35,9 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
     environment, name, adapter, width, ending, device, tmp_path
 ):
     role = "left" if environment == "versius" else environment
+    simulated = adapter({"uri": "unused"})
+    if environment == "franka":
+        simulated.grippers = ("hand",)
     robot = {
         "id": f"node:{role}",
         "name": name,
@@ -42,7 +45,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
         "simulation": True,
         "status": "online",
         "state": {"sequence": 1},
-        "controls": controls(adapter({"uri": "unused"}), {"motion_enabled": True}),
+        "controls": controls(simulated, {"motion_enabled": True}),
     }
     state = {
         "role": "surgeon",
@@ -89,6 +92,12 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                     "elapsed": 0.1,
                     "done": ending == "complete",
                     "feedback_paced": True,
+                    "input": {
+                        "device": device,
+                        "keys": ["w", "z"],
+                        "axes": [1, 0, 0, 0],
+                        "buttons": [4, 3, 2],
+                    },
                 }
             elif method.startswith("replay."):
                 result = True
@@ -179,6 +188,21 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 assert any(c["action"] == "robot.move" for c in calls)
                 assert not any(c["action"] == "replay.cancel" for c in calls)
                 assert not any(c["action"] == "robot.hold" for c in calls)
+                if device == "keyboard":
+                    await expect(page.locator('.key-cap[data-key="w"]')).to_have_attribute(
+                        "data-pressed", "true"
+                    )
+                elif device == "gamepad":
+                    assert await page.locator('.gamepad-controls [data-active="true"]').count() > 0
+                if device in {"keyboard", "gamepad"}:
+                    assert await page.locator(
+                        '.gripper-controls [data-pressed="true"], '
+                        '.gripper-controls [data-active="true"]'
+                    ).count() > 0
+                    await page.get_by_label("Color theme").select_option("dark")
+                    await page.locator("#robots-panel").screenshot(
+                        path=str(tmp_path / "replay-active-dark.png")
+                    )
                 await expect(selector).to_be_disabled()
                 await page.evaluate("document.hasFocus = () => true")
                 await page.keyboard.press("Escape")
@@ -216,6 +240,8 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 assert sum(c["action"] == "robot.move" for c in calls) == stopped
                 await expect(page.locator("#notice")).to_be_hidden()
             await expect(selector).to_be_enabled()
+            await page.clock.run_for(60)
+            assert await page.locator('[data-pressed="true"], [data-active="true"]').count() == 0
             await page.get_by_role("button", name="Release control", exact=True).click()
             await expect(control).to_be_hidden()
             assert not errors

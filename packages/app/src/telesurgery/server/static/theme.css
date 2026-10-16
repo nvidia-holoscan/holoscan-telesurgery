@@ -1,0 +1,46 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --theme-page: #10171e;
+    --theme-surface: #19232d;
+    --theme-surface-soft: #202d39;
+    --theme-surface-hover: #293948;
+    --theme-selected: #293e28;
+    --theme-ink: #e7edf2;
+    --theme-text: #c5d0d9;
+    --theme-muted: #a0aeba;
+    --theme-border: #344351;
+    --theme-line-soft: #2b3945;
+    --theme-link: #a6d862;
+    --theme-green-border: #638741;
+    --theme-danger: #ff9992;
+    --theme-danger-border: #80504e;
+    --theme-warning: #edc67b;
+    --theme-warning-surface: #3e3322;
+    --theme-warning-border: #7d6642;
+    --theme-shadow: #00000055;
+    --theme-stripe: #ffffff05;
+    --theme-chart-wash: #19232d00;
+}
+
+.theme-choice {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.theme-choice select {
+    width: auto;
+    min-width: 86px;
+    min-height: 34px;
+    margin: 0;
+    padding: 5px 9px;
+    font-size: 12px;
+}

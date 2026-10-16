@@ -7,6 +7,7 @@ import math
 
 from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
+from telesurgery_robots.workspace import Workspace, axis_bounds
 
 
 class Franka:
@@ -17,6 +18,7 @@ class Franka:
     max_step_deg = 5.0
     home_deg = {"joints": FRANKA_HOME}
     speed_limits = FRANKA_SPEED
+    default_arm_speed_percent = 75
     cartesian = {"frame": "base", "linear_speed_m_s": 0.10, "angular_speed_deg_s": 30.0}
 
     def __init__(self, spec):
@@ -27,11 +29,44 @@ class Franka:
                 f"Franka dependency unavailable ({exc}); "
                 "run ./setup.sh --profile franka on this node"
             ) from exc
-        if not hasattr(Controller, "jog_cartesian"):
+        if not hasattr(Controller, "kinematics"):
             raise RuntimeError(
                 "Rebuild the Franka adapter: run ./scripts/build_franka.sh on this node"
             )
         self.factory, self.address, self.reader = Controller, spec["address"], None
+        self.workspace = Workspace()
+        self.tool_frames = None
+
+    def movement_range(self, state):
+        import numpy as np
+        from telesurgery_robots.franka.cartesian import JOINT_LIMITS
+
+        frames = (state["F_T_EE"], state["EE_T_K"])
+        if frames != self.tool_frames:
+            self.workspace.close()
+            self.workspace = Workspace()
+            self.tool_frames = frames
+        # Capture a model and immutable tool frames, never the live read/command API.
+        kinematics = self.reader.kinematics
+
+        def model(q):
+            pose, jacobian = kinematics(q.tolist(), *frames)
+            return np.asarray(pose).reshape(4, 4, order="F"), np.asarray(jacobian).reshape(
+                6, 7, order="F"
+            )
+
+        q = np.asarray(state["q"])
+        transform = np.asarray(state["O_T_EE"]).reshape(4, 4, order="F")
+        bounds = self.workspace.update(
+            transform[:3, 3],
+            transform[:3, :3],
+            lambda cancelled: axis_bounds(model, q, np.deg2rad(JOINT_LIMITS), cancelled),
+            idle=not state["control_active"] and state["mode"] == "idle",
+        )
+        return {
+            "cartesian_workspace": {"hand": bounds} if bounds else {},
+            "workspace_error": self.workspace.error,
+        }
 
     def read(self):
         try:
@@ -43,6 +78,7 @@ class Franka:
             raise
         transform = values(state["O_T_EE"], 16, math.inf)
         return {
+            **self.movement_range(state),
             "joints_deg": {"joints": [math.degrees(v) for v in state["q"]]},
             "velocity_deg_s": {"joints": [math.degrees(v) for v in state["dq"]]},
             "effort_nm": {"joints": state["tau_J"]},
@@ -96,6 +132,10 @@ class Franka:
         return self.read()
 
     def close(self):
+        if hasattr(self, "workspace"):
+            self.workspace.close()
+            self.workspace = Workspace()
+            self.tool_frames = None
         if self.reader is not None:
             self.reader.close()
         self.reader = None

@@ -27,6 +27,8 @@ from telesurgery_robots.mira.poses import (
     MIRA_STEP_LIMIT,
     roll_target,
 )
+from telesurgery_robots.mira.workspace import vendor_bounds
+from telesurgery_robots.workspace import Workspace
 
 
 class Mira:
@@ -279,12 +281,34 @@ class MiraAdapter:
 
     def __init__(self, spec):
         self.client = Mira(spec["uri"])
+        self.workspaces = {arm: Workspace(CARTESIAN["frame"]) for arm in self.groups}
         # A pose input device captures the measured tool pose before its first
         # move. Waiting for a Cartesian command would leave Start unable to arm.
         self.client.tool_mode = True
 
     def read(self):
-        return {**self.client.state(), "feedback_source": "vendor cached pose"}
+        state = self.client.state()
+        bounds, errors = {}, []
+        for arm, workspace in self.workspaces.items():
+            pose = state["cartesian_mm_deg"][arm]
+            extent = workspace.update(
+                [v / 1000 for v in pose[:3]],
+                [math.radians(pose[3])],
+                lambda cancelled, arm=arm: vendor_bounds(
+                    self.client.uri, arm, state["cartesian_mm_deg"], state["joints_deg"], cancelled
+                ),
+                idle=not state["control_active"],
+            )
+            if extent:
+                bounds[arm] = extent
+            if workspace.error:
+                errors.append(f"{arm.title()}: {workspace.error}")
+        return {
+            **state,
+            "feedback_source": "vendor cached pose",
+            "cartesian_workspace": bounds,
+            "workspace_error": " · ".join(errors),
+        }
 
     def jog(self, command):
         return self.client.send({"method": "set_mira_joint_delta", "params": command})
@@ -302,4 +326,6 @@ class MiraAdapter:
         return self.client.send({"method": "jog_gripper", "params": command})
 
     def close(self):
+        for workspace in self.workspaces.values():
+            workspace.close()
         self.client.close()

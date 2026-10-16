@@ -21,9 +21,19 @@ from telesurgery.controller.haply import (
     decode,
     pen_tilt,
 )
+from telesurgery.controller.haply_range import Range
 from telesurgery.controller.input import Inputs
 from telesurgery.server.application import Application
 from telesurgery_robots.mira.cartesian import CARTESIAN, SIM_CARTESIAN, command
+
+
+@pytest.fixture(autouse=True)
+def saved_hand_range(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    calibration = Range()
+    sample = Sample(("base", "grip"), (-0.5,) * 3, (0, 0, 0, 1), frozenset(), 1.0)
+    calibration.action("start", sample)
+    calibration.action("save", replace(sample, position=(0.5,) * 3))
 
 
 @pytest.mark.parametrize(
@@ -59,6 +69,15 @@ def robot():
             "grip_speed_pct_s": {"max": 50},
         },
         "state": {
+            "cartesian_workspace": {
+                arm: {
+                    "frame": "MIRA base",
+                    "unit": "m",
+                    "min": [v - 0.35 for v in origin],
+                    "max": [v + 0.35 for v in origin],
+                }
+                for arm, origin in (("left", [0.1, 0.2, 0.3]), ("right", [-0.1, 0.2, 0.3]))
+            },
             "grippers": {"left": 0.0, "right": 1.0},
             "cartesian_mm_deg": {
                 "left": [100.0, 200.0, 300.0, 45.0],
@@ -131,7 +150,7 @@ def test_motion_waits_for_start_button_and_follows_latest_target(robot):
     assert values["left"][4] == 0.5
     # A stationary but live pen retains its desired position while the robot catches up.
     assert driver.tick()[0] == "cartesian"
-    driver.state["cartesian_mm_deg"]["left"][:3] = [101.4, 199.3, 302.1]
+    driver.state["cartesian_mm_deg"]["left"][:3] = [101.4, 200 - 350 * 0.001 / 0.3, 302.1]
     driver.state["joints_deg"]["left"][4] = 2
     assert driver.tick() == ("release", {})
     assert driver.tick() is None
@@ -339,7 +358,10 @@ def test_stale_tracking_stops_pending_target_and_handles_wrapped_angles(robot):
 def test_missing_cartesian_feedback_never_moves(robot):
     driver = Driver(robot)
     del driver.state["cartesian_mm_deg"]
-    driver.resume()
+    driver.tick()
+    driver.tick(buttons=frozenset("a"))
+    driver.tick(buttons=frozenset())
+    assert driver.mapper.paused
     assert driver.tick(position=(0.001, 0, 0)) is None
     assert "feedback" in driver.mapper.error
 
@@ -761,10 +783,18 @@ def test_franka_pen_pose_uses_bounded_cartesian_jog(robot, change, kind, axis, s
             "speed_deg_s": {"min": 0.1, "max": 20},
         },
         "state": {
+            "cartesian_workspace": {
+                "hand": {
+                    "frame": "base",
+                    "unit": "m",
+                    "min": [0.15, -0.35, -0.05],
+                    "max": [0.85, 0.35, 0.65],
+                }
+            },
             "tool_pose": {
                 "position_m": [0.5, 0, 0.3],
                 "orientation_matrix": [[-1, 0, 0], [0, 1, 0], [0, 0, -1]],
-            }
+            },
         },
     }
     assert supports(robot)

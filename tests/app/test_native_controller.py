@@ -3,9 +3,11 @@
 
 """Native input shares browser mappings, release normalization and bounded requests."""
 
+import asyncio
 import json
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -20,6 +22,48 @@ from telesurgery_robots.adapters.simulation import (
     MiraSimulation,
     VersiusSimulation,
 )
+
+
+@pytest.mark.asyncio
+async def test_native_controller_launches_with_desktop_python(
+    tmp_path, monkeypatch, virtual_display
+):
+    from aiohttp import web
+    from telesurgery.controller.process import NativeController
+
+    monkeypatch.setenv("DISPLAY", virtual_display)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    requests = []
+
+    async def status(request):
+        requests.append(request.path)
+        return web.json_response(
+            {"role": "surgeon", "session": {"status": "disconnected"}, "replays": []}
+        )
+
+    app = web.Application()
+    app.router.add_get("/api/status", status)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = runner.addresses[0][1]
+    controller = NativeController(tmp_path / "controller")
+    try:
+        await controller.open(f"http://127.0.0.1:{port}")
+        assert (
+            Path(f"/proc/{controller.process.pid}/exe").resolve()
+            == Path("/usr/bin/python3").resolve()
+        )
+        async with asyncio.timeout(5):
+            while not requests:
+                await asyncio.sleep(0.02)
+        assert controller.status()["status"] == "running"
+    finally:
+        await controller.close()
+        await runner.cleanup()
+    assert controller.status()["status"] == "closed"
 
 
 def robot(kind):

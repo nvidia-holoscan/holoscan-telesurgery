@@ -68,7 +68,9 @@ Start a simulation (`mira`, `franka` or [CMR Versius](#cmr-versius-simulation)):
 
 For hardware, use the [physical device commands](#physical-devices). On another machine, replace `127.0.0.1` with the patient IP.
 
-Approve each node under **Nodes** in Patient, then start streams and connect robots.
+Approve each node under **Nodes** in Patient. The node automatically starts configured controllers, connects its robots and starts discovered streams using saved settings, or the device defaults on first use. Physical MIRA controller startup can enable motor power. Stop and Disconnect remain available; acquisition and motion commands remain explicit.
+
+Both dashboards have a **Light / Dark** theme selector. Patient defaults to Dark and Surgeon to Light; each remembers your choice in this browser.
 
 ### 3. Surgeon
 

@@ -12,6 +12,7 @@ SPDX-License-Identifier: Apache-2.0
         <title>Holoscan Telesurgery</title>
         <link rel="stylesheet" href="/static/style.css" />
         <link rel="stylesheet" href="/static/metrics.css" />
+        <link rel="stylesheet" href="/static/theme.css" />
         <script type="module" src="/static/app.js"></script>
     </head>
     <body>
@@ -32,6 +33,12 @@ SPDX-License-Identifier: Apache-2.0
                 ></a
             >
             <div class="header-actions">
+                <label class="theme-choice" for="theme-choice">Theme
+                    <select id="theme-choice" aria-label="Color theme">
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                    </select>
+                </label>
                 <div id="patient-stop-actions" class="actions" hidden>
                     <button
                         id="stop-all-streams"
@@ -721,45 +728,6 @@ SPDX-License-Identifier: Apache-2.0
                         class="danger"
                     >
                         Remove node
-                    </button>
-                </div>
-            </form>
-        </dialog>
-        <dialog
-            id="robot-start-dialog"
-            aria-labelledby="robot-start-title"
-            data-dismiss-outside
-        >
-            <form id="robot-start-form">
-                <h2 id="robot-start-title">
-                    Bring <span id="robot-start-name"></span> online?
-                </h2>
-                <p>
-                    Starting the controller can enable motor power. Surgeon
-                    motion access remains unchanged.
-                </p>
-                <label class="check">
-                    <input type="checkbox" id="robot-operator-ready" required />
-                    An operator is at the robot with the emergency stop
-                    available.
-                </label>
-                <p
-                    id="robot-start-error"
-                    class="error-text"
-                    role="alert"
-                    hidden
-                ></p>
-                <div class="actions">
-                    <button
-                        type="button"
-                        id="cancel-robot-start"
-                        class="secondary"
-                        autofocus
-                    >
-                        Cancel
-                    </button>
-                    <button type="submit" id="confirm-robot-start" disabled>
-                        Bring online
                     </button>
                 </div>
             </form>

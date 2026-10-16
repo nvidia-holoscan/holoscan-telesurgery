@@ -241,6 +241,7 @@ class CheckpointPlayback(FeedbackPlayback):
             self.feedback_period = max(now - self.feedback_at, self.feedback_period * 0.9, 0.05)
         self.feedback_at = now
         row = self.rows[self.index]
+        self.input_row = row
         inputs = self.mapping.inputs
         inputs.arm_percent, inputs.roll_percent, inputs.grip_percent = row["speeds"]
         result["speed_deg_s"] = inputs.speed

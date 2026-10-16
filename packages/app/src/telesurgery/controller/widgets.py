@@ -451,7 +451,7 @@ class Button(tk.Canvas):
             fill="#e4f1cf" if self.pressed else "white",
             outline="#76b900" if self.pressed else "#cdd6cc",
         )
-        color = self.color if self.enabled else "#a8b0ab"
+        color = self.color if self.enabled or self.pressed else "#a8b0ab"
         if self.icon == "home":
             # The dashboard's 24-unit Home outline, centered in a 20px icon.
             points = (

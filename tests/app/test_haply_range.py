@@ -5,11 +5,56 @@
 
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from telesurgery.controller.haply import BrowserHaply, Sample, WorkspaceHaply, mapper_for
 from telesurgery.controller.haply_range import Range, mapped_position
+from telesurgery.controller.input import Inputs
+from telesurgery_robots.adapters.base import controls
+from telesurgery_robots.adapters.simulation import (
+    FrankaSimulation,
+    MiraSimulation,
+    VersiusSimulation,
+)
+from telesurgery_robots.franka.adapter import Franka
+from telesurgery_robots.mira.adapter import MiraAdapter
 from telesurgery_robots.mira.cartesian import SIM_CARTESIAN
+
+ROBOTS = ("mira", "mira-sim", "franka", "franka-sim", "versius-sim", "future-robot")
+
+
+def robot_for(kind):
+    adapter = {
+        "mira": MiraAdapter,
+        "mira-sim": MiraSimulation,
+        "franka": Franka,
+        "franka-sim": FrankaSimulation,
+        "versius-sim": VersiusSimulation,
+        "future-robot": FrankaSimulation,
+    }[kind]
+    return {
+        "id": kind,
+        "name": kind,
+        "kind": kind,
+        "status": "online",
+        "controls": controls(adapter.__new__(adapter), {"motion_enabled": True}),
+        "state": {
+            "cartesian_workspace": {
+                arm: {"frame": "base", "unit": "m", "min": [-0.1] * 3, "max": [0.1] * 3}
+                for arm in ("left", "right", "hand")
+            },
+            "cartesian_mm_deg": {arm: [0, 0, 0, 25] for arm in ("left", "right")},
+            "joints_deg": {arm: [0] * 5 for arm in ("left", "right")},
+            "mira_workspace_mm": {
+                arm: {"min": [-100] * 3, "max": [100] * 3} for arm in ("left", "right")
+            },
+            "tool_pose": {
+                "position_m": [0, 0, 0],
+                "orientation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            },
+        },
+    }
 
 
 def sample(position=(0.0, 0.0, 0.0)):
@@ -108,10 +153,10 @@ def test_only_advertised_simulation_following_uses_workspace_mapping():
     assert not isinstance(mapper_for({"kind": "mira-sim", "controls": {}}), WorkspaceHaply)
 
 
-def test_browser_can_calibrate_before_acquiring_control_and_restore_range(monkeypatch, tmp_path):
-    from telesurgery_robots.adapters.base import controls
-    from telesurgery_robots.adapters.simulation import MiraSimulation
-
+@pytest.mark.parametrize("kind", ROBOTS)
+def test_browser_can_calibrate_before_acquiring_control_and_restore_range(
+    monkeypatch, tmp_path, kind
+):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     current = [sample()]
     monkeypatch.setattr("telesurgery.controller.haply.time.monotonic", lambda: 1.0)
@@ -119,11 +164,7 @@ def test_browser_can_calibrate_before_acquiring_control_and_restore_range(monkey
         "telesurgery.controller.haply.Haply",
         lambda: SimpleNamespace(sample=lambda _: (current[0], ""), close=lambda: None),
     )
-    robot = {
-        "id": "sim",
-        "kind": "mira-sim",
-        "controls": controls(MiraSimulation({"uri": "unused"}), {}),
-    }
+    robot = robot_for(kind)
     params = {"token": "preview", "enabled": False}
     browser = BrowserHaply()
     result = browser.read(robot, {**params, "calibration": "start"})
@@ -138,7 +179,138 @@ def test_browser_can_calibrate_before_acquiring_control_and_restore_range(monkey
     browser.close()
     restored = BrowserHaply()
     assert restored.read(robot, params)["calibration"]["ready"]
+    for other in ROBOTS:
+        assert restored.read(robot_for(other), params)["calibration"]["ready"]
     restored.close()
+
+
+@pytest.mark.parametrize("kind", ROBOTS)
+def test_all_mappers_require_calibration_and_fresh_centered_start(monkeypatch, tmp_path, kind):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    robot = robot_for(kind)
+    mapper = mapper_for(robot)
+    inputs = Inputs(robot)
+    now = 1.0
+
+    def tick(position=(0, 0, 0), buttons=""):
+        nonlocal now
+        now += 0.05
+        return mapper.update(
+            replace(sample(position), received=now, buttons=frozenset(buttons), continuity=0),
+            robot["state"],
+            inputs,
+            now,
+        )
+
+    tick()
+    tick(buttons="a")
+    tick()
+    assert mapper.paused and "Calibrate movement range" in mapper.error
+    mapper.calibrate("start", sample())
+    assert tick((-0.1,) * 3) is None
+    assert tick((0.1,) * 3) is None
+    mapper.calibrate("save", sample())
+    assert mapper.paused
+    tick((0.1, 0, 0))
+    tick((0.1, 0, 0), "a")
+    tick((0.1, 0, 0))
+    assert mapper.paused and "Center the pen" in mapper.error
+    tick()
+    tick(buttons="a")
+    assert tick() == ("release", {})
+    assert not mapper.paused
+    at_start = tick()
+    if kind == "mira-sim":
+        assert at_start[1]["pose"] == [0, 0, 0, 25, 0]
+    else:
+        assert at_start is None
+    assert tick((0.01, 0, 0))[0] in {"cartesian", "jog", "follow"}
+    mapper.calibrate("start", sample())
+    assert tick() is None and mapper.paused
+    mapper.calibrate("cancel", sample())
+    assert tick() is None and mapper.paused  # Saving/cancelling cannot rearm movement.
+
+
+@pytest.mark.parametrize("kind", ("mira", "franka", "franka-sim", "versius-sim"))
+@pytest.mark.parametrize("axis", range(3))
+@pytest.mark.parametrize("sign", (-1, 1))
+def test_all_jog_mappers_map_full_robot_range_and_allow_retreat(tmp_path, kind, axis, sign):
+    import numpy as np
+    from telesurgery.controller.haply import DEFAULT_BASIS
+
+    robot = robot_for(kind)
+    mapper = mapper_for(robot)
+    mapper.calibration = calibrated(tmp_path)
+    inputs = Inputs(robot)
+    mapper.rebase(sample(), robot["state"])
+    hand_edge = np.zeros(3)
+    hand_edge[axis] = 0.1 * sign
+    target = np.asarray(DEFAULT_BASIS) @ hand_edge
+    if kind == "mira":
+        robot["state"]["cartesian_mm_deg"]["left"][:3] = (target * 1000).tolist()
+    else:
+        robot["state"]["tool_pose"]["position_m"] = target.tolist()
+    assert mapper.motion(sample(tuple(hand_edge * 2)), robot["state"], inputs, 1.0) is None
+    mode, command = mapper.motion(sample(tuple(hand_edge * 0.9)), robot["state"], inputs, 1.1)
+    translation = command["left"][:3] if kind == "mira" else command["translation"]
+    assert np.dot(translation, target) < 0
+    assert mode == ("cartesian" if kind == "mira" else "jog")
+
+
+@pytest.mark.parametrize("kind", ROBOTS)
+def test_native_calibration_collects_without_acquire_or_window_focus(
+    monkeypatch, tmp_path, virtual_display, kind
+):
+    import time
+    import tkinter as tk
+
+    from telesurgery.controller.haply import NAME
+    from telesurgery.controller.window import Window
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    current = [sample()]
+    reader = SimpleNamespace(sample=lambda _: (current[0], ""), close=lambda: None)
+    monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+    monkeypatch.setattr("telesurgery.controller.window.Haply", lambda: reader)
+    monkeypatch.setattr("telesurgery.controller.window.haply_available", lambda: True)
+    monkeypatch.setattr(Window, "tick", lambda self: None)
+    monkeypatch.setattr(Window, "focused", lambda self: False)
+    root = tk.Tk(screenName=virtual_display)
+    client = SimpleNamespace(action=Mock(side_effect=AssertionError("No robot commands")))
+    window = Window(root, client, input_device={"name": NAME, "ordinal": 0, "count": 1})
+    try:
+        now = time.monotonic()
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "me",
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [robot_for(kind)],
+                },
+            },
+            now,
+        )
+        window.poll_devices(now)
+        window.feedback()
+        root.update()
+        assert window.range_button.winfo_ismapped()
+        window.calibrate_haply("start")
+        current[0] = sample((-0.1,) * 3)
+        window.drive(now)
+        current[0] = sample((0.1,) * 3)
+        window.drive(now)
+        window.feedback()
+        assert "200 / 200 / 200" in window.range_hint.cget("text")
+        assert window.range_button.cget("text") == "Save range"
+        window.calibrate_haply("save")
+        assert window.haply_input.calibration.status()["ready"]
+        assert window.haply_input.paused and window.control.owned is None
+        client.action.assert_not_called()
+    finally:
+        window.shutdown()
+        root.destroy()
 
 
 @pytest.mark.parametrize("disconnect", [True, False])

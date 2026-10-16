@@ -67,7 +67,8 @@ class Inputs:
         self.dual = set(self.groups) == {"left", "right"}
         self.mode = "cartesian" if self.controls.get("cartesian") else "joints"
         self.keyboard = Keyboard()
-        self.arm_percent, self.roll_percent, self.grip_percent = 20, 50, 40
+        self.arm_percent = self.controls.get("default_arm_speed_percent", 20)
+        self.roll_percent, self.grip_percent = 50, 40
         self.last_sent = self.last_jog = float("-inf")
         self.last_grip = {}
         self.last_mode = None

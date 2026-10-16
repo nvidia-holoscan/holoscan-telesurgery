@@ -26,6 +26,7 @@ import { depthView, nativeDepthControls } from "./depth.js";
 import { equipmentTable } from "./equipment.js";
 import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
+import { setThemeRole } from "./theme.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -734,6 +735,7 @@ function renderCurrent() {
     }
     const isPatient = state.role === "patient",
         approved = state.session?.status === "approved";
+    setThemeRole(state.role);
     document.body.dataset.role = state.role;
     $("#role").textContent = isPatient ? "Patient" : "Surgeon";
     $("#connection").textContent = isPatient

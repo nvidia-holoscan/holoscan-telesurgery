@@ -70,7 +70,6 @@ export function haplyInput(robot, send, stop, speeds) {
     calibrate.title = "Set the movement range by sweeping the pen. Acquiring robot control is not required.";
     cancel.hidden = true;
     calibration.append(calibrate, cancel);
-    calibration.hidden = !robot.controls?.mira_follow;
     header.append(status, calibration);
     hint.hidden = true;
     for (const text of [

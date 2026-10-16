@@ -1108,12 +1108,8 @@ class Application:
                     self.robot_state.pop(key, None)
             return True
         if method == "robot.start":
-            if params.get("confirmed") is not True:
-                raise PermissionError(
-                    "Confirm an operator is present before starting the controller"
-                )
             node, device = params["id"].split(":", 1)
-            return await self.node_call(node, method, {"id": device, "confirmed": True})
+            return await self.node_call(node, method, {"id": device})
         if method in {"camera.start", "camera.stop", "camera.rename"}:
             if method == "camera.stop":
                 await self.native.close(params["id"])
@@ -1276,10 +1272,12 @@ class Application:
                     raise RuntimeError("Restart the patient service to support independent replay")
                 playback.handoff_done = barrier.get("handoff_done", False)
             result = playback.read(-1 if elapsed is None else elapsed, state)
+            input_display = playback.display_input(result)
             if barrier["done"]:
                 self.replays.pop(key, None)
             return {
                 **result,
+                "input": input_display if not barrier["done"] and elapsed is not None else None,
                 "done": barrier["done"],
                 "waiting": elapsed is None,
                 "state": state,

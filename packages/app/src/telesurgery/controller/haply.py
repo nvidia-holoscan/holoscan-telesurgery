@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from telesurgery.controller.haply_range import Range, mapped_position
+from telesurgery.controller.haply_range import Range, mapped_position, robot_workspace
 from telesurgery.controller.input import Inputs
 
 NAME = "Haply Inverse3"
@@ -266,9 +266,14 @@ class HaplyMapper:
     dual = True
     initial_arm = "left"
 
-    def __init__(self):
+    def __init__(self, calibration=None):
+        self.calibration = calibration or Range()
         self.arm = self.initial_arm
         self.halt()
+
+    def calibrate(self, action, sample):
+        self.halt()
+        self.calibration.action(action, sample)
 
     def halt(self, error=""):
         self.paused = True
@@ -277,6 +282,7 @@ class HaplyMapper:
         self.previous = None
         self.anchor = None
         self.origin = None
+        self.workspace = None
         self.rotation = 0.0
         self.active = False
         self.button_since = None
@@ -285,6 +291,33 @@ class HaplyMapper:
         self.error = error
 
     def update(self, sample, state, inputs, now, *, ready=True):
+        fresh = sample is not None and 0 <= now - sample.received < MAX_AGE
+        self.calibration.observe(sample if fresh else None)
+        if fresh and (self.calibration.collecting or self.calibration.bounds is None):
+            active = self.active or not self.paused
+            self.halt(
+                "Sweep the pen left/right, forward/back and up/down, then Save range."
+                if self.calibration.collecting
+                else "Calibrate movement range before Start."
+            )
+            return ("release", {}) if active else None
+        was_paused = self.paused
+        result = self._update(sample, state, inputs, now, ready=ready)
+        if was_paused and not self.paused and sample is not None:
+            bounds = self.calibration.bounds
+            if self.origin is None or any(
+                not lo + 0.1 * (hi - lo) < value < hi - 0.1 * (hi - lo)
+                for value, lo, hi in zip(sample.position, bounds["min"], bounds["max"], strict=True)
+            ):
+                self.halt(
+                    self.error
+                    if self.origin is None
+                    else "Center the pen inside its calibrated range, then tap Start."
+                )
+                return "release", {}
+        return result
+
+    def _update(self, sample, state, inputs, now, *, ready=True):
         if sample is None or not 0 <= now - sample.received < MAX_AGE:
             self.halt("Haply tracking timed out; tap Start to resume.")
             return "release", {}
@@ -379,6 +412,12 @@ class MiraHaply(HaplyMapper):
             self.origin = values
         except (KeyError, IndexError, TypeError, ValueError):
             self.error = "Waiting for MIRA tool-position feedback."
+            return
+        try:
+            self.workspace = robot_workspace(state, self.arm, values[:3], scale=1000)
+        except ValueError as exc:
+            self.origin = None
+            self.error = str(exc)
 
     def motion(self, sample, state, inputs, now):
         try:
@@ -392,15 +431,18 @@ class MiraHaply(HaplyMapper):
             self.error = "Waiting for MIRA tool-position feedback."
             return "release", {}
         self.error = ""
-        delta = [a - b for a, b in zip(sample.position, self.anchor.position, strict=True)]
         config = inputs.controls["mira_cartesian"]
         # Keep the vendor-frame mapping as the default; simulation publishes
         # its different base axes so pen up/right/forward follow the work area.
         basis = config.get("input_basis", config.get("haply_basis", DEFAULT_BASIS))
-        target = [
-            self.origin[i] + 700 * sum(a * b for a, b in zip(row, delta, strict=True))
-            for i, row in enumerate(basis)
-        ]
+        target = mapped_position(
+            sample.position,
+            self.anchor.position,
+            self.origin,
+            self.calibration.bounds,
+            self.workspace,
+            basis,
+        )
         # Decreasing MIRA's elbow angle raises the jaws on either arm.
         # Preserve the reference captured on Start, without changing XYZ.
         tilt = pen_tilt(sample.orientation) - pen_tilt(self.anchor.orientation)
@@ -459,71 +501,10 @@ class WorkspaceHaply(MiraHaply):
     """Map measured hand travel into each arm's workspace and stream absolute poses."""
 
     def __init__(self, calibration=None):
-        self.calibration = calibration or Range()
         self.target_id = 0
         self.boundary_id = None
         self.workspace = None
-        super().__init__()
-
-    def calibrate(self, action, sample):
-        self.halt()
-        self.calibration.action(action, sample)
-
-    def rebase(self, sample, state):
-        super().rebase(sample, state)
-        self.workspace = None
-        if self.origin is None:
-            return
-        try:
-            workspace = state["mira_workspace_mm"][self.arm]
-            if any(len(workspace[key]) != 3 for key in ("min", "max")):
-                raise ValueError
-            if any(not math.isfinite(v) for key in ("min", "max") for v in workspace[key]):
-                raise ValueError
-            if any(lo >= hi for lo, hi in zip(workspace["min"], workspace["max"], strict=True)):
-                raise ValueError
-            self.workspace = workspace
-            if any(
-                not lo - 0.5 <= value <= hi + 0.5
-                for value, lo, hi in zip(
-                    self.origin[:3], workspace["min"], workspace["max"], strict=True
-                )
-            ):
-                self.origin = None
-                self.error = "Move MIRA Home before starting workspace control."
-        except (KeyError, TypeError, ValueError):
-            self.origin = None
-            self.error = "Waiting for MIRA workspace calibration."
-
-    def update(self, sample, state, inputs, now, *, ready=True):
-        if sample is not None and 0 <= now - sample.received < MAX_AGE:
-            self.calibration.observe(sample)
-            if self.calibration.collecting or self.calibration.bounds is None:
-                active = self.active
-                self.halt()
-                self.error = (
-                    "Sweep the pen left/right, forward/back and up/down, then Save range."
-                    if self.calibration.collecting
-                    else "Calibrate movement range before Start."
-                )
-                return ("release", {}) if active else None
-        was_paused = self.paused
-        result = super().update(sample, state, inputs, now, ready=ready)
-        if was_paused and not self.paused and sample is not None:
-            bounds = self.calibration.bounds
-            if self.origin is None or any(
-                not lo + 0.1 * (hi - lo) < value < hi - 0.1 * (hi - lo)
-                for value, lo, hi in zip(sample.position, bounds["min"], bounds["max"], strict=True)
-            ):
-                error = (
-                    self.error
-                    if self.origin is None
-                    else "Center the pen inside its calibrated range, then tap Start."
-                )
-                self.halt()
-                self.error = error
-                return "release", {}
-        return result
+        super().__init__(calibration)
 
     def motion(self, sample, state, inputs, now):
         feedback = state.get("mira_follow", {})
@@ -611,9 +592,14 @@ class CartesianHaply(HaplyMapper):
         self.anchor, self.origin, self.rotation = sample, None, 0.0
         try:
             self.origin = self.pose(state)
-            self.error = ""
         except (KeyError, TypeError, ValueError):
             self.error = "Waiting for robot tool-position feedback."
+            return
+        try:
+            self.workspace = robot_workspace(state, self.arm, self.origin[0])
+        except ValueError as exc:
+            self.origin = None
+            self.error = str(exc)
 
     def motion(self, sample, state, inputs, now):
         import numpy as np
@@ -636,8 +622,15 @@ class CartesianHaply(HaplyMapper):
         self.error = ""
         config = inputs.controls["cartesian"]
         basis = np.asarray(config.get("input_basis", DEFAULT_BASIS))
-        target = self.origin[0] + config.get("position_scale", 0.7) * basis @ (
-            np.asarray(sample.position) - self.anchor.position
+        target = np.asarray(
+            mapped_position(
+                sample.position,
+                self.anchor.position,
+                self.origin[0],
+                self.calibration.bounds,
+                self.workspace,
+                basis,
+            )
         )
         # Grip +Y points along the pen; tool +Z points along the probe. Capture
         # their alignment on Start so axial pen twist rotates the probe itself.
@@ -719,12 +712,11 @@ class BrowserHaply:
         if self.reader is None:
             self.reader = Haply()
         sample, error = self.reader.sample(now)
-        if isinstance(self.mapper, WorkspaceHaply):
-            self.mapper.calibration.observe(sample)
-            if "calibration" in params:
-                if sample is None and params["calibration"] != "cancel":
-                    raise ValueError(error or "Waiting for Haply tracking.")
-                self.mapper.calibrate(params["calibration"], sample)
+        self.mapper.calibration.observe(sample)
+        if "calibration" in params:
+            if sample is None and params["calibration"] != "cancel":
+                raise ValueError(error or "Waiting for Haply tracking.")
+            self.mapper.calibrate(params["calibration"], sample)
         if params.get("enabled") is not True:
             self.mapper.halt()
             request = None
@@ -737,16 +729,13 @@ class BrowserHaply:
             "error": error or self.mapper.error,
             "tracking_ready": sample is not None,
             "tracking_error": error,
-            **(
-                {"calibration": self.mapper.calibration.status()}
-                if isinstance(self.mapper, WorkspaceHaply)
-                else {}
-            ),
+            "calibration": self.mapper.calibration.status(),
         }
 
     def close(self):
         reader, self.reader = self.reader, None
         self.mapper.halt()
+        self.mapper = type(self.mapper)()  # Reload any range saved by the native controller.
         self.identity = None
         if reader:
             reader.close()

@@ -155,7 +155,7 @@ class MiraFeedback:
                     (lower if sign < 0 else upper)[axis] = pose[axis]
         return {"min": lower.tolist(), "max": upper.tolist()}
 
-    def read(self, measured):
+    def read(self, measured, *, idle=True):
         self.kinematics = None
         if not all(arm in measured.get("joints_deg", {}) for arm in self.chains):
             return {}
@@ -167,6 +167,14 @@ class MiraFeedback:
             result[arm] = (joints, pose, jacobian, self.limits[arm])
         self.kinematics = (result, time.monotonic())
         return {
+            "cartesian_workspace": {
+                arm: {
+                    "frame": "MIRA simulation base",
+                    "unit": "m",
+                    **{key: [v / 1000 for v in row] for key, row in bounds.items()},
+                }
+                for arm, bounds in self.workspace.items()
+            },
             "cartesian_mm_deg": {arm: data[1].tolist() for arm, data in result.items()},
             "mira_workspace_mm": self.workspace,
         }

@@ -140,6 +140,23 @@ class Playback:
         self.read_at = clock()
         self.role = role
         self.renewed = clock()
+        self.input_row = None
+        self.input_display = None
+
+    def display_input(self, result):
+        """Recorded controls for the dispatched step, never a wall-clock animation."""
+        request = result.get("request")
+        if result.get("done") or result.get("waiting_peer") or request and request[0] == "release":
+            self.input_display = None
+        elif request and self.input_row is not None:
+            row = self.input_row
+            self.input_display = {
+                "device": self.mapping.device,
+                "keys": list(row.get("keys", [])),
+                "axes": list(row.get("axes", [0, 0, 0, 0])),
+                "buttons": list(row.get("buttons", [])),
+            }
+        return self.input_display
 
     @property
     def finished(self):
@@ -153,6 +170,7 @@ class Playback:
         request = None
         if self.index < len(self.rows) and self.rows[self.index]["t"] <= elapsed:
             row = self.rows[self.index]
+            self.input_row = row
             if elapsed - row["t"] > 0.15:
                 raise TimeoutError("Replay fell behind; stopped without queuing input")
             # Use the recorded sampling clock for button edges and mapper rate limits.
@@ -293,6 +311,7 @@ class FeedbackPlayback(Playback):
         # Preserve cadence through small scheduler jitter, but never emit a
         # burst to catch up after a delayed link or a stalled robot.
         self.due_at = max(self.due_at, now - 0.01)
+        self.input_row = row
         request = self.mapping.update(row, state, row["t"])
         self.index += 1
         self.previous_t = row["t"]

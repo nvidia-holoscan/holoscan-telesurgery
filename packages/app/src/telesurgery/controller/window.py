@@ -23,7 +23,6 @@ from telesurgery.controller.haply import (
     DEFAULT_BASIS,
     Haply,
     MiraHaply,
-    WorkspaceHaply,
     mapper_for,
     supports,
 )
@@ -634,19 +633,18 @@ class Window:
             self.controls, config.get("input_basis", config.get("haply_basis", DEFAULT_BASIS))
         )
         self.haply_position.pack(fill="x", pady=self.px(0, 8))
-        if isinstance(self.haply_input, WorkspaceHaply):
-            self.range_button = ttk.Button(
-                self.controls, text="Calibrate movement range", command=self.calibrate_haply
-            )
-            self.range_button.pack(anchor="w", pady=self.px(4))
-            self.range_cancel = ttk.Button(
-                self.controls,
-                text="Cancel range calibration",
-                command=lambda: self.calibrate_haply("cancel"),
-            )
-            self.range_hint = self.label(self.controls, "", size=9)
-            self.range_hint.configure(wraplength=self.px(340))
-            self.range_hint.pack(anchor="w", fill="x")
+        self.range_button = ttk.Button(
+            self.controls, text="Calibrate movement range", command=self.calibrate_haply
+        )
+        self.range_button.pack(anchor="w", pady=self.px(4))
+        self.range_cancel = ttk.Button(
+            self.controls,
+            text="Cancel range calibration",
+            command=lambda: self.calibrate_haply("cancel"),
+        )
+        self.range_hint = self.label(self.controls, "", size=9)
+        self.range_hint.configure(wraplength=self.px(340))
+        self.range_hint.pack(anchor="w", fill="x")
         for text in (
             "Tap single-dot button · Start / stop movement",
             *(("Tap two-dot button · Switch left / right arm",) if self.inputs.dual else ()),
@@ -775,9 +773,15 @@ class Window:
         self.home.tooltip.text = self.home_instruction
 
     def gamepad_active(self, binding):
-        if not self.gamepad_sample or not self.inputs.armed or self.pointer_control:
-            return False
-        axes, buttons = self.gamepad_sample
+        if self.replay.active:
+            replay = self.replay.input or {}
+            if replay.get("device") != "gamepad":
+                return False
+            axes, buttons = replay["axes"], replay["buttons"]
+        else:
+            if not self.gamepad_sample or not self.inputs.armed or self.pointer_control:
+                return False
+            axes, buttons = self.gamepad_sample
         kind, *values = binding
         if kind == "axis":
             return abs(axes[values[0]]) > 0.15
@@ -1001,6 +1005,9 @@ class Window:
             self.select_device()
 
     def drive(self, now):
+        if self.haply:
+            sample, _ = self.haply.sample(now)
+            self.haply_input.calibration.observe(sample)
         if self.inputs:
             self.inputs.keyboard.poll(now)
         if not self.eligible():
@@ -1026,9 +1033,6 @@ class Window:
         if not robot or not self.inputs:
             return
         state = self.control.feedback(robot)
-        if self.haply and isinstance(self.haply_input, WorkspaceHaply):
-            sample, _ = self.haply.sample(now)
-            self.haply_input.calibration.observe(sample)
         if self.pending_reset and self.control.ready:
             self.pending_reset = False
             self.control.move(self.selected, "reset", {}, None)
@@ -1180,35 +1184,34 @@ class Window:
                 or now_stale(self.last_status)
                 else self.haply_input.position_mm(state)
             )
-            if isinstance(self.haply_input, WorkspaceHaply):
-                calibration = self.haply_input.calibration.status()
-                sample, tracking_error = (
-                    self.haply.sample(time.monotonic())
-                    if self.haply
-                    else (None, "Connecting to Haply…")
+            calibration = self.haply_input.calibration.status()
+            sample, tracking_error = (
+                self.haply.sample(time.monotonic())
+                if self.haply
+                else (None, "Connecting to Haply…")
+            )
+            self.range_button.configure(
+                text="Save range" if calibration["collecting"] else "Calibrate movement range",
+                state="normal" if sample is not None else "disabled",
+            )
+            if calibration["collecting"]:
+                self.range_cancel.pack(anchor="w", after=self.range_button)
+            else:
+                self.range_cancel.pack_forget()
+            self.range_hint.configure(
+                text=tracking_error
+                if sample is None
+                else (
+                    "Calibration active · Robot paused. "
+                    "Sweep left/right, forward/back and up/down. Captured travel: "
+                    + " / ".join(str(v) for v in calibration["span_mm"])
+                    + " mm."
+                    if calibration["collecting"]
+                    else "Movement range saved. Center the pen, then tap Start."
+                    if calibration["ready"]
+                    else "Set the range once by sweeping the pen through its usable travel."
                 )
-                self.range_button.configure(
-                    text="Save range" if calibration["collecting"] else "Calibrate movement range",
-                    state="normal" if sample is not None else "disabled",
-                )
-                if calibration["collecting"]:
-                    self.range_cancel.pack(anchor="w", after=self.range_button)
-                else:
-                    self.range_cancel.pack_forget()
-                self.range_hint.configure(
-                    text=tracking_error
-                    if sample is None
-                    else (
-                        "Calibration active · Robot paused. "
-                        "Sweep left/right, forward/back and up/down. Captured travel: "
-                        + " / ".join(str(v) for v in calibration["span_mm"])
-                        + " mm."
-                        if calibration["collecting"]
-                        else "Movement range saved. Center the pen, then tap Start."
-                        if calibration["ready"]
-                        else "Set the range once by sweeping the pen through its usable travel."
-                    )
-                )
+            )
             self.haply_status.configure(
                 text="Replay inputs"
                 if self.replay.active
@@ -1240,16 +1243,19 @@ class Window:
             self.gamepad_status.configure(text=guidance)
             self.gamepad_status.tooltip.text = guidance
             for badge, binding in self.gamepad_badges:
-                badge.update_state(available and self.gamepad_active(binding))
+                badge.update_state(
+                    (available or self.replay.active) and self.gamepad_active(binding)
+                )
         self.mode_choice.configure(
             state="readonly" if available else "disabled"
         ) if self.inputs else None
         for key, cap in self.keys.items():
+            replay_keys = (self.replay.input or {}).get("keys", [])
             cap.update_state(
                 available,
-                key in self.inputs.keyboard.active
+                (key in replay_keys if self.replay.active else key in self.inputs.keyboard.active)
                 or (
-                    available
+                    (available or self.replay.active)
                     and key in self.gamepad_keys
                     and self.gamepad_active(("button", *self.gamepad_keys[key]))
                 ),

@@ -130,7 +130,8 @@ export function armSpeed(robot, stop) {
         max: maximum * 20,
         default: (robot.controls.default_step_deg || 0.2) * 20,
     };
-    return motionSpeed(robot, stop, "arm-speed", "Arm speed", limits, 20, maximum);
+    return motionSpeed(robot, stop, "arm-speed", "Arm speed", limits,
+        robot.controls.default_arm_speed_percent ?? 20, maximum);
 }
 
 export function rollSpeed(robot, stop) {

@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from telesurgery_core import configuration
+
 
 class NativeController:
     def __init__(self, directory):
@@ -85,7 +87,12 @@ class NativeController:
                 environment["PYTHONPATH"] = os.pathsep.join(
                     filter(
                         None,
-                        (str(Path(__file__).resolve().parents[2]), environment.get("PYTHONPATH")),
+                        (
+                            str(Path(__file__).resolve().parents[2]),
+                            # Desktop Python needs the shared calibration configuration too.
+                            str(Path(configuration.__file__).resolve().parents[1]),
+                            environment.get("PYTHONPATH"),
+                        ),
                     )
                 )
                 with (self.directory / "controller.log").open("w") as log:

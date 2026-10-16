@@ -28,6 +28,7 @@ export function gripperControls(robot, send, stop, speed) {
     const bindings = new Map(), pressed = new Set(), buttons = new Map(), readings = new Map();
     const physicalKeys = keyboardHolds(release);
     let gamepadVelocity = {};
+    let replayInput = null;
     let allowed = false, keyboard = false, busy = false, active = false,
         stopping = false, previous = performance.now();
     function halt() {
@@ -141,13 +142,19 @@ export function gripperControls(robot, send, stop, speed) {
         for (const [key, control] of buttons) {
             const {arm, sign} = bindings.get(key);
             control.disabled = !allowed;
-            control.dataset.pressed = String(pressed.has(key) ||
+            const [close, open] = arm === "left" ? [14, 15] : [2, 1];
+            const replayPressed = replayInput?.device === "keyboard" ? replayInput.keys.includes(key)
+                : replayInput?.device === "gamepad" && replayInput.buttons.includes(sign < 0 ? close : open)
+                    && !replayInput.buttons.includes(sign < 0 ? open : close);
+            control.dataset.pressed = String(replayInput ? replayPressed : pressed.has(key) ||
                 (allowed && !keyboard && Math.sign(gamepadVelocity[arm] || 0) === sign));
         }
+        toggleKey.dataset.active = String(replayInput?.device === "gamepad" && replayInput.buttons.includes(2));
     }, 50);
     return {
         element: panel,
         feedback,
+        replay(input) { replayInput = input; panel.dataset.replay = String(Boolean(input)); },
         gamepad(velocity) { gamepadVelocity = velocity; },
         update(enabled, keyboardEnabled, gamepad) {
             enabled = enabled && !gamepad?.haply;

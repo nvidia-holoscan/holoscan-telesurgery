@@ -237,6 +237,31 @@ export function gamepadInput(
         }
     }
     const badges = () => [enableKey, alternateKey, ...leftRollKeys, ...rightRollKeys, ...stickJoints.map(j => j.cap), ...cartesianKeys.map(b => b.key)];
+    let replayInput = null;
+
+    function showReplayInput(input) {
+        const down = index => input.buttons.includes(index);
+        const axes = input.axes.map(axis), alternate = down(5);
+        enableKey.dataset.active = String(down(4) && !alternate);
+        alternateKey.dataset.active = String(down(4) && alternate);
+        for (const joint of stickJoints)
+            joint.cap.dataset.active = String(down(4) && joint.bank === Number(alternate) && axes[joint.axis] !== 0);
+        for (const [keys, positive, negative] of [[leftRollKeys, 12, 13], [rightRollKeys, 3, 0]]) {
+            keys[0].dataset.active = String(down(positive) && !down(negative));
+            keys[1].dataset.active = String(down(negative) && !down(positive));
+        }
+        const values = [...axes, Number(down(14)) - Number(down(15)), Number(down(13)) - Number(down(12))];
+        for (const binding of cartesianKeys)
+            binding.key.dataset.active = String(values[binding.index] !== 0);
+        const velocity = {};
+        for (const arm of grippers) {
+            const [close, open] = arm === "left" ? [14, 15] : [2, 1];
+            velocity[arm] = Number(down(open)) - Number(down(close));
+        }
+        gripFeedback(velocity);
+        showHint("Replay inputs · Stop / Esc to cancel");
+        container.dataset.state = "replay";
+    }
     container.append(group, status, arms, rollControls);
     let allowed = false,
         enabled = false,
@@ -384,6 +409,11 @@ export function gamepadInput(
         const now = performance.now(),
             delayed = lastTick && now - lastTick > 200;
         lastTick = now;
+        if (replayInput) {
+            showReplayInput(replayInput);
+            timer = setTimeout(poll, 50);
+            return;
+        }
         const blocked = !enabled || !allowed || stopping || inputBlocked();
         if (
             blocked ||
@@ -615,6 +645,13 @@ export function gamepadInput(
         arms,
         roll: rollControls,
         get inlineFeedback() { return bankedJoints && !cartesian; },
+        replay(input) {
+            replayInput = input?.device === "gamepad" ? input : null;
+            if (!replayInput) {
+                for (const badge of badges()) badge.dataset.active = "false";
+                gripFeedback({});
+            }
+        },
         feedback: showFeedback,
         update(on, available) {
             if ((enabled && !on) || (allowed && !available)) halt();

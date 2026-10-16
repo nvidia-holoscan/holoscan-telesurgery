@@ -221,17 +221,12 @@ export function robotControls(refresh, openMetrics) {
     }
     function connectionButton(robot) {
         const connected = robot.connection_enabled;
+        const needsStart = robot.controller && robot.controller.status !== "running"
+            && robot.status !== "online";
         const control = button(
-            connected ? "Disconnect" : "Connect",
+            needsStart ? "Start controller" : connected ? "Disconnect" : "Connect",
             async () => {
-                if (
-                    !connected &&
-                    robot.controller &&
-                    robot.controller.status !== "running"
-                ) {
-                    startRobot(robot);
-                    return;
-                }
+                if (needsStart) return startRobot(robot);
                 await action(connected ? "robot.disconnect" : "robot.connect", {
                     id: robot.id,
                 });
@@ -240,7 +235,8 @@ export function robotControls(refresh, openMetrics) {
             "secondary small",
         );
         control.disabled = robot.node_online === false;
-        control.title = connected
+        control.title = needsStart ? "Start the configured controller and connect to the robot"
+            : connected
             ? "Release this application's robot connection"
             : "Connect to the robot controller";
         return control;
@@ -476,7 +472,6 @@ export function robotControls(refresh, openMetrics) {
                         card.start = button("Bring online", () =>
                             startRobot(card.robot),
                         );
-                        card.start.setAttribute("aria-haspopup", "dialog");
                         actions.append(card.start);
                     }
                     card.logs = button(
@@ -613,6 +608,11 @@ export function robotControls(refresh, openMetrics) {
                     () => endInput(robot.id),
                     refresh,
                     result => acknowledge(robot.id, result, true),
+                    input => {
+                        card.keyboard?.replay(input);
+                        card.gamepad?.replay(input);
+                        card.grippers?.replay(input);
+                    },
                 );
                 buttons.append(card.replay.button, card.stop);
                 element_.append(actions, card.replay.status, card.gamepad.discovery);
@@ -785,7 +785,6 @@ export function robotControls(refresh, openMetrics) {
                     ["running", "unavailable"].includes(
                         robot.controller.status,
                     );
-                start.setAttribute("aria-haspopup", "dialog");
                 const logs = button(
                     "Logs",
                     () =>

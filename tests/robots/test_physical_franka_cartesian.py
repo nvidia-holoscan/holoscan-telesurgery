@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from telesurgery_robots.franka.adapter import Franka
+from telesurgery_robots.workspace import Workspace
 
 
 def test_measured_pose_has_the_shared_cartesian_feedback_shape():
@@ -20,6 +21,8 @@ def test_measured_pose_has_the_shared_cartesian_feedback_shape():
         "dq": [0] * 7,
         "tau_J": [0] * 7,
         "O_T_EE": matrix,
+        "F_T_EE": matrix,
+        "EE_T_K": matrix,
         "mode": "idle",
         "faults": "[]",
         "device_time_ms": 1,
@@ -28,7 +31,11 @@ def test_measured_pose_has_the_shared_cartesian_feedback_shape():
         "stopping": False,
     }
     adapter = Franka.__new__(Franka)
-    adapter.reader = SimpleNamespace(read=lambda: state)
+    adapter.workspace = Workspace()
+    adapter.tool_frames = None
+    adapter.reader = SimpleNamespace(
+        read=lambda: state, kinematics=lambda *args: (matrix, [0] * 42)
+    )
     feedback = adapter.read()
     position, orientation = CartesianHaply.pose(feedback)
     assert position.tolist() == [0.4, -0.2, 0.3]

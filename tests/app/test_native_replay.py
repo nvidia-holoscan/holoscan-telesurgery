@@ -284,6 +284,18 @@ def test_native_replay_toolbar_matches_robot_and_input(monkeypatch, virtual_disp
         window.feedback()
         root.update()
         assert window.replay_status.cget("text") == "Preparing replay…"
+        window.replay.input = {
+            "device": device,
+            "keys": ["w"],
+            "axes": [1, 0, 0, 0],
+            "buttons": [4, 3],
+        }
+        window.feedback()
+        if device == "keyboard":
+            assert window.keys["w"].pressed and not window.keys["w"].enabled
+        elif device == "gamepad":
+            assert window.gamepad_active(("axis", 0))
+            assert window.gamepad_active(("button", 3, 0))
         monkeypatch.setattr(window, "focused", lambda: False)
         monkeypatch.setattr(window, "editing", lambda: False)
         window.check_focus()

@@ -11,14 +11,17 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 
 @pytest.mark.asyncio
-async def test_patient_start_confirmation_and_node_layout(tmp_path):
+@pytest.mark.parametrize("connection_enabled", [False, True])
+async def test_patient_retries_controller_without_confirmation_and_node_layout(
+    tmp_path, connection_enabled
+):
     robot = {
         "id": "node:mira",
         "node": "node",
         "name": "MIRA",
         "kind": "mira",
         "status": "disconnected",
-        "connection_enabled": False,
+        "connection_enabled": connection_enabled,
         "node_online": True,
         "stale": True,
         "controls": {"groups": {"left": 5, "right": 5}},
@@ -72,22 +75,14 @@ async def test_patient_start_confirmation_and_node_layout(tmp_path):
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/#node/node")
             start = page.locator("#equipment-rows").get_by_role(
-                "button", name="Connect", exact=True
+                "button", name="Start controller", exact=True
             )
             await expect(start).to_be_enabled()
             await expect(page.locator("#equipment-rows tr")).to_have_count(2)
             await expect(page.locator("#views-panel")).to_be_hidden()
             await start.click()
-            submit = page.locator("#confirm-robot-start")
-            await expect(submit).to_be_disabled()
-            await page.locator("#cancel-robot-start").click()
-            assert not calls
-            await start.click()
-            await page.locator("#robot-operator-ready").check()
-            await submit.click()
-            assert calls == [
-                {"action": "robot.start", "params": {"id": "node:mira", "confirmed": True}}
-            ]
+            await expect(page.locator("#robot-start-dialog")).to_have_count(0)
+            assert calls == [{"action": "robot.start", "params": {"id": "node:mira"}}]
             disconnect = page.locator("#equipment-rows").get_by_role(
                 "button", name="Disconnect", exact=True
             )
@@ -101,9 +96,13 @@ async def test_patient_start_confirmation_and_node_layout(tmp_path):
             await disconnect.click()
             assert calls[-1]["action"] == "robot.disconnect"
             await expect(page.locator("#equipment-rows")).to_contain_text("Disconnected")
-            await start.click()
+            await (
+                page.locator("#equipment-rows")
+                .get_by_role("button", name="Connect", exact=True)
+                .click()
+            )
             assert calls[-1]["action"] == "robot.connect"
-            await expect(page.locator("#robot-start-dialog")).to_be_hidden()
+            await expect(page.locator("#robot-start-dialog")).to_have_count(0)
             await (
                 page.locator("#equipment-rows")
                 .get_by_role("button", name="Logs", exact=True)

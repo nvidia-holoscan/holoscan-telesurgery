@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Explicit startup of the vendor MIRA daemon on its device node."""
+"""Owned lifecycle of the vendor MIRA daemon on its device node."""
 
 import asyncio
 import hashlib

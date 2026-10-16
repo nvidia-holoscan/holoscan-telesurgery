@@ -64,6 +64,7 @@ async def test_haply_physical_and_new_adapters_share_ui_and_require_acquisition(
         "paused": True,
         "arm": "left" if kind == "mira" else "hand",
         "error": "",
+        "calibration": {"collecting": False, "ready": False, "span_mm": []},
     }
 
     async def route(request):
@@ -73,6 +74,14 @@ async def test_haply_physical_and_new_adapters_share_ui_and_require_acquisition(
         elif path == "/api/action":
             body = request.request.post_data_json
             actions.append(body)
+            if body["action"] == "haply.read" and (
+                calibration := body["params"].get("calibration")
+            ):
+                result["calibration"] = {
+                    "collecting": calibration == "start",
+                    "ready": calibration == "save",
+                    "span_mm": [200, 180, 160],
+                }
             await request.fulfill(
                 json={"result": result if body["action"] == "haply.read" else robot["state"]}
             )
@@ -97,7 +106,11 @@ async def test_haply_physical_and_new_adapters_share_ui_and_require_acquisition(
                 await page.get_by_label("Test arm input", exact=True).select_option("haply")
             await expect(page.locator(".haply-coordinate")).to_have_text(["12.0", "-23.0", "34.0"])
             await expect(page.locator(".axis-triad")).to_be_visible()
-            await expect(page.locator(".haply-calibration")).to_be_hidden()
+            await expect(page.locator(".haply-calibration")).to_be_visible()
+            await page.get_by_role("button", name="Calibrate Haply movement range").click()
+            await expect(page.locator(".haply-range")).to_contain_text("Calibration active")
+            await page.get_by_role("button", name="Calibrate Haply movement range").click()
+            await expect(page.locator(".haply-range")).to_contain_text("Movement range saved")
             await expect(page.locator(".haply-controls [role=status]")).to_have_text(
                 "Paused · Left arm" if kind == "mira" else "Paused"
             )
@@ -118,10 +131,9 @@ async def test_haply_physical_and_new_adapters_share_ui_and_require_acquisition(
                 result.update(request=motion, paused=False)
             command = (await sent.value).post_data_json["params"]
             assert command["mode"] == motion[0] and command["command"] == motion[1]
-            assert (
-                next(a for a in actions if a["action"] == "haply.read")["params"]["speeds"]["arm"]
-                == 20
-            )
+            assert next(a for a in actions if a["action"] == "haply.read")["params"]["speeds"][
+                "arm"
+            ] == robot["controls"].get("default_arm_speed_percent", 20)
             assert not errors
         finally:
             await browser.close()
@@ -162,8 +174,7 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
     }
     calls, errors = [], []
     result = {"request": None, "paused": True, "arm": "left", "error": "Calibrate the Inverse3."}
-    if kind == "mira":
-        result["calibration"] = {"collecting": False, "ready": False, "span_mm": []}
+    result["calibration"] = {"collecting": False, "ready": False, "span_mm": []}
     gate = None
 
     async def route(request):
@@ -238,36 +249,36 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
                 await expect(coordinates).to_have_text(["-50.0", "-540.0", "520.0"])
                 result["arm"] = "left"
                 await expect(coordinates).to_have_text(expected)
+            result["tracking_ready"] = False
+            result["tracking_error"] = (
+                "VerseGrip not detected. Power on the pen and connect its USB dongle."
+            )
+            result["error"] = result["tracking_error"]
+            await expect(
+                page.get_by_role("button", name="Calibrate Haply movement range")
+            ).to_be_disabled()
+            await expect(page.locator(".haply-calibration-error")).to_contain_text(
+                "VerseGrip not detected"
+            )
+            await expect(page.locator(".haply-controls .input-discovery")).to_be_hidden()
+            await expect(page.locator(".haply-range")).to_be_hidden()
+            result["tracking_ready"] = True
+            result["tracking_error"] = ""
+            result["error"] = "Calibrate the Inverse3."
+            await expect(
+                page.get_by_role("button", name="Calibrate Haply movement range")
+            ).to_be_enabled()
+            await expect(page.locator(".haply-calibration-error")).to_be_hidden()
+            await page.get_by_role("button", name="Calibrate Haply movement range").click()
+            await expect(page.locator(".haply-range")).to_contain_text("Calibration active")
+            await expect(page.locator(".haply-range")).to_contain_text("200 / 180 / 160 mm")
+            await expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_visible()
+            await page.get_by_role("button", name="Calibrate Haply movement range").click()
+            await expect(page.locator(".haply-range")).to_contain_text("Movement range saved")
+            await expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_hidden()
+            assert not any(c["action"].startswith("robot.") for c in calls)
             if kind == "mira":
-                result["tracking_ready"] = False
-                result["tracking_error"] = (
-                    "VerseGrip not detected. Power on the pen and connect its USB dongle."
-                )
-                result["error"] = result["tracking_error"]
-                await expect(
-                    page.get_by_role("button", name="Calibrate Haply movement range")
-                ).to_be_disabled()
-                await expect(page.locator(".haply-calibration-error")).to_contain_text(
-                    "VerseGrip not detected"
-                )
-                await expect(page.locator(".haply-controls .input-discovery")).to_be_hidden()
-                await expect(page.locator(".haply-range")).to_be_hidden()
-                result["tracking_ready"] = True
-                result["tracking_error"] = ""
-                result["error"] = "Calibrate the Inverse3."
-                await expect(
-                    page.get_by_role("button", name="Calibrate Haply movement range")
-                ).to_be_enabled()
-                await expect(page.locator(".haply-calibration-error")).to_be_hidden()
-                await page.get_by_role("button", name="Calibrate Haply movement range").click()
-                await expect(page.locator(".haply-range")).to_contain_text("Calibration active")
-                await expect(page.locator(".haply-range")).to_contain_text("200 / 180 / 160 mm")
-                await expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_visible()
-                await page.get_by_role("button", name="Calibrate Haply movement range").click()
-                await expect(page.locator(".haply-range")).to_contain_text("Movement range saved")
-                await expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_hidden()
-                assert not any(c["action"].startswith("robot.") for c in calls)
-                await expect(page.get_by_label("MIRA roll speed", exact=True)).to_be_visible()
+                await expect(page.get_by_label(f"{name} roll speed", exact=True)).to_be_visible()
             assert not any(c["action"] == "robot.move" for c in calls)
             await expect(page.locator(".haply-controls")).to_contain_text(
                 "Tap single-dot button · Start / stop"

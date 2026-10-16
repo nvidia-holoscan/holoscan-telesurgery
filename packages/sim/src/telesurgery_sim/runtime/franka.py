@@ -6,6 +6,7 @@
 import time
 
 import numpy as np
+from telesurgery_robots.workspace import SerialModel, Workspace, axis_bounds
 
 
 def rotation_matrix(quaternion):
@@ -37,10 +38,12 @@ class FrankaFeedback:
         self.joint_paths = feedback.groups["joints"]
         self.finger_paths = [str(drive.GetPath()) for drive in fingers.values()]
         self.kinematics = None
+        self.workspace = Workspace()
 
-    def read(self, measured):
+    def read(self, measured, *, idle=True):
         if not self.view.is_physics_tensor_entity_valid() or "joints_deg" not in measured:
             self.kinematics = None
+            self.workspace.close()
             return {}
         paths = self.view.dof_paths[0]
         joints = [paths.index(path) for path in self.joint_paths]
@@ -64,12 +67,28 @@ class FrankaFeedback:
         )
         dofs = self.view.get_dof_positions().numpy()[0]
         fingers = [float(dofs[paths.index(path)]) for path in self.finger_paths]
+        position = base_rotation.T @ (positions[1] - positions[0])
+        orientation = base_rotation.T @ hand_rotation
+        q = np.deg2rad(self.kinematics[0])
+        # Read limits and chain geometry from the loaded articulation. The same
+        # provider covers Franka and every Versius arm, including rotated bases.
+        limits = np.column_stack([v.numpy()[0][joints] for v in self.view.get_dof_limits()])
+        bounds = self.workspace.update(
+            position,
+            orientation,
+            lambda cancelled: axis_bounds(
+                SerialModel(q, position, orientation, jacobian), q, limits, cancelled
+            ),
+            idle=idle,
+        )
         return {
+            "cartesian_workspace": {"hand": bounds} if bounds else {},
+            "workspace_error": self.workspace.error,
             "tool_pose": {
                 "frame": "base",
                 "end_effector": self.tool_name,
-                "position_m": (base_rotation.T @ (positions[1] - positions[0])).tolist(),
-                "orientation_matrix": (base_rotation.T @ hand_rotation).tolist(),
+                "position_m": position.tolist(),
+                "orientation_matrix": orientation.tolist(),
             },
             **(
                 {
