@@ -169,6 +169,7 @@ export function latencyView(selected) {
                     <p>Each stacked bar is a total-latency percentile. Its stages come from the same ranked frames and add to that total; they are not separate stage percentiles. Stage cards show each stage’s own P99.</p>
                     <p>Source timing stops at the camera node’s transport handoff. Browser timing ends at estimated display time. Holoviz timing stops at frame handoff; native rendering and scanout are not measured. Sensor exposure is not measured.</p>
                     <p>Timing starts when a frame buffer reaches the application. Frame preparation includes our conversions, copies and local handoff; simulator rendering and device acquisition before buffer delivery are excluded. Encode includes input conversion and GPU encoding; Decode includes output preparation. WebRTC + display includes local transmission, buffering and display scheduling, excluding Decode.</p>
+                    <p>View processing measures native depth composition and crop selection after decode, separately from Holoviz handoff. Zoom sampling happens during rendering: browser compositor work is included in WebRTC + display and has no separate GPU timer; native rendering remains unmeasured. Camera-side zoom happens before buffer delivery and is not timed separately.</p>
                     <p>Uncompressed streams use Pack (buffer copies for sending) and Upload (GPU upload and display color conversion), with no encoding or decoding.</p>
                     <p>Frame size includes encoded or raw video, the application message header and framing bytes on the node-to-viewer transport. TLS records and TCP/IP overhead are excluded. Video payload excludes application framing.</p>
                     <p>Samples are bounded to 10,000 and skip the first 2 seconds. Browser frame matching runs only while metrics is open. Missing timestamps leave the total unavailable; cross-host estimates include clock uncertainty. Reset clears samples without interrupting video.</p>
@@ -348,6 +349,7 @@ export function latencyView(selected) {
                                   raw ? "Upload" : "Decode",
                                   metrics[raw ? "unpack_ms" : "decode_ms"],
                               ],
+                              ["View processing", metrics.view_processing_ms],
                               ["Holoviz handoff", metrics.render_submit_ms],
                           ]
                         : []),

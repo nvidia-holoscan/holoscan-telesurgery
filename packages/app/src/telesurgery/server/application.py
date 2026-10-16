@@ -350,17 +350,29 @@ class Application:
             route = await self.remote.call("viewer.ticket", {"camera": camera})
         else:
             route = await self._viewer_route(camera)
-        await self.native.open(
-            {
-                "camera": camera,
-                **route,
-                "name": device["name"],
-                "width": device["width"],
-                "height": device["height"],
-                "depth": device.get("depth", False),
-                "codec": device.get("codec", "h264"),
-            }
-        )
+        if camera in self.native.opening:
+            raise RuntimeError("Holoviz is already opening")
+        self.native.opening.add(camera)
+        try:
+            # Retire the browser path before the native decoder starts. The
+            # opening status also rejects new offers throughout the handoff.
+            await self.media.clear(camera)
+            await self._media_changed()
+            await self._sync_streams()
+            await self.native.open(
+                {
+                    "camera": camera,
+                    **route,
+                    "name": device["name"],
+                    "width": device["width"],
+                    "height": device["height"],
+                    "depth": device.get("depth", False),
+                    "codec": device.get("codec", "h264"),
+                }
+            )
+        finally:
+            self.native.opening.discard(camera)
+            await self._sync_streams()
         if self.role == "surgeon" and self.remote_status.get("status") != "approved":
             await self.native.close(camera)
             raise PermissionError("Patient access was revoked")
@@ -382,7 +394,8 @@ class Application:
             {
                 camera
                 for camera in self.selected
-                if native.get(camera, {}).get("status") not in {"starting", "running"}
+                if camera not in self.native.opening
+                and native.get(camera, {}).get("status") not in {"starting", "running"}
             }
         )
 
@@ -455,6 +468,7 @@ class Application:
                             "depth_supported",
                             "depth_source",
                             "depth_fps",
+                            "camera_zoom",
                         }
                     }
                 )
@@ -777,6 +791,8 @@ class Application:
                 "surgeons": await self.run(self.access.list),
                 **statistics,
                 "native_views": self.native.status(),
+                "view_zooms": dict(self.native.zooms),
+                "view_displays": dict(self.native.displays),
                 "clock": self.clock.status(),
             }
         return {
@@ -807,6 +823,8 @@ class Application:
             "video_pipeline_frames": self.video.sink.frames if self.video else 0,
             **statistics,
             "native_views": self.native.status(),
+            "view_zooms": dict(self.native.zooms),
+            "view_displays": dict(self.native.displays),
             "native_controller": self.controller.status(),
             "haply_available": await asyncio.to_thread(haply_available),
             "replays": self.replay_catalog.list(),
@@ -884,7 +902,18 @@ class Application:
                 **({"retain_control": True} if retain else {}),
             )
         if method == "view.depth":
+            inventory = self.inventory() if self.role == "patient" else self.remote_status
+            device = next(
+                (c for c in inventory.get("cameras", []) if c["id"] == params.get("camera")), {}
+            )
+            if not device.get("depth"):
+                raise ValueError("This stream does not include depth")
             return await self.native.display(**params)
+        if method == "view.zoom":
+            inventory = self.inventory() if self.role == "patient" else self.remote_status
+            if not any(c["id"] == params.get("camera") for c in inventory.get("cameras", [])):
+                raise ValueError("Camera is unavailable")
+            return await self.native.zoom(**params)
         if method == "view.holoviz":
             return await self._open_viewer(params["camera"])
         if method == "view.browser":
@@ -1127,7 +1156,7 @@ class Application:
         if method == "robot.start":
             node, device = params["id"].split(":", 1)
             return await self.node_call(node, method, {"id": device})
-        if method in {"camera.start", "camera.stop", "camera.rename"}:
+        if method in {"camera.start", "camera.stop", "camera.rename", "camera.zoom"}:
             if method == "camera.stop":
                 await self.native.close(params["id"])
                 owners = {
@@ -1139,6 +1168,8 @@ class Application:
             node, device = params["id"].split(":", 1)
             result = await self.node_call(node, method, {**params, "id": device})
             self.nodes[node].update(result)
+            if method == "camera.zoom":
+                return next(c["camera_zoom"] for c in result["cameras"] if c["id"] == device)
             return True
         if method in {"node.approve", "node.reject"}:
             return await self.node_registry.decide(params["id"], method == "node.approve")

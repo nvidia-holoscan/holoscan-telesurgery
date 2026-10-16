@@ -46,10 +46,16 @@ def build(source, width, height, title):
                     # Holoviz requires provider-owned storage with a CUDA lifetime contract.
                     with context.stream():
                         stream = cp.cuda.get_current_stream()
-                        cp.cuda.runtime.memcpyAsync(
+                        # The crop is a strided view of the decoder allocation.
+                        # Reuse the existing provider handoff, copying only its
+                        # rows; do not materialize a contiguous zoom image first.
+                        cp.cuda.runtime.memcpy2DAsync(
                             loan.tensors["data"].data,
+                            image.shape[1] * 3,
                             image.data.ptr,
-                            image.nbytes,
+                            image.strides[0],
+                            image.shape[1] * 3,
+                            image.shape[0],
                             cp.cuda.runtime.memcpyDeviceToDevice,
                             stream.ptr,
                         )

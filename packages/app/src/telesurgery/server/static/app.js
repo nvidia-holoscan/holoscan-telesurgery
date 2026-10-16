@@ -27,6 +27,7 @@ import { equipmentTable } from "./equipment.js";
 import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
 import { setThemeRole } from "./theme.js";
+import { viewZoom, cameraZoom } from "./view-zoom.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -158,6 +159,7 @@ async function openMetrics(device) {
     metrics.open({ device, title: item?.name || "Metrics" });
 }
 function renderChanged(name, value, render) {
+    if (name === "cameras" && document.activeElement?.closest(".camera-zoom")) return;
     const signature = JSON.stringify(value);
     if (rendered.get(name) !== signature) {
         render();
@@ -197,6 +199,7 @@ function nativeViewing(id) {
     return ["starting", "running"].includes(state.native_views?.[id]?.status);
 }
 async function displayCamera(id, native) {
+    await tiles.get(id)?.zoom?.flush();
     await action(native ? "view.holoviz" : "view.browser", { camera: id });
     if (state.role === "patient") {
         equipment.close();
@@ -288,7 +291,12 @@ async function openVideo(camera) {
     );
     const stage = element("div", undefined, "depth-stage");
     stage.append(video);
-    tile.append(stage, caption);
+    const viewport = element("div", undefined, "view-viewport");
+    const surface = element("div", undefined, "view-surface");
+    video.style.aspectRatio = `${camera.width} / ${camera.height}`;
+    viewport.append(stage);
+    surface.append(viewport);
+    tile.append(surface, caption);
     if (state.role === "surgeon") layout.attach(tile, camera);
     $("#videos").append(tile);
     const peer = new RTCPeerConnection({ iceServers: [] });
@@ -297,7 +305,8 @@ async function openVideo(camera) {
         peer,
         title,
         timing: frameTiming(peer, video),
-        depth: depthView(peer, video, stage, caption, camera),
+        depth: depthView(peer, video, stage, caption, camera, state.view_displays?.[camera.id]),
+        zoom: viewZoom(camera, { viewport, stage, surface, initial: state.view_zooms?.[camera.id] }),
     });
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
@@ -352,6 +361,7 @@ function closeVideo(id) {
     tiles.delete(id);
     item.timing.stop();
     item.depth.stop();
+    item.zoom.stop();
     item.peer.close();
     item.tile.remove();
 }
@@ -549,6 +559,10 @@ function cameraCard(camera) {
     if (state.native_views?.[camera.id]?.error)
         card.append(element("p", state.native_views[camera.id].error));
     card.append(controls);
+    if (state.role === "patient") {
+        const zoom = cameraZoom(camera);
+        if (zoom) card.append(zoom);
+    }
     if (camera.error) card.append(element("p", camera.error));
     if (camera.encoding_error)
         card.append(element("p", camera.encoding_error, "encoding-warning"));
@@ -889,6 +903,10 @@ function renderCurrent() {
                     `${codecName(camera.codec)} · Holoviz is open`,
                 );
                 tile.classList.add("native-tile");
+                tile.append(viewZoom(camera, {
+                    native: true,
+                    initial: state.view_zooms?.[camera.id],
+                }).element);
                 nativeDepthControls(
                     camera,
                     tile,
@@ -1110,6 +1128,7 @@ function selectedPopoutCameras() {
 }
 async function changeWorkspace(native) {
     if (changingWorkspace) return;
+    await Promise.all([...tiles.values()].map(item => item.zoom.flush()));
     const selectedCameras = native ? selectedPopoutCameras() : [];
     changingWorkspace = native ? "popout" : "dock";
     const control = $(native ? "#popout-all" : "#dock-all");

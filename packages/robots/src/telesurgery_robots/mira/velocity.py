@@ -98,7 +98,13 @@ class JointVelocity:
                 lower = max(actual - self.lead, min(actual, lo))
                 upper = min(actual + self.lead, max(actual, hi))
                 bounded = max(lower, min(upper, position[i]))
-                if bounded != position[i]:
+                # Feedback lag limits position lead, not the requested rate.
+                # Restarting the ramp at every lead clamp causes repeated tiny
+                # accelerations (notably with quantized tool-roll feedback).
+                # Reset only at a mechanical boundary in the outward direction.
+                if (position[i] <= min(actual, lo) and velocity[i] < 0) or (
+                    position[i] >= max(actual, hi) and velocity[i] > 0
+                ):
                     velocity[i] = acceleration[i] = 0.0
                 position[i] = target[arm][j] = bounded
         self.input.current_position = position

@@ -149,6 +149,8 @@ class NodeService:
             await self.local.stop_camera(params["id"])
         elif action == "camera.rename":
             await self.local.rename(params["id"], params["name"])
+        elif action == "camera.zoom":
+            await self.local.zoom_camera(params["id"], params["value"])
         elif action.startswith("robot."):
             if action == "robot.feedback":
                 return self.robots.report()

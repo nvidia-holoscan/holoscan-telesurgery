@@ -21,6 +21,8 @@ const paths = {
     chart: "M4 3v17h17M8 15v-3m5 3V6m5 9V9",
     logs: "M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8m-8 4h8",
     add: "M12 5v14M5 12h14",
+    minus: "M5 12h14",
+    "select-area": "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9h6v6H9V9Z",
     remove: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
     copy: "M8 8h13v13H8V8ZM16 8V3H3v13h5",
     reset: "M3 4v5h5M3.5 9a9 9 0 1 1 .5 7",

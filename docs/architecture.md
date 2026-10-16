@@ -69,6 +69,12 @@ Depth is optional for RealSense and simulation. Aligned float32 distances in met
 
 The patient selects capture format, resolution, FPS and codec; surgeon viewers follow those settings. Encoding can change through Stream settings while capture continues; a replacement encoder prepares in the background before taking over. Capture format, resolution and FPS changes require stopping the stream. Available modes come from the device. Simulation offers 640×480, 1280×720, 1920×1080, 2560×1440 and 3840×2160 with native render products. H.264 is the stream default. Surgical Neural Tokenizer also supports browser viewing; H.265, nvJPEG and raw BGR8 use Holoviz.
 
+Each view has independent **− / zoom level / +** controls. Open the zoom level for a 1–4× slider, Reset and **Select area**. Draw an area in the browser to zoom with preserved proportions; drag the enlarged image to pan. Opening Holoviz closes the browser video path and carries over the same zoom and crop. Its dashboard card adjusts zoom and pan using metadata only; switch back to the browser to draw another area. Settings survive viewer switches and page refreshes for the life of the local service. Streams that require Holoviz have slider/pan controls but no browser area selection.
+
+Browser zoom transforms the existing video layer without application frame readback or re-encoding; hardware acceleration depends on the browser. Native zoom slices a GPU tensor without allocating a crop image. SDK 4 passes its row stride to Holoviz; SDK 5 copies the selected rows in the existing provider-owned display handoff, without adding another GPU copy. Holoviz scales during rendering. Optional depth visualization retains its existing processing costs.
+
+On the patient dashboard, camera details show **Camera zoom** only for writable V4L2 absolute-zoom controls. Changes use the device's reported bounds and steps, are read back, and apply without restarting capture. They affect the outgoing image for all viewers. Values are device units, not a claim of optical zoom or focal length; support depends on the camera and its driver. Intel RealSense D405/D455 do not expose this control. The audited BRIO and Spark USB camera do.
+
 HSB discovery finds boards, not sensor models. It defaults to IMX274 sensor 0 and offers 1080p60 and 4K60. Configure another sensor in the node's `workspace/nodes/NAME/devices.yaml`:
 
 ```yaml
@@ -106,10 +112,13 @@ Timing starts when the application receives a frame buffer. Sensor acquisition a
 | Transport                 | Serialization, TLS/network, assembly and receiver dispatch                   |
 | Receive / WebRTC queues   | Surgeon dispatch and browser relay scheduling                                |
 | Decode                    | GPU or browser decode and output preparation                                 |
+| View processing           | Native depth composition and crop metadata selection after decode            |
 | Display handoff           | Native Holoviz handoff, or browser delivery and estimated display scheduling |
 | Pack / Upload             | Replaces Encode / Decode for uncompressed BGR8                               |
 
 P50/P95/P99/P99.9 bars use matched frames ranked by total latency, so their stage contributions add to that total. Independent stage percentiles need not add up. Top cards show P99; frame spacing describes cadence. Payload size includes the application transport frame, not Ethernet/TCP/TLS overhead.
+
+View processing excludes the renderer's zoom sampling. Browser compositor work is included in estimated WebRTC + display timing and cannot be isolated as GPU zoom time through the current browser APIs. Native render/scanout and camera-firmware zoom before buffer delivery remain outside the measured boundary. A near-zero crop-metadata time is not a claim of zero added display latency.
 
 Metrics retain 10,000 recent samples after warmup and up to one hour of 5-second history buckets. Browser timing records while its metrics panel is open; server/native timing records while frames flow. Reset clears the selected device. Collection is bounded and percentile aggregation runs outside frame callbacks.
 

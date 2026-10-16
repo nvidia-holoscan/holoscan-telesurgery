@@ -12,11 +12,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+from telesurgery_core.video.view import settings as zoom_settings
+
 
 class NativeViews:
     def __init__(self, directory):
         self.directory = Path(directory)
         self.windows = {}
+        self.zooms = {}
+        self.displays = {}
+        self.opening = set()
         self.lock = asyncio.Lock()
 
     def status(self):
@@ -33,6 +38,9 @@ class NativeViews:
                 window["finished"] = data
                 window["temporary"].cleanup()
             result[camera] = data
+        for camera in self.opening:
+            if camera not in self.windows:
+                result[camera] = {"status": "starting"}
         return result
 
     async def open(self, config):
@@ -47,7 +55,15 @@ class NativeViews:
                 raise RuntimeError("Too many native camera windows")
             temporary = tempfile.TemporaryDirectory(prefix="telesurgery-viewer-")
             path = Path(temporary.name) / "config.json"
-            path.write_text(json.dumps(config))
+            path.write_text(
+                json.dumps(
+                    {
+                        **config,
+                        "zoom": self.zooms.get(camera, zoom_settings()),
+                        "display": self.displays.get(camera, {}) if config.get("depth") else {},
+                    }
+                )
+            )
             path.chmod(0o600)
             self.directory.mkdir(parents=True, exist_ok=True)
             name = hashlib.sha256(camera.encode()).hexdigest()[:12]
@@ -127,19 +143,31 @@ class NativeViews:
         ):
             raise ValueError("Invalid depth display settings")
         async with self.lock:
-            if self.status().get(camera, {}).get("status") != "running":
-                raise ValueError("Open Holoviz first")
-            window = self.windows[camera]
-            config = json.loads(window["config"].read_text())
-            if not config.get("depth"):
-                raise ValueError("This stream does not include depth")
-            path = window["config"].with_name("display.json")
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(
-                json.dumps({"mode": mode, "distance": distance, "opacity": opacity})
-            )
-            temporary.replace(path)
+            values = {"mode": mode, "distance": distance, "opacity": opacity}
+            self.displays[camera] = values
+            if camera in self.windows and self.status().get(camera, {}).get("status") in {
+                "starting",
+                "running",
+            }:
+                path = self.windows[camera]["config"].with_name("display.json")
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(values))
+                temporary.replace(path)
         return True
+
+    async def zoom(self, camera, scale=1.0, x=0.5, y=0.5):
+        values = zoom_settings(scale, x, y)
+        async with self.lock:
+            self.zooms[camera] = values
+            if camera in self.windows and self.status().get(camera, {}).get("status") in {
+                "starting",
+                "running",
+            }:
+                path = self.windows[camera]["config"].with_name("zoom.json")
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(values))
+                temporary.replace(path)
+        return values
 
     async def close(self, camera=None):
         async with self.lock:

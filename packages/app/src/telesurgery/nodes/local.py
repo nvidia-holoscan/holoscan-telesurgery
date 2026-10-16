@@ -20,6 +20,7 @@ import zmq.asyncio
 from telesurgery.nodes.camera_settings import modes, select
 from telesurgery.nodes.profiles import devices as profile_devices
 from telesurgery.nodes.profiles import manual_devices
+from telesurgery_core.adapters import camera_zoom
 from telesurgery_core.adapters.realsense import enrich
 from telesurgery_core.adapters.v4l2 import camera_devices
 from telesurgery_core.configuration import load, save
@@ -204,6 +205,15 @@ class LocalNode:
             raise ValueError("Camera is unavailable")
         slug = hashlib.sha256(key.encode()).hexdigest()[:12]
         return await asyncio.to_thread(read_log, self.directory / f"camera-{slug}.log")
+
+    async def zoom_camera(self, key, value):
+        async with self.mutation:
+            if key not in self.cameras:
+                raise ValueError("Camera is unavailable")
+            camera = self.cameras[key]
+            camera["camera_zoom"] = await asyncio.to_thread(
+                camera_zoom.set_value, camera["source"], value
+            )
 
     async def start_camera(self, key, settings=None):
         async with self.mutation:

@@ -101,7 +101,9 @@ def create_app(service, host="127.0.0.1"):
             not isinstance(body.get(key), str) for key in ("camera", "sdp", "type")
         ):
             raise ValueError("Expected a camera and WebRTC offer")
-        if service.native.status().get(body["camera"], {}).get("status") in {"starting", "running"}:
+        if body["camera"] in service.native.opening or service.native.status().get(
+            body["camera"], {}
+        ).get("status") in {"starting", "running"}:
             raise ValueError("Choose Show in browser to switch back from Holoviz")
         if service.role == "surgeon":
             if service.remote_status.get("status") != "approved":

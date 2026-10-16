@@ -20,6 +20,8 @@ from telesurgery_core.transport.tls import client_context, pin_peer
 from telesurgery_core.video.codecs import CodecWorker
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.depth import render
+from telesurgery_core.video.view import crop
+from telesurgery_core.video.view import settings as zoom_settings
 from telesurgery_runtime.application.pipeline import Frames
 from telesurgery_runtime.backends.sdk import backend
 
@@ -32,6 +34,7 @@ class ReceiveDecode:
         self.trace = None
         self.depth_enabled = depth_enabled
         self.display = {"mode": "color", "distance": 2.0, "opacity": 0.4}
+        self.zoom = zoom_settings()
 
     def put(self, header, data, timing=None):
         header, data = decode_video([json.dumps(header).encode(), data])
@@ -71,11 +74,17 @@ class ReceiveDecode:
         self.decoded_ns = time.monotonic_ns()
         self.benchmark.add(stage, (time.perf_counter() - stamp) * 1000)
         self.frames += 1
-        return render(frame.image, frame.depth, **self.display)
+        image = crop(render(frame.image, frame.depth, **self.display), **self.zoom)
+        # Depth composition already waits for its GPU work. Zoom itself only
+        # changes tensor metadata; sampling/scaling is part of Holoviz rendering.
+        self.prepared_ns = time.monotonic_ns()
+        self.trace = mark(self.trace, "view_processing_ms", self.prepared_ns)
+        self.benchmark.add("view_processing_ms", (self.prepared_ns - self.decoded_ns) / 1e6)
+        return image
 
     def submitted(self):
         trace = mark(self.trace, "render_submit_ms")
-        self.benchmark.add("render_submit_ms", (time.monotonic_ns() - self.decoded_ns) / 1e6)
+        self.benchmark.add("render_submit_ms", (time.monotonic_ns() - self.prepared_ns) / 1e6)
         if trace:
             self.benchmark.finish(trace, "holoviz")
 
@@ -87,6 +96,8 @@ class ReceiveDecode:
 async def run(config, report):
     stopped = asyncio.Event()
     source = ReceiveDecode(config.get("depth", False))
+    source.zoom = zoom_settings(**config.get("zoom", {}))
+    source.display.update(config.get("display", {}))
     clock = Clock()
     clock_task = asyncio.create_task(clock.watch())
     session = None
@@ -117,17 +128,26 @@ async def run(config, report):
             loop = asyncio.get_running_loop()
             for number in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(number, stopped.set)
-            metrics, next_metrics = {}, 0
+            metrics, next_metrics, next_report = {}, 0, 0
             reset_request = report.with_name("reset-metrics")
             display_request = report.with_name("display.json")
+            zoom_request = report.with_name("zoom.json")
+            request_versions = {}
             while not stopped.is_set() and not peer.closed.is_set() and os.getppid() == parent:
                 if not session.is_running():
                     break
                 if time.monotonic() - source.received_at > 5:
                     raise RuntimeError("Camera stopped delivering frames")
                 if source.frames:
-                    if display_request.exists():
-                        source.display = json.loads(display_request.read_text())
+                    for path, attribute in ((display_request, "display"), (zoom_request, "zoom")):
+                        if path.exists() and path.stat().st_mtime_ns != request_versions.get(path):
+                            request_versions[path] = path.stat().st_mtime_ns
+                            values = json.loads(path.read_text())
+                            setattr(
+                                source,
+                                attribute,
+                                zoom_settings(**values) if attribute == "zoom" else values,
+                            )
                     resetting = reset_request.exists()
                     if resetting:
                         source.benchmark.reset()
@@ -135,20 +155,23 @@ async def run(config, report):
                     if time.monotonic() >= next_metrics:
                         metrics = await asyncio.to_thread(source.benchmark.report)
                         next_metrics = time.monotonic() + 5
-                    write_status(
-                        report,
-                        {
-                            "status": "running",
-                            "frames": source.frames,
-                            "codec": source.codec,
-                            "display": source.display,
-                            "metrics": metrics,
-                        },
-                    )
+                    if resetting or time.monotonic() >= next_report:
+                        write_status(
+                            report,
+                            {
+                                "status": "running",
+                                "frames": source.frames,
+                                "codec": source.codec,
+                                "display": source.display,
+                                "zoom": source.zoom,
+                                "metrics": metrics,
+                            },
+                        )
+                        next_report = time.monotonic() + 0.5
                     if resetting:
                         reset_request.unlink(missing_ok=True)
                 try:
-                    await asyncio.wait_for(stopped.wait(), 0.5)
+                    await asyncio.wait_for(stopped.wait(), 0.05)
                 except TimeoutError:
                     pass
         finally:
