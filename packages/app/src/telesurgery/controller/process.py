@@ -149,7 +149,11 @@ class NativeController:
             self.temporary.cleanup()
         self.temporary = self.path = None
 
-    async def close(self, *, retain_control=False):
+    async def close(self, *, retain_control=False, generation=None):
         async with self.lock:
+            if generation is not None:
+                state = self.status()
+                if state.get("generation") != generation or state["status"] != "closed":
+                    return None
             await self._close(retain_control)
             return self.finished

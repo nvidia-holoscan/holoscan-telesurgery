@@ -61,6 +61,7 @@ class Window:
         changed=None,
         input_device=None,
         retain_control=False,
+        dock_on_close=False,
     ):
         self.root, self.client = root, client
         self.px = Scale(root)
@@ -192,7 +193,7 @@ class Window:
         root.bind("<KeyRelease>", self.key_up)
         root.bind("<FocusOut>", lambda _: root.after_idle(self.check_focus))
         root.bind("<Unmap>", lambda event: self.stop() if event.widget == root else None)
-        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.protocol("WM_DELETE_WINDOW", lambda: self.close(retain_control=dock_on_close))
         root.after(10, self.tick)
 
     @staticmethod
@@ -1567,6 +1568,7 @@ def run(config):
             report,
             config.get("input"),
             retain_control=config.get("retain_control") is True,
+            dock_on_close=status_path is not None,
         )
         for number in (signal.SIGTERM, signal.SIGINT):
             signal.signal(number, lambda *_: window.close())

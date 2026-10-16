@@ -605,7 +605,11 @@ async def test_controller_handoff_requires_confirmed_hold_and_existing_lease(sto
         "http://localhost:8002", "robot", None, None, None, retain_control=True
     )
     returned = await Application.action(service, "controller.close", {"retain_control": True})
-    assert returned == {"robot": "robot", "state": {"sequence": 3}}
+    assert returned == {
+        "robot": "robot",
+        "state": {"sequence": 3},
+        "controller": {"handoff": None},
+    }
     assert calls == ["replay.cancel", "robot.hold", "robot.renew"]
     service.tokens.clear()
     with pytest.raises(RuntimeError, match="no longer acquired"):

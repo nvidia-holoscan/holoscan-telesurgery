@@ -17,8 +17,6 @@ PRESETS = {
             ("room", "Versius room camera"),
             ("left", "Versius left arm view"),
             ("right", "Versius right arm view"),
-            ("assistant", "Versius assistant arm view"),
-            ("endoscope", "Versius endoscope arm view"),
         ],
         # Eye, target (metres, Z up), and focal length (mm). Arm views frame
         # the jaws and shared work area from beside each instrument shaft.
@@ -29,8 +27,6 @@ PRESETS = {
             "room": ((2.25, -2.65, 2.3), (0, 0, 0.28), 31),
             "left": ((-0.48, -0.30, 0.88), (0, -0.025, 0.525), 38),
             "right": ((0.48, 0.30, 0.88), (0, -0.025, 0.525), 38),
-            "assistant": ((0.30, 0.48, 0.88), (0, 0.015, 0.52), 34),
-            "endoscope": ((-0.40, -0.68, 1.02), (0, -0.10, 0.57), 32),
         },
         "robot": "CMR Versius",
     },

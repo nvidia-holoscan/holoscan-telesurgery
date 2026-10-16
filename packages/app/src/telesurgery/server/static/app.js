@@ -100,9 +100,11 @@ const nativeControllerOpen = () => ["starting", "running"].includes(state?.nativ
 const controllerPreferences = () => Object.fromEntries([...motionValues].filter(([key]) =>
     [":arm-speed", ":roll-speed", ":grip-speed"].some(suffix => key.endsWith(suffix))));
 let restoredController;
+let controllerGeneration = 0;
 async function transferController(native) {
     if (changingController) return;
     changingController = true;
+    controllerGeneration++;
     const id = robotId;
     let transferred = false;
     try {
@@ -115,6 +117,7 @@ async function transferController(native) {
             transferred = true;
         } else {
             const result = await action("controller.close", {retain_control: true});
+            state.native_controller = result?.controller || {...state.native_controller, status: "closed"};
             if (result?.robot) {
                 robotId = preferredRobot = result.robot;
                 robots.acceptHandoff(result.robot, result.state);
@@ -125,7 +128,28 @@ async function transferController(native) {
         throw error;
     } finally {
         if (native) robots.finishHandoff(id, transferred);
+        controllerGeneration++;
         changingController = false;
+    }
+}
+async function acceptReturnedControl(native) {
+    changingController = true;
+    controllerGeneration++;
+    try {
+        // A window-manager close returns an existing lease. Never acquire a
+        // different robot or resurrect a lease that expired while the web was away.
+        const result = await action("controller.close", {retain_control: true, generation: native.generation});
+        if (result?.controller) state.native_controller = result.controller;
+        if (result?.robot) {
+            robotId = preferredRobot = result.robot;
+            robots.acceptHandoff(result.robot, result.state);
+        }
+    } catch (error) {
+        notice(error);
+    } finally {
+        controllerGeneration++;
+        changingController = false;
+        renderCurrent();
     }
 }
 $("#native-controller").onclick = async () => {
@@ -774,6 +798,7 @@ function renderCurrent() {
             robotId = preferredRobot = native.robot;
         if ("input" in native) robots.restoreInput(native.robot, native.input);
         robots.rebuild();
+        if (native.handoff && !changingController) acceptReturnedControl(native);
     }
     const isPatient = state.role === "patient",
         approved = state.session?.status === "approved";
@@ -996,7 +1021,14 @@ async function refresh() {
     if (refreshing) return;
     refreshing = true;
     try {
-        state = await api("/api/status");
+        let requestedGeneration, next;
+        do {
+            requestedGeneration = controllerGeneration;
+            next = await api("/api/status");
+        } while (requestedGeneration !== controllerGeneration);
+        // A pre-dock response must not mark the browser's returned lease as
+        // ineligible merely because it still describes the native window as open.
+        state = next;
         renderCurrent();
     } catch (error) {
         notice(error);

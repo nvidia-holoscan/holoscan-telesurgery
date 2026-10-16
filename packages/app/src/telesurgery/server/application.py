@@ -864,13 +864,22 @@ class Application:
             )
         if method == "controller.close":
             if params.get("retain_control") is True:
-                closed = await self.controller.close(retain_control=True)
+                closed = await self.controller.close(
+                    retain_control=True,
+                    **({"generation": params["generation"]} if "generation" in params else {}),
+                )
+                if closed is None:
+                    return {"robot": None}
+                # Consume the handoff before renewing, including failed renewals.
+                # A refresh must not adopt an old window's lease a second time.
+                key = closed.get("handoff")
+                closed["handoff"] = None
                 if closed.get("handoff_error"):
                     raise RuntimeError(closed["handoff_error"])
-                if key := closed.get("handoff"):
+                if key:
                     state = await self.action("robot.renew", {"id": key})
-                    return {"robot": key, "state": state}
-                return {"robot": None}
+                    return {"robot": key, "state": state, "controller": closed}
+                return {"robot": None, "controller": closed}
             await self.controller.close()
             return True
         if method == "controller.open":
