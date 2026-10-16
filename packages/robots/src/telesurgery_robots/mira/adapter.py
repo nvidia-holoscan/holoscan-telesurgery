@@ -15,7 +15,7 @@ from telesurgery_robots.mira.cartesian import CARTESIAN, bounded_solution, comma
 from telesurgery_robots.mira.controller import MiraController
 from telesurgery_robots.mira.gripper import (
     GRIP_COUNTS,
-    GRIP_SPEED,
+    PHYSICAL_GRIP_SPEED,
     GripperJog,
     clamp,
     gripper_rates,
@@ -53,7 +53,8 @@ class Mira:
         self.tool_mode = False
         self.arm_holding = False
         self.jog_deadline = 0.0
-        self.velocity = JointVelocity(PHYSICAL)
+        # Keep 50 ms of maximum-rate lead for both arm and roll axes.
+        self.velocity = JointVelocity(PHYSICAL, roll_lead=CARTESIAN["roll_step_deg"])
 
     def state(self):
         if self.client is None:
@@ -204,7 +205,7 @@ class Mira:
             raise ValueError("MIRA is moving home; use Stop before manual control")
         movement = None
         if method == "jog_gripper":
-            rates = gripper_rates(request.get("params"), GRIP_COUNTS)
+            rates = gripper_rates(request.get("params"), GRIP_COUNTS, PHYSICAL_GRIP_SPEED)
         if method == "set_mira_joint_delta":
             movement = {
                 arm: values(request["params"][arm], 5, MIRA_STEP_LIMIT) for arm in ("left", "right")
@@ -323,10 +324,10 @@ class MiraAdapter:
     max_step_deg = MIRA_STEP_LIMIT
     home_deg = {"left": MIRA_HOME, "right": MIRA_HOME}
     grippers = ("left", "right")
-    grip_speed = GRIP_SPEED
-    default_arm_speed_percent = 75
-    default_roll_speed_percent = 100
-    default_grip_speed_percent = 100
+    grip_speed = PHYSICAL_GRIP_SPEED
+    default_arm_speed_percent = 70
+    default_roll_speed_percent = 90
+    default_grip_speed_percent = 90
     joint_velocity = PHYSICAL
     control_period = 0.01
 

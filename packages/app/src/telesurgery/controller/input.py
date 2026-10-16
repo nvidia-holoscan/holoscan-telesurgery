@@ -101,6 +101,8 @@ class Inputs:
 
     def increment(self, index, seconds):
         maximum = self.controls.get("max_step_deg", self.controls.get("step_deg", 0.2))
+        if self.dual and index == 4:
+            maximum = self.controls.get("mira_cartesian", {}).get("roll_step_deg", maximum)
         roll = self.controls.get("joint_velocity", {}).get("roll_deg_s", maximum * 20)
         speed = roll * self.roll_percent / 100 if self.dual and index == 4 else self.speed
         if self.mode == "joints" and self.controls.get("joint_velocity"):

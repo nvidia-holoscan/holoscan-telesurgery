@@ -17,7 +17,7 @@ from telesurgery_robots.adapters.base import values
 from telesurgery_robots.mira.cartesian import JOINT_LIMITS
 
 # Operating envelopes, not a claim about the motors' rated maximum velocity.
-PHYSICAL = {"arm_deg_s": 20.0, "roll_deg_s": 20.0}
+PHYSICAL = {"arm_deg_s": 20.0, "roll_deg_s": 40.0}
 SIMULATION = {"arm_deg_s": 30.0, "roll_deg_s": 100.0}
 
 
@@ -36,8 +36,9 @@ def command(data, rates):
 class JointVelocity:
     """Integrate only the newest rate; an obstruction cannot accumulate travel."""
 
-    def __init__(self, rates, *, lead=1.0):
+    def __init__(self, rates, *, lead=1.0, roll_lead=None):
         self.rates, self.lead = rates, lead
+        self.roll_lead = lead if roll_lead is None else roll_lead
         self.clear()
 
     def clear(self):
@@ -95,8 +96,9 @@ class JointVelocity:
                 lo, hi = bounds[j]
                 # Permit retreat if external control left a joint outside its
                 # nominal range, without snapping it back to the boundary.
-                lower = max(actual - self.lead, min(actual, lo))
-                upper = min(actual + self.lead, max(actual, hi))
+                lead = self.roll_lead if j == 4 else self.lead
+                lower = max(actual - lead, min(actual, lo))
+                upper = min(actual + lead, max(actual, hi))
                 bounded = max(lower, min(upper, position[i]))
                 # Feedback lag limits position lead, not the requested rate.
                 # Restarting the ramp at every lead clamp causes repeated tiny

@@ -13,6 +13,7 @@ CARTESIAN = {
     "axes": ["X", "Y", "Z", "Elbow", "Roll"],
     "linear_step_mm": 0.5,
     "angular_step_deg": 1.0,
+    "roll_step_deg": 2.0,
 }
 SIM_CARTESIAN = {
     **CARTESIAN,

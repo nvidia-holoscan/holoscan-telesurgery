@@ -7,6 +7,8 @@ import math
 import time
 
 GRIP_SPEED = {"min": 1, "max": 50, "default": 20}  # percent of travel per second
+# Physical operating rate; simulation retains its configured jaw-drive limit.
+PHYSICAL_GRIP_SPEED = {"min": 1, "max": 100, "default": 90}
 GRIP_COUNTS = {"left": 1150.0, "right": 1350.0}  # supplied vendor API tool-drive ranges
 
 
@@ -14,7 +16,7 @@ def clamp(position):
     return max(0.0, min(1.0, position))
 
 
-def gripper_rates(command, grippers):
+def gripper_rates(command, grippers, limits=GRIP_SPEED):
     if not isinstance(command, dict) or set(command) != {"velocity"}:
         raise ValueError("Gripper control requires held input; refresh the dashboard")
     rates = command["velocity"]
@@ -24,7 +26,7 @@ def gripper_rates(command, grippers):
         if (
             type(rate) not in (int, float)
             or not math.isfinite(rate)
-            or abs(rate) > GRIP_SPEED["max"] / 100
+            or abs(rate) > limits["max"] / 100
         ):
             raise ValueError("Invalid gripper speed")
     return rates

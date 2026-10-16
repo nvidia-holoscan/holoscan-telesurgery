@@ -32,7 +32,7 @@ body[data-role] .view-viewport video { max-height: none; height: 100%; }
     right: 12px;
     display: flex;
     align-items: center;
-    padding: 3px;
+    padding: 2px;
     border: 1px solid #ffffff35;
     border-radius: 9px;
     background: #15201deb;
@@ -53,9 +53,16 @@ body[data-role] .view-viewport video { max-height: none; height: 100%; }
     cursor: pointer;
 }
 .view-zoom .zoom-step .icon { width: 16px; height: 16px; }
+.view-zoom > .zoom-step, .view-zoom .zoom-level {
+    height: 26px;
+    min-height: 26px;
+    padding: 0 5px;
+    line-height: 1;
+}
+.view-zoom > .zoom-step { width: 28px; min-width: 28px; }
 .view-zoom button:hover, .view-zoom summary:hover { background: #ffffff18; }
 .view-zoom button:focus-visible, .view-zoom summary:focus-visible { outline: 2px solid #a5db60; outline-offset: -2px; }
-.view-zoom .zoom-level { display: grid; place-items: center; min-width: 49px; font-variant-numeric: tabular-nums; font-weight: 600; list-style: none; }
+.view-zoom .zoom-level { display: grid; place-items: center; min-width: 44px; font-variant-numeric: tabular-nums; font-weight: 600; list-style: none; }
 .zoom-level::-webkit-details-marker { display: none; }
 .view-zoom button:disabled { opacity: .35; cursor: default; }
 .zoom-panel {

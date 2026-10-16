@@ -155,7 +155,7 @@ class Controller:
         if mode == "grip":
             if not hasattr(self.adapter, "grip"):
                 raise ValueError("Gripper control is not supported by this robot")
-            gripper_rates(command, self.adapter.grippers)
+            gripper_rates(command, self.adapter.grippers, self.adapter.grip_speed)
             self.sequence = sequence
             return self.record(lambda: self.adapter.grip(command), motion=True)
         if mode == "follow":

@@ -140,7 +140,8 @@ export function rollSpeed(robot, stop) {
         min: 0,
         max: robot.controls.joint_velocity?.roll_deg_s ?? robot.controls.cartesian?.angular_speed_deg_s ?? maximum * 20,
         default: (robot.controls.default_step_deg || 0.2) * 20,
-    }, robot.controls.default_roll_speed_percent ?? 50, maximum);
+    }, robot.controls.default_roll_speed_percent ?? 50,
+        robot.controls.mira_cartesian?.roll_step_deg ?? maximum);
 }
 
 export function gripSpeed(robot, stop) {
