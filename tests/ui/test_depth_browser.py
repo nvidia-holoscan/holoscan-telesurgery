@@ -51,6 +51,16 @@ async def test_matched_depth_inspection_and_layout(tmp_path, codec):
         return web.json_response(await media.offer("camera", value["sdp"], value["type"]))
 
     app.router.add_post("/offer", offer)
+    saved_displays = []
+
+    async def action(request):
+        value = await request.json()
+        assert value["action"] == "view.depth"
+        assert value["params"]["camera"] == "camera"
+        saved_displays.append(value["params"])
+        return web.json_response({"result": True})
+
+    app.router.add_post("/api/action", action)
 
     async def index(request):
         return web.Response(
@@ -66,7 +76,7 @@ async def test_matched_depth_inspection_and_layout(tmp_path, codec):
         const video = document.querySelector('video');
         window.depth = depthView(peer, video, document.querySelector('.depth-stage'),
           document.querySelector('.video-caption'),
-          {name:'Camera',depth:true,depth_source:'measured'});
+          {id:'camera',name:'Camera',depth:true,depth_source:'measured'});
         peer.ontrack = ({track}) => video.srcObject = new MediaStream([track]);
         const receiver=peer.addTransceiver('video',{direction:'recvonly'});
         receiver.setCodecPreferences(RTCRtpReceiver.getCapabilities('video').codecs.filter(c=>c.mimeType==='video/H264'));
@@ -112,8 +122,14 @@ async def test_matched_depth_inspection_and_layout(tmp_path, codec):
                 await page.screenshot(path=str(tmp_path / "depth-side.png"))
                 await page.set_viewport_size({"width": 390, "height": 844})
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                await page.get_by_label("Depth display", exact=True).select_option("color")
+                async with page.expect_response("**/api/action"):
+                    await page.get_by_label("Depth display", exact=True).select_option("color")
                 await expect(canvas).to_be_hidden()
+                assert [display["mode"] for display in saved_displays] == [
+                    "overlay",
+                    "side",
+                    "color",
+                ]
                 assert not errors
             finally:
                 await browser.close()
