@@ -19,6 +19,9 @@ from telesurgery_robots.mira.gripper import (
     GripperJog,
     clamp,
     gripper_rates,
+    opening_calibration,
+    opening_position,
+    vendor_positions,
 )
 from telesurgery_robots.mira.poses import (
     MIRA_HOME,
@@ -40,8 +43,9 @@ class Mira:
     the robot's physical emergency stop remains independent of this connection.
     """
 
-    def __init__(self, uri):
+    def __init__(self, uri, *, gripper_calibration=None):
         self.uri, self.client = uri, None
+        self.gripper_calibration = opening_calibration(gripper_calibration)
         self.home_target = None
         self.home_holding = False
         self.home_deadline = 0.0
@@ -82,7 +86,7 @@ class Mira:
             if self.roll_holding:
                 state = self._write_roll(state["joints_deg"])
                 self.roll_active = self.roll_holding = False
-            measured = state["grippers"]
+            measured = vendor_positions(state["joints_deg"])
             targets = {arm: measured[arm] for arm in self.grip_stopping}
             targets.update(self.grip.advance(measured))
             if targets:
@@ -173,7 +177,8 @@ class Mira:
         return {
             "joints_deg": joints,
             "grippers": {
-                arm: clamp(joints[arm][5] / maximum) for arm, maximum in GRIP_COUNTS.items()
+                arm: opening_position(joints[arm][5], calibration)
+                for arm, calibration in self.gripper_calibration.items()
             },
             "acknowledgement": "vendor cached position received",
             "hardware_timestamp_available": False,
@@ -237,7 +242,7 @@ class Mira:
             state["acknowledgement"] = "joint velocity accepted"
             return state
         if method == "jog_gripper":
-            self.grip.command(rates, state["grippers"])
+            self.grip.command(rates, vendor_positions(pose))
             state["control_active"] = True
             state["acknowledgement"] = "gripper input accepted"
             return state
@@ -336,7 +341,7 @@ class MiraAdapter:
         return self.control_period if self.client.velocity.active or self.client.grip.rates else 0.1
 
     def __init__(self, spec):
-        self.client = Mira(spec["uri"])
+        self.client = Mira(spec["uri"], gripper_calibration=spec.get("gripper_calibration"))
         self.workspaces = {arm: Workspace(CARTESIAN["frame"]) for arm in self.groups}
         # A pose input device captures the measured tool pose before its first
         # move. Waiting for a Cartesian command would leave Start unable to arm.

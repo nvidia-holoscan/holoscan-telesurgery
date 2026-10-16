@@ -24,11 +24,11 @@ Physical MIRA defaults to **70% arm, 90% rotation, 90% grip**. MIRA simulation d
 
 | Robot | Joint rate at 100% | Rotation rate at 100% | Grip rate at 100% |
 | --- | --- | --- | --- |
-| Physical MIRA | 20°/s | 40°/s tool roll | 100% of full travel/s |
+| Physical MIRA | 20°/s | 40°/s tool roll | 100% of vendor command range/s |
 | MIRA simulation | 30°/s | 100°/s tool roll | 50% of full travel/s |
 | Franka physical / simulation; CMR simulation | 20°/s joint envelope | 30°/s tool orientation, subject to joint envelope | 50% of full travel/s, where supported |
 
-These are application operating limits, not certified hardware maximum ratings. MIRA simulation's 30°/s arm and 100°/s roll limits are shared with its PhysX drives; the 40° jaw range and 20°/s jaw cap correspond to 50% travel/s. Physical MIRA's roll and grip operating rates are twice their previous 20°/s and 50% travel/s settings. At the 90% defaults they request 36°/s roll and 90% travel/s grip. The supplied vendor source (`~/mira/api_backend_src/crates/api/src/main.rs`) has a 150°/s software limiter for the first four joints during target approach, and tool-drive ranges of 1150/1350 counts. That limiter is not a documented roll/gripper rating, and those counts are travel, not speed. The public [MIRA product information](https://virtualincision.com/mira/) does not specify numerical joint/roll/gripper speed ratings; vendor-confirmed limits should replace the operating caps only after review.
+These are application operating limits, not certified hardware maximum ratings. MIRA simulation's 30°/s arm and 100°/s roll limits are shared with its PhysX drives; the 40° jaw range and 20°/s jaw cap correspond to 50% travel/s. Physical MIRA's roll and grip operating rates are twice their previous 20°/s and 50% travel/s settings. At the 90% defaults they request 36°/s roll and 90% of the vendor command range per second for grip. The supplied vendor source (`~/mira/api_backend_src/crates/api/src/main.rs`) has a 150°/s software limiter for the first four joints during target approach, and tool-drive ranges of 1150/1350 counts. That limiter is not a documented roll/gripper rating, and those counts are travel, not speed. The public [MIRA product information](https://virtualincision.com/mira/) does not specify numerical joint/roll/gripper speed ratings; vendor-confirmed limits should replace the operating caps only after review.
 
 MIRA joint input sends requested rates to a local acceleration/jerk-limited planner. Physical MIRA polls that planner on a 10 ms schedule rather than stepping once per network reply. Physical targets stay within 1° of measured arm joints and 2° of measured tool roll, equivalent to 50 ms at their maximum rates. Simulation keeps a 1° lead for every joint. Feedback lead clamps preserve the velocity ramp; only an outward request at a mechanical boundary resets it. Input expires after 200 ms without refresh; delayed input cannot accumulate deferred travel. Gripper lead is limited to 100 ms of the requested rate. Legacy delta commands remain supported. MIRA Home completes once all arm/roll joints are within 1° and jaws within 1% of travel, with a stable pose for 250 ms. A 30-second timeout still requests a hold.
 
@@ -146,9 +146,21 @@ Use **Reset scene** when the needle falls off the pad. The square **Stop** icon 
 
 With Keyboard selected, hold **Z / X** to close/open the left gripper, or **N / M** for the right. With a gamepad selected, the panel shows that controller's gripper bindings instead. The on-screen buttons work in either mode. Release to stop; **Grip speed** is independent of arm and roll speed. Both simulation and physical MIRA use these controls. Physical grippers require successful tool homing through the vendor controller; arm **Home** does not calibrate tools or bypass this requirement.
 
+The opening meter uses the installed tool's confirmed closed/open endpoints. The vendor API scales gripper commands to 1150 left and 1350 right drive counts; those values need not match an installed jaw's full opening. Set `robot.gripper_calibration` in `workspace/profiles/mira.yaml` (or the manual robot specification) for each tool needing a different feedback range, then restart its node. For example, a left tool confirmed fully open around 650 counts, with 15 counts of endpoint variation, uses:
+
+```yaml
+gripper_calibration:
+  left:
+    closed: 0
+    open: 650
+    tolerance: 15
+```
+
+All values are drive counts. Endpoint tolerance snaps nearby feedback to 0% or 100% and is limited to 5% of the calibrated span. Omitted arms retain the vendor range. This is an opening measurement calibration: jog rates, vendor command scaling, Home and measured-position holds continue using the vendor units. A full-scale physical grip request remains 1150 left / 1350 right counts per second; 50% requests half those rates. Calibration is saved per installation and must be reviewed when its tool changes; it is never inferred automatically from a stalled jaw.
+
 Use the **Virtual Incision MIRA API** supplied by the vendor. Request the current Linux API and POD firmware documentation from [Virtual Incision](https://virtualincision.com/customer-support/); `mira-project.org` is unrelated middleware.
 
-Tool mode uses the vendor forward-kinematics and inverse-kinematics queries, followed by a bounded absolute joint target. It does not accumulate the vendor's persistent Cartesian delta target. Coordinates use the MIRA base frame: XYZ in millimeters, elbow and roll in degrees. Each command is limited to 0.5 mm translation and 1° elbow/roll, with at most 1° change per arm joint. Invalid, unreachable or discontinuous IK results are rejected. Release/Stop requests a measured-position hold; missing tool input expires after 200 ms. Isaac Sim derives its own Jacobian from the loaded asset and measured joints, using the asset's base frame and the same input units. Simulation allows up to 5 mm per command and bounds unfinished target travel to 10 mm and joint lead to 1°; physical MIRA retains its smaller command bounds.
+Tool mode uses the vendor forward-kinematics and inverse-kinematics queries, followed by a bounded absolute joint target. It does not accumulate the vendor's persistent Cartesian delta target. Coordinates use the MIRA base frame: XYZ in millimeters, elbow and roll in degrees. Each command is limited to 0.5 mm translation, 1° elbow and 2° roll, with at most 1° change per arm joint. Invalid, unreachable or discontinuous IK results are rejected. Release/Stop requests a measured-position hold; missing tool input expires after 200 ms. Isaac Sim derives its own Jacobian from the loaded asset and measured joints, using the asset's base frame and the same input units. Simulation allows up to 5 mm per command and bounds unfinished target travel to 10 mm and joint lead to 1°; physical MIRA retains its smaller command bounds.
 
 Start with the MIRA profile:
 
