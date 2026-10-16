@@ -168,7 +168,7 @@ export function gamepadInput(
             const frame = element("span", "Arm-base directions", "cartesian-frame");
             frame.title = "Relative to this arm’s fixed base: forward +X, left +Y, up +Z. Camera and tool rotation do not change these directions.";
             instructions.append(frame);
-        } else if (bankedJoints) {
+        } else if (bankedJoints || dual) {
             instructions.className = "franka-gamepad";
             instructions.replaceChildren();
             for (const [bank, key, hint] of [[0, enableKey, enableHint], [1, alternateKey, alternateHint]]) {
@@ -186,17 +186,19 @@ export function gamepadInput(
                         column.append(label);
                     }
                     for (let direction = 0; direction < 2; direction++) {
-                        const axis = stick * 2 + direction, index = bank * 4 + axis;
-                        if (index >= jointCount) continue;
+                        const axis = stick * 2 + direction, index = dual ? bank * 2 + direction : bank * 4 + axis;
+                        const arm = dual ? (stick ? "right" : "left") : "joints";
+                        if (index >= robot.controls.groups[arm]) continue;
                         const row = element("div", undefined, "franka-stick-joint");
                         row.dataset.joint = String(index);
                         const value = element("output", "—", "gamepad-joint-position");
                         const cap = element("kbd", direction ? "↕" : "↔");
-                        cap.title = `${stick === 0 ? "Left" : "Right"} stick · ${direction ? "up increases, down decreases" : "right increases, left decreases"} J${index + 1}`;
+                        const label = miraCartesian() ? robot.controls.mira_cartesian.axes[index] : `J${index + 1}`;
+                        cap.title = `${stick === 0 ? "Left" : "Right"} stick · ${direction ? "up increases, down decreases" : "right increases, left decreases"} ${dual ? arm + " " : ""}${label}`;
                         cap.setAttribute("aria-label", cap.title);
-                        row.append(element("span", `J${index + 1}`), value, cap);
+                        row.append(element("span", label), value, cap);
                         column.append(row);
-                        stickJoints.push({index, bank, axis, value, cap});
+                        stickJoints.push({arm, index, bank, axis, value, cap});
                     }
                     sticks.append(column);
                 }
@@ -210,13 +212,14 @@ export function gamepadInput(
         feedback = state;
         handPosition = Number.isFinite(state?.grippers?.hand) ? state.grippers.hand : null;
         const measured = Boolean(state?.joints_deg);
-        const values = (state?.joints_deg || state?.targets_deg)?.joints;
         const label = measured ? "Measured position" : "Target position";
         for (const unit of positionHeadings) {
-            unit.textContent = measured ? "°" : "Target °";
+            unit.textContent = miraCartesian() ? "mm / °" : measured ? "°" : "Target °";
             unit.title = `${label} in degrees`;
         }
         for (const joint of stickJoints) {
+            const values = miraCartesian() ? state?.cartesian_mm_deg?.[joint.arm]
+                : (state?.joints_deg || state?.targets_deg)?.[joint.arm];
             const value = values?.[joint.index];
             joint.value.textContent = Number.isFinite(value) ? value.toFixed(robot.simulation ? 1 : 2) : "—";
             joint.value.setAttribute("aria-label", `J${joint.index + 1} ${label.toLowerCase()} in degrees`);
@@ -241,14 +244,16 @@ export function gamepadInput(
     }
     const badges = () => [enableKey, alternateKey, ...leftRollKeys, ...rightRollKeys, ...stickJoints.map(j => j.cap), ...cartesianKeys.map(b => b.key)];
     let replayInput = null;
+    let manualMode = null;
 
     function showReplayInput(input) {
         const down = index => input.buttons.includes(index);
         const axes = input.axes.map(axis), alternate = down(5);
-        enableKey.dataset.active = String(down(4) && !alternate);
-        alternateKey.dataset.active = String(down(4) && alternate);
+        enableKey.dataset.active = String(input.banks ? input.banks[0].some(v => v !== 0) || (down(4) && !down(5)) : down(4) && !alternate);
+        alternateKey.dataset.active = String(input.banks ? input.banks[1].some(v => v !== 0) : down(4) && alternate);
         for (const joint of stickJoints)
-            joint.cap.dataset.active = String(down(4) && joint.bank === Number(alternate) && axes[joint.axis] !== 0);
+            joint.cap.dataset.active = String(input.banks ? input.banks[joint.bank][joint.axis] !== 0
+                : down(4) && joint.bank === Number(alternate) && axes[joint.axis] !== 0);
         for (const [keys, positive, negative] of [[leftRollKeys, 12, 13], [rightRollKeys, 3, 0]]) {
             keys[0].dataset.active = String(down(positive) && !down(negative));
             keys[1].dataset.active = String(down(negative) && !down(positive));
@@ -259,10 +264,10 @@ export function gamepadInput(
         const velocity = {};
         for (const arm of grippers) {
             const [close, open] = arm === "left" ? [14, 15] : [2, 1];
-            velocity[arm] = Number(down(open)) - Number(down(close));
+            velocity[arm] = input.grip?.[arm] ?? Number(down(open)) - Number(down(close));
         }
         gripFeedback(velocity);
-        showHint("Replay inputs · Stop / Esc to cancel");
+        showHint("Replay controls · Stop / Esc to cancel");
         container.dataset.state = "replay";
     }
     container.append(group, status, arms, rollControls);
@@ -656,6 +661,15 @@ export function gamepadInput(
         get inlineFeedback() { return bankedJoints && !cartesian; },
         replay(input) {
             replayInput = input?.device === "gamepad" ? input : null;
+            if (replayInput && manualMode === null) manualMode = group.value;
+            const mode = replayInput?.mode;
+            const selection = replayInput ? mode === "joints" && toolControl ? "joints:0" : mode : manualMode;
+            if (selection && selection !== group.value && [...group.options].some(option => option.value === selection)) {
+                group.value = selection;
+                cartesian = toolControl && selection === "cartesian";
+                renderMapping();
+            }
+            if (!replayInput) manualMode = null;
             if (!replayInput) {
                 for (const badge of badges()) badge.dataset.active = "false";
                 gripFeedback({});

@@ -414,8 +414,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
             issue(heldKeys, true);
         }
         for (const cap of mapping.querySelectorAll(".key-cap")) {
+            const replayKey = cap.dataset.key.replace(/^arrow/, "");
             cap.dataset.pressed = String(replayInput
-                ? replayInput.keys.includes(cap.dataset.key) : keys.has(cap.dataset.key));
+                ? replayInput.keys.some(key => key === cap.dataset.key || key === replayKey) : keys.has(cap.dataset.key));
             cap.disabled = !enabled || !allowed;
         }
         // Timers may fire just before the requested deadline. Wait only the
@@ -430,6 +431,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     document.addEventListener("visibilitychange", halt);
     let timer = setTimeout(poll, 50);
     let replayInput = null;
+    let manualMode = null;
     return {
         element: container,
         arms,
@@ -437,6 +439,14 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
         get inlineFeedback() { return !cartesian(); },
         replay(input) {
             replayInput = input?.device === "keyboard" ? input : null;
+            if (replayInput && manualMode === null) manualMode = group.value;
+            const mode = replayInput?.mode;
+            const selection = replayInput ? mode === "joints" && toolControl ? "joints:0" : mode : manualMode;
+            if (selection && selection !== group.value && [...group.options].some(option => option.value === selection)) {
+                group.value = selection;
+                renderMapping();
+            }
+            if (!replayInput) manualMode = null;
             mapping.dataset.replay = String(Boolean(replayInput));
         },
         update(on, available) {

@@ -1686,7 +1686,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     font-size: 11px;
 }
 .keyboard-paired.keyboard-columns {
-    grid-template-columns: minmax(0, 1fr) 10px 28px 28px;
+    grid-template-columns: minmax(0, 1fr) max-content 28px 28px;
 }
 .keyboard-paired .joint-position {
     font-size: 11px;

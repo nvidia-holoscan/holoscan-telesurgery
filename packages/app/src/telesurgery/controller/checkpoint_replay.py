@@ -7,6 +7,7 @@ import math
 
 from telesurgery.controller.haply import CartesianHaply
 from telesurgery.controller.replay import FeedbackPlayback
+from telesurgery.controller.replay_input import command_input
 
 
 def validate_checkpoints(rows, *, environment="mira", device="keyboard"):
@@ -125,6 +126,20 @@ class CheckpointPlayback(FeedbackPlayback):
         self.handoff_waits = manifest.get("handoff_waits", {}).get(self.role, {})
         self.feedback_at = None
         self.feedback_period = 0.05
+
+    def display_input(self, result):
+        """Checkpoint files need not contain raw device samples; show sent corrections."""
+        request = result.get("request")
+        if result.get("done") or result.get("waiting_peer") or request and request[0] == "release":
+            self.input_display = None
+        elif request:
+            self.input_display = command_input(
+                self.mapping.inputs,
+                self.mapping.device,
+                request,
+                (self.input_display or {}).get("mode"),
+            )
+        return self.input_display
 
     def select_pickup(self, shadow):
         """Empty CMR practice stays clear of the left tool parked at Home."""

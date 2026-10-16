@@ -73,6 +73,7 @@ class Window:
         self.last_feedback = 0
         self.session, self.robots = {}, {}
         self.selected, self.inputs = robot, None
+        self.replay_manual_mode = None
         self.switching_robot = False
         self.pending_robot = None
         self.incoming_control = robot if retain_control else None
@@ -207,6 +208,7 @@ class Window:
 
     def stop(self, reason="operator stopped replay"):
         self.replay.stop(reason)
+        self.sync_replay_mode()
         self.pending_home = False
         self.pending_reset = False
         self.pointer_control = False
@@ -857,12 +859,38 @@ class Window:
                     (f"{buttons['enable']} + {buttons['alternate']}", second),
                 ]
             ):
-                self.badge(grid, key, ("bank", index)).grid(
-                    row=index, column=0, sticky="ew", pady=self.px(3), padx=self.px(0, 8)
-                )
-                self.label(grid, f"{title} · move sticks", size=8).grid(
-                    row=index, column=1, sticky="w"
-                )
+                section = tk.Frame(grid, bg="white")
+                section.pack(fill="x", pady=self.px(3, 6))
+                heading = tk.Frame(section, bg="white")
+                heading.pack(fill="x")
+                self.badge(heading, key, ("bank", index)).pack(side="left", padx=self.px(0, 8))
+                self.label(heading, title, size=8).pack(side="left")
+                sticks = tk.Frame(section, bg="white")
+                sticks.pack(fill="x", pady=self.px(4, 0))
+                for stick in range(2):
+                    column = tk.Frame(sticks, bg="white")
+                    column.grid(row=0, column=stick, sticky="nw")
+                    sticks.columnconfigure(stick, weight=1, uniform="sticks")
+                    self.label(
+                        column, "Left stick" if stick == 0 else "Right stick", size=8, color=MUTED
+                    ).pack(anchor="w")
+                    for direction in range(2):
+                        axis = stick * 2 + direction
+                        joint = index * 2 + direction if inputs.dual else index * 4 + axis
+                        group = ("right" if stick else "left") if inputs.dual else "joints"
+                        if joint >= inputs.groups[group]:
+                            continue
+                        label = (
+                            inputs.controls["mira_cartesian"]["axes"][joint]
+                            if inputs.mode == "mira-tool"
+                            else f"J{joint + 1}"
+                        )
+                        row = tk.Frame(column, bg="white")
+                        row.pack(fill="x", pady=self.px(2))
+                        self.badge(row, "↕" if direction else "↔", ("bank_axis", index, axis)).pack(
+                            side="left", padx=self.px(0, 6)
+                        )
+                        self.label(row, label, size=8).pack(side="left")
         if roll:
             self.separator(self.controls)
             self.slider(self.controls, "roll", "Rotation speed")
@@ -890,20 +918,27 @@ class Window:
         self.home.tooltip.text = self.home_instruction
 
     def gamepad_active(self, binding):
+        kind, *values = binding
         if self.replay.active:
             replay = self.replay.input or {}
             if replay.get("device") != "gamepad":
                 return False
             axes, buttons = replay["axes"], replay["buttons"]
+            if "banks" in replay and kind in {"bank", "bank_axis"}:
+                bank = replay["banks"][values[0]]
+                if kind == "bank":
+                    return any(bank) or (values[0] == 0 and 4 in buttons and 5 not in buttons)
+                return bank[values[1]] != 0
         else:
             if not self.gamepad_sample or not self.inputs.armed or self.pointer_control:
                 return False
             axes, buttons = self.gamepad_sample
-        kind, *values = binding
         if kind == "axis":
             return abs(axes[values[0]]) > 0.15
         if kind == "bank":
             return 4 in buttons and int(5 in buttons) == values[0]
+        if kind == "bank_axis":
+            return 4 in buttons and int(5 in buttons) == values[0] and abs(axes[values[1]]) > 0.15
         if kind == "pair":
             return (values[0] in buttons) != (values[1] in buttons)
         return values[0] in buttons and (len(values) == 1 or values[1] not in buttons)
@@ -1000,6 +1035,23 @@ class Window:
         self.replay.start(self.robots[self.selected], recording)
         self.root.focus_set()
 
+    def sync_replay_mode(self):
+        if self.replay.active and self.inputs:
+            mode = (self.replay.input or {}).get("mode")
+            if not mode or mode == self.inputs.mode:
+                return
+            if self.replay_manual_mode is None:
+                self.replay_manual_mode = self.inputs, self.inputs.mode
+        elif self.replay_manual_mode:
+            inputs, mode = self.replay_manual_mode
+            self.replay_manual_mode = None
+            if inputs is not self.inputs:
+                return
+        else:
+            return
+        self.inputs.mode = mode
+        self.build_controls()
+
     def update_status(self, status, now):
         self.last_status = now
         self.recordings = status.get("replays", [])
@@ -1075,6 +1127,7 @@ class Window:
                     self.feedback()
                     self.last_feedback = now
             self.replay.poll(now)
+            self.sync_replay_mode()
         except Exception as exc:
             self.error = str(exc)
             self.stop()

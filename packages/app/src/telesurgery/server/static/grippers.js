@@ -143,7 +143,8 @@ export function gripperControls(robot, send, stop, speed) {
             const {arm, sign} = bindings.get(key);
             control.disabled = !allowed;
             const [close, open] = arm === "left" ? [14, 15] : [2, 1];
-            const replayPressed = replayInput?.device === "keyboard" ? replayInput.keys.includes(key)
+            const replayPressed = replayInput?.grip ? Math.sign(replayInput.grip[arm] || 0) === sign
+                : replayInput?.device === "keyboard" ? replayInput.keys.includes(key)
                 : replayInput?.device === "gamepad" && replayInput.buttons.includes(sign < 0 ? close : open)
                     && !replayInput.buttons.includes(sign < 0 ? open : close);
             control.dataset.pressed = String(replayInput ? replayPressed : pressed.has(key) ||
