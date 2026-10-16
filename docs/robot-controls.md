@@ -20,7 +20,7 @@ In joint mode, tap a key or click its on-screen button for a short move. Hold it
 
 **Arm speed**, **Rotation speed**, and **Grip speed** are percentages of the selected robot's configured operating rates. At 50%, the requested rate is half its 100% rate; the same free travel takes approximately twice as long after acceleration. Physical and simulated robots may use different maxima. Contact, joint limits, acceleration and short travel can reduce measured speed. Changing a speed stops active input and requires fresh input. Controls appear only for supported motions and installed grippers.
 
-Physical MIRA defaults to **20% arm, 100% rotation, 100% grip**. MIRA simulation defaults to **20%, 50%, 40%**. Physical Franka defaults to **75% arm**; Franka/CMR simulation defaults to **20% arm**. Their tool rotation defaults to **50%**, and available grippers to **40%**. Saved user choices take precedence. The browser and native controller use the same rates for keyboard, gamepad and Haply.
+Physical MIRA defaults to **75% arm, 100% rotation, 100% grip**. MIRA simulation defaults to **20%, 50%, 40%**. Physical Franka defaults to **75% arm**; Franka/CMR simulation defaults to **20% arm**. Their tool rotation defaults to **50%**, and available grippers to **40%**. Saved user choices take precedence. The browser and native controller use the same rates for keyboard, gamepad and Haply.
 
 | Robot | Joint rate at 100% | Rotation rate at 100% | Grip rate at 100% |
 | --- | --- | --- | --- |

@@ -324,6 +324,7 @@ class MiraAdapter:
     home_deg = {"left": MIRA_HOME, "right": MIRA_HOME}
     grippers = ("left", "right")
     grip_speed = GRIP_SPEED
+    default_arm_speed_percent = 75
     default_roll_speed_percent = 100
     default_grip_speed_percent = 100
     joint_velocity = PHYSICAL
