@@ -234,6 +234,39 @@ async def test_reconnect_cannot_resume_until_disconnect_stop_is_confirmed(patien
 
 
 @pytest.mark.asyncio
+async def test_node_reconnect_requires_stop_without_an_existing_fault(patient):
+    credentials = await acquire(patient)
+    owner = patient.owners["node:arm"]
+    deadline = owner.expires
+    owner.ready = False  # Node transport loss marks the reservation unready.
+    assert not patient.faults and patient.device.active
+    patient.node_registry.configs["node"] = {"token": "node-token"}
+    await patient._request(
+        SimpleNamespace(id="node-returning"),
+        "node.register",
+        {"id": "node", "token": "node-token", "inventory": patient.nodes["node"]},
+    )
+    assert not owner.ready and "node:arm" in patient.faults
+    before = list(patient.calls)
+    with pytest.raises(RuntimeError, match="Previous stop was not confirmed"):
+        await patient._robot("one", "robot.renew", credentials)
+    assert patient.calls == before
+    patient.nodes["node"]["robots"][0]["stale"] = False
+    watch = asyncio.create_task(patient._watch())
+    try:
+        async with asyncio.timeout(2):
+            while not owner.ready:
+                await asyncio.sleep(0.01)
+        assert not patient.device.active and not patient.faults
+        assert patient.calls[-1] == "robot.release"
+        assert owner.owner == "one" and owner.token == credentials["token"]
+        assert owner.expires == deadline and patient.device.adapter.moves == 0
+    finally:
+        watch.cancel()
+        await asyncio.gather(watch, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_inactive_lock_expires_without_another_request(patient):
     await acquire(patient)
     owner = patient.owners["node:arm"]

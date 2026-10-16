@@ -12,11 +12,12 @@ from concurrent.futures import Future
 from dataclasses import replace
 
 
-def capture_frame(camera, sequence, commands):
+def capture_frame(camera, sequence, commands, *, depth=False):
     """Capture one raw frame with complete source-stage timing."""
     import cv2
     import numpy as np
     from telesurgery_core.transport.protocol import VideoHeader
+    from telesurgery_core.video.depth import attach
     from telesurgery_core.video.formats import encode_raw
     from telesurgery_core.video.model import Frame
 
@@ -39,6 +40,14 @@ def capture_frame(camera, sequence, commands):
         acquisition_ns=pack_started - capture_started,
     )
     header, data = encode_raw(Frame(header, bgr))
+    if depth:
+        distances, _ = camera.get_data("distance_to_image_plane")
+        if distances is not None:
+            header, data = attach(
+                header,
+                data,
+                np.asarray(distances.numpy(), np.float32).reshape(header.height, header.width),
+            )
     encoded = time.monotonic_ns()
     return replace(header, pack_ns=encoded - pack_started, encoded_ns=encoded), data
 
@@ -53,7 +62,6 @@ def run(app, args):
     from pxr import Gf, PhysxSchema, UsdGeom, UsdLux, UsdPhysics
     from telesurgery_core.transport.protocol import MAX_FRAME
     from telesurgery_core.transport.zmq import open_socket
-    from telesurgery_core.video.depth import attach
     from telesurgery_robots.simulation.state import SimRobot
     from telesurgery_robots.versius import ARMS
     from telesurgery_sim.environments.assets import fetch, place_static
@@ -355,20 +363,10 @@ def run(app, args):
                 for future, arm in reset_replies:
                     future.set_result(robots[arm].apply({"method": "get_state"}))
             for index, camera in enumerate(cameras):
-                frame = capture_frame(camera, sequence, commands)
+                frame = capture_frame(camera, sequence, commands, depth=depth_enabled[index])
                 if frame is None:
                     continue
                 header, data = frame
-                if depth_enabled[index]:
-                    distances, _ = camera.get_data("distance_to_image_plane")
-                    if distances is not None:
-                        header, data = attach(
-                            header,
-                            data,
-                            np.asarray(distances.numpy(), np.float32).reshape(
-                                header.height, header.width
-                            ),
-                        )
                 try:
                     publishers[index].send_multipart([header.encode(), data], zmq.NOBLOCK)
                 except zmq.Again:

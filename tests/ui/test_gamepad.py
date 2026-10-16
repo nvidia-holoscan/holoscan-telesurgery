@@ -434,7 +434,13 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             await page.get_by_label("Second input", exact=True).select_option("keyboard")
             await page.locator("#robot-selector").select_option("First")
             await page.get_by_role("button", name="Release control and switch", exact=True).click()
-            await expect(page.get_by_label("First input", exact=True)).to_have_value("keyboard")
+            # Preferences belong to each robot; Second's keyboard choice must not
+            # overwrite First's gamepad choice or resume First's released control.
+            await expect(page.get_by_label("First input", exact=True)).to_have_value("0")
+            await expect(
+                page.get_by_role("button", name="Acquire control", exact=True)
+            ).to_be_visible()
+            assert len([a for a in actions if a["action"] == "robot.move"]) == count
         finally:
             await browser.close()
 

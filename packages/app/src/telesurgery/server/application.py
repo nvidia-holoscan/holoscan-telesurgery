@@ -183,7 +183,8 @@ class Application:
             self.nodes[params["id"]] = {**params["inventory"], "status": "online"}
             for key, owner in self.owners.items():
                 if key.startswith(f"{params['id']}:"):
-                    owner.ready = key not in self.faults
+                    owner.ready = False
+                    self.faults.setdefault(key, "Node reconnected; robot stop is not confirmed")
             return {"registered": True, "server_time": time.time()}
         if peer.id in self.peer_nodes:
             if method == "node.inventory":
