@@ -226,6 +226,11 @@ class SimRobot:
                         "ready": cartesian_age is not None and cartesian_age <= 0.3,
                         "age_ms": cartesian_age * 1000 if cartesian_age is not None else None,
                     },
+                    "joint_goal_deg": {
+                        "joints": list(self.trajectory.input.target_position)
+                        if self.trajectory is not None and self.mode != "stopping"
+                        else list(self.pose["joints"])
+                    },
                     "control_active": self.mode == "home"
                     or self.trajectory is not None
                     or self.cartesian is not None

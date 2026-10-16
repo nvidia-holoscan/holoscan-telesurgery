@@ -52,6 +52,7 @@ async def test_completed_left_waits_without_replay_heartbeat_then_releases_after
     assert not calls
     now[0] = 60
     helper.owners["node:left"].expires = now[0] + 2  # Ordinary control lease remains live.
+    await helper.prepare(contexts["right"])
     for _ in range(5):
         done = await helper.update(contexts["right"], states["right"], take=True)
     assert done and not helper.offers
@@ -67,7 +68,6 @@ async def test_completed_left_waits_without_replay_heartbeat_then_releases_after
     [
         "not_finished",
         "empty_left",
-        "empty_right",
         "manual",
         "expired",
         "new_owner",
@@ -75,14 +75,15 @@ async def test_completed_left_waits_without_replay_heartbeat_then_releases_after
         "other_task",
     ],
 )
-async def test_shadow_pickup_completes_without_opening_an_unoffered_needle(handoff, condition):
+async def test_right_start_requires_a_completed_owned_left_presentation(handoff, condition):
     helper, contexts, states, calls, now = handoff
     if condition == "empty_left":
         states["left"]["grippers"]["hand"] = 0
-    await helper.update(contexts["left"], states["left"], finished=condition != "not_finished")
-    if condition == "empty_right":
-        states["right"]["grippers"]["hand"] = 0
-    elif condition == "manual":
+        with pytest.raises(RuntimeError, match="did not retain"):
+            await helper.update(contexts["left"], states["left"], finished=True)
+    else:
+        await helper.update(contexts["left"], states["left"], finished=condition != "not_finished")
+    if condition == "manual":
         await helper.clear("node:left")
     elif condition == "expired":
         now[0] = 3
@@ -93,14 +94,17 @@ async def test_shadow_pickup_completes_without_opening_an_unoffered_needle(hando
         contexts["right"]["key"] = "another-node:right"
     elif condition == "other_task":
         contexts["right"]["group"] = "different-task"
-    assert await helper.update(contexts["right"], states["right"], take=True)
-    assert not calls
+    with pytest.raises(RuntimeError, match="Run the left needle pickup first"):
+        await helper.prepare(contexts["right"])
+    assert not any(method == "robot.replay_release" for _, method in calls)
 
 
 @pytest.mark.asyncio
 async def test_manual_receiver_close_does_not_release_completed_pickup(handoff):
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.prepare(contexts["right"])
+    calls.clear()
     await helper.update(contexts["right"], states["right"])
     assert not calls and helper.offers
 
@@ -109,6 +113,7 @@ async def test_manual_receiver_close_does_not_release_completed_pickup(handoff):
 async def test_receiver_cancel_holds_partial_release_and_removes_consent(handoff):
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.prepare(contexts["right"])
     assert not await helper.update(contexts["right"], states["right"], take=True)
     await helper.clear("node:right")
     assert calls[-1] == ("left", "robot.hold")
@@ -119,6 +124,7 @@ async def test_receiver_cancel_holds_partial_release_and_removes_consent(handoff
 async def test_lost_receiver_grasp_stops_release_and_donor_pose_change_is_rejected(handoff):
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.prepare(contexts["right"])
     await helper.update(contexts["right"], states["right"], take=True)
     states["right"]["grippers"]["hand"] = 0
     with pytest.raises(RuntimeError, match="right grasp changed"):
@@ -130,6 +136,7 @@ async def test_lost_receiver_grasp_stops_release_and_donor_pose_change_is_reject
 async def test_release_never_moves_a_donor_that_has_left_the_handoff_pose(handoff):
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.prepare(contexts["right"])
     states["left"]["tool_pose"]["position_m"][0] += 0.01
     with pytest.raises(RuntimeError, match="left handoff position changed"):
         await helper.update(contexts["right"], states["right"], take=True)
@@ -148,6 +155,7 @@ async def test_legacy_or_manual_session_cannot_request_replay_release(handoff):
 async def test_manual_donor_interrupt_cannot_be_mistaken_for_an_empty_pickup(handoff):
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
+    await helper.prepare(contexts["right"])
     assert not await helper.update(contexts["right"], states["right"], take=True)
     await helper.clear("node:left")
     assert calls[-1] == ("left", "robot.hold")
@@ -156,7 +164,8 @@ async def test_manual_donor_interrupt_cannot_be_mistaken_for_an_empty_pickup(han
 
 
 @pytest.mark.asyncio
-async def test_old_patient_is_rejected_before_independent_replay_moves(tmp_path):
+@pytest.mark.parametrize("legacy_flags", [{}, {"independent_actions": True}])
+async def test_old_patient_is_rejected_before_independent_replay_moves(tmp_path, legacy_flags):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -170,7 +179,7 @@ async def test_old_patient_is_rejected_before_independent_replay_moves(tmp_path)
     app.tokens["node:left"] = "lease"
     playback = CheckpointPlayback(
         {"kind": "versius-sim", "controls": controls(VersiusSimulation({"uri": "unused"}), {})},
-        {"device": "keyboard", "independent_actions": True},
+        {"device": "keyboard", "independent_actions": True, "requires_presented_needle": True},
         "left",
         [{"t": 0, "speeds": [20, 50, 40], "grip": {"hand": 0}}],
         "run",
@@ -179,6 +188,7 @@ async def test_old_patient_is_rejected_before_independent_replay_moves(tmp_path)
     app.remote = SimpleNamespace(
         call=AsyncMock(
             return_value={
+                **legacy_flags,
                 "elapsed": 0,
                 "done": False,
                 "checkpoint": 0,
@@ -196,13 +206,15 @@ async def test_old_patient_is_rejected_before_independent_replay_moves(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_empty_pickup_choice_stays_independent_if_left_finishes_later(handoff):
+async def test_empty_receiver_grasp_never_releases_the_donor(handoff):
     helper, contexts, states, calls, _ = handoff
-    await helper.prepare(contexts["right"])
-    assert contexts["right"]["shadow"]
     await helper.update(contexts["left"], states["left"], finished=True)
-    assert await helper.update(contexts["right"], states["right"], take=True)
-    assert not calls and helper.offers
+    await helper.prepare(contexts["right"])
+    states["right"]["grippers"]["hand"] = 0
+    with pytest.raises(RuntimeError, match="did not grasp"):
+        await helper.update(contexts["right"], states["right"], take=True)
+    assert helper.offers
+    assert not any(method == "robot.replay_release" for _, method in calls)
 
 
 @pytest.mark.asyncio
@@ -210,7 +222,7 @@ async def test_presented_pickup_stops_if_donor_is_manually_moved_before_grasp(ha
     helper, contexts, states, calls, _ = handoff
     await helper.update(contexts["left"], states["left"], finished=True)
     await helper.prepare(contexts["right"])
-    assert contexts["right"]["shadow"] is False
+    assert contexts["right"]["donor_run"] == contexts["left"]["run"]
     await helper.clear("node:left")
     with pytest.raises(RuntimeError, match="presented needle is no longer available"):
         await helper.update(contexts["right"], states["right"])

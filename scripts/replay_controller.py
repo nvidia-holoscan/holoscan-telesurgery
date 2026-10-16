@@ -243,7 +243,8 @@ async def run(manifest_path, bindings):
                     renewals = [group.create_task(surgeon.renew()) for surgeon in surgeons.values()]
                     try:
                         # When both are requested, present the needle first.
-                        # A single right binding performs the independent pickup.
+                        # Right alone requires a previously completed left
+                        # presentation whose surgeon still holds control.
                         for role in ("left", "right"):
                             if role in surgeons:
                                 await play_remote(

@@ -430,6 +430,7 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_grasps(
                 "device": "haply",
                 "barriers": 0 if independent else 1,
                 "independent_actions": independent,
+                "requires_presented_needle": independent,
                 "task": "Handoff fixture",
                 "handoff_group": "handoff-fixture",
                 "replay_verified": True,

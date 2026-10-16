@@ -265,14 +265,17 @@ class Application:
                         **barrier,
                         "state": state,
                         "handoff_done": handoff,
-                        "shadow": handoff_context.get("shadow") if handoff_context else None,
                     }
                 robot = next((r for r in self.inventory()["robots"] if r["id"] == key), None)
                 if robot is None or robot["status"] != "online":
                     raise ValueError("Robot is unavailable")
                 await self.replay_handoff.clear(key)
                 run = self.replay_barrier.join(params["recording"], robot, peer.id, owner.token)
-                await self.replay_handoff.prepare(self.replay_barrier.handoff(run))
+                try:
+                    await self.replay_handoff.prepare(self.replay_barrier.handoff(run))
+                except Exception:
+                    self.replay_barrier.cancel(run, peer.id, key)
+                    raise
                 return run
         if method in {"robot.acquire", "robot.move", "robot.renew", "robot.hold", "robot.release"}:
             async with self.control_lock:
@@ -1310,10 +1313,10 @@ class Application:
                     raise RuntimeError("Restart the patient service to support independent replay")
                 if (
                     isinstance(playback, CheckpointPlayback)
-                    and playback.independent_actions
-                    and playback.role == "right"
+                    and playback.requires_presented_needle
+                    and not barrier.get("handoff_required")
                 ):
-                    playback.select_pickup(barrier.get("shadow"))
+                    raise RuntimeError("Restart the patient service to support needle transfer")
                 if feedback:
                     playback.barrier, playback.polled_at = barrier, time.monotonic()
                     if isinstance(playback, CheckpointPlayback):

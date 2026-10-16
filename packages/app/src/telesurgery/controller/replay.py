@@ -415,7 +415,7 @@ class Rendezvous:
         ):
             raise PermissionError("Use a separate surgeon for each Versius arm")
         run["members"][role] = {"peer": peer, "token": token, "key": robot["id"], "seen": now}
-        if solo:
+        if solo and manifest.get("requires_presented_needle") is True:
             rows = read_rows(path.parent / manifest["streams"][role]["file"])
             pose = None
             for row in rows:
@@ -475,6 +475,7 @@ class Rendezvous:
         joined = set(run["members"]) == run["roles"]
         return {
             "independent_actions": run["solo"],
+            "handoff_required": bool(run.get("handoff")),
             "checkpoint": min(m.get("checkpoint", 0) for m in run["members"].values())
             if joined and run["started"] is not None
             else 0,

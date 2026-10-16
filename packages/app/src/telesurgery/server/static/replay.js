@@ -85,10 +85,11 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback, sh
                 return;
             }
             if (result.state) feedback(result.state);
+            const progress = `Replaying · ${result.phase ? result.phase + " · " : ""}${Math.floor(result.elapsed)} s`;
             status.textContent = result.waiting ? "Waiting for the other surgeon…"
                 : result.waiting_peer ? (result.waiting_reason || "Waiting at handoff checkpoint…")
-                : result.waiting_feedback ? (result.waiting_reason || `Replaying · ${Math.floor(result.elapsed)} s · waiting for feedback`)
-                : `Replaying · ${Math.floor(result.elapsed)} s`;
+                : result.waiting_feedback ? (result.waiting_reason || `${progress} · waiting for feedback`)
+                : progress;
             if (result.request) {
                 const [mode, command] = result.request;
                 if (mode === "release") {

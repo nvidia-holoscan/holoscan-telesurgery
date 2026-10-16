@@ -140,7 +140,9 @@ class NativeReplay:
                 if result.get("waiting_peer")
                 else result["waiting_reason"]
                 if result.get("waiting_feedback") and result.get("waiting_reason")
-                else f"Replaying · {int(result['elapsed'])} s"
+                else "Replaying · "
+                + (f"{result['phase']} · " if result.get("phase") else "")
+                + f"{int(result['elapsed'])} s"
                 + (" · waiting for feedback" if result.get("waiting_feedback") else "")
             )
             if result.get("request"):

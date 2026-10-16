@@ -26,8 +26,8 @@ def at_pose(state, pose):
 
 
 def grasped(state):
-    # A fully closed, empty jaw is a shadow pickup, not a reason to release
-    # the donor. These bounds describe the calibrated simulation needle.
+    # Empty jaws cannot authorize a transfer. These bounds describe the
+    # calibrated simulation needle, not a physical grasp sensor.
     opening = state.get("grippers", {}).get("hand")
     return (
         type(opening) in (int, float)
@@ -59,9 +59,12 @@ class ReplayHandoff:
         if offer and offer["group"] == context["group"] and self.owned(offer):
             state = await self.call(donor, "robot.renew", {"token": offer["token"]})
             ready = grasped(state) and at_pose(state, offer["pose"])
-        context["shadow"] = not ready
-        if ready:
-            context["donor_run"] = offer["run"]
+        if not ready:
+            raise RuntimeError(
+                "Run the left needle pickup first and keep its control acquired before "
+                "starting the right transfer"
+            )
+        context["donor_run"] = offer["run"]
 
     async def clear(self, key):
         for donor, offer in list(self.offers.items()):
@@ -85,36 +88,36 @@ class ReplayHandoff:
             if take:
                 raise ValueError("Only the right replay can take the needle")
             if finished and not context.get("offered"):
+                if not grasped(state) or not at_pose(state, context["pose"]):
+                    raise RuntimeError("Left pickup did not retain the needle at its handoff pose")
                 context["offered"] = True
-                if grasped(state) and at_pose(state, context["pose"]):
-                    self.offers[key] = dict(context)
+                self.offers[key] = dict(context)
             return False
         if context["role"] != "right":
             if take:
                 raise ValueError("Only the right replay can take the needle")
             return False
-        if context.get("shadow"):
+        if context.get("transferred"):
             return take
         donor = key.rsplit(":", 1)[0] + ":left"
         offer = self.offers.get(donor)
         if (
-            context.get("donor_run")
-            and not context.get("transferred")
-            and (not offer or offer["run"] != context["donor_run"] or not self.owned(offer))
+            not context.get("donor_run")
+            or not offer
+            or offer["run"] != context["donor_run"]
+            or offer["group"] != context["group"]
+            or not self.owned(offer)
         ):
             raise RuntimeError("Replay stopped: presented needle is no longer available")
         if not take:
             return False
-        if not offer or offer["group"] != context["group"]:
-            return True  # Independent right action: complete the empty pickup.
-        if not self.owned(offer):
-            self.offers.pop(donor, None)
-            return True
         if not grasped(state) or not at_pose(state, context["pose"]):
             if offer.get("receiver"):
                 await self.clear(key)
                 raise RuntimeError("Replay stopped: right grasp changed during release")
-            return True
+            raise RuntimeError(
+                "Right arm did not grasp the presented needle; left grip kept closed"
+            )
         actual = await self.call(donor, "robot.renew", {"token": offer["token"]})
         if not at_pose(actual, offer["pose"]):
             await self.clear(donor)
@@ -122,7 +125,7 @@ class ReplayHandoff:
         if not offer.get("receiver"):
             if not grasped(actual):
                 self.offers.pop(donor, None)
-                return True
+                raise RuntimeError("Left arm no longer holds the presented needle")
             offer.update(
                 receiver=key,
                 receiving_run=context["run"],
