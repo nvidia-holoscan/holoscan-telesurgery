@@ -10,6 +10,7 @@ import shutil
 import threading
 import time
 
+import numpy as np
 import pytest
 
 pytest.importorskip("holoscan")
@@ -398,6 +399,9 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_grasps(
                     assert robots["right"]._grippers()["hand"] == pytest.approx(0.1)
                     assert not robots["right"].grip.rates
             if independent:
+                # Supply a fresh stationary physics sample alongside the tool pose.
+                joints = np.asarray(robots[role].pose["joints"])
+                robots[role].kinematics = (joints, np.zeros((6, len(joints))), time.monotonic())
                 robots[role].feedback = {
                     "tool_pose": pose,
                     "grippers": {"hand": max(0.1, robots[role].finger_target / 0.04)},
