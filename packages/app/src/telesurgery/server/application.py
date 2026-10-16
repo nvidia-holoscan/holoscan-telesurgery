@@ -137,7 +137,7 @@ class Application:
         finally:
             async with self.control_lock:
                 await self._close_viewers(peer.id)
-                await self._release_owner(peer.id)
+                await self._suspend_owner(peer.id)
                 if peer.id in self.access.surgeons:
                     await self.run(self.access.disconnect, peer.id)
                 self.node_registry.disconnected(peer.id)
@@ -147,7 +147,6 @@ class Application:
                         self.nodes[node]["status"] = "offline"
                     for key, owner in self.owners.items():
                         if key.startswith(f"{node}:"):
-                            owner.release()
                             owner.ready = False
             self.peers.pop(peer.id, None)
             await peer.close()
@@ -184,8 +183,8 @@ class Application:
             self.nodes[params["id"]] = {**params["inventory"], "status": "online"}
             for key, owner in self.owners.items():
                 if key.startswith(f"{params['id']}:"):
-                    owner.release()
-                    owner.ready = True
+                    owner.ready = False
+                    self.faults.setdefault(key, "Node reconnected; robot stop is not confirmed")
             return {"registered": True, "server_time": time.time()}
         if peer.id in self.peer_nodes:
             if method == "node.inventory":
@@ -195,16 +194,29 @@ class Application:
         if any(item["peer"] == peer.id for item in self.node_registry.pending.values()):
             raise PermissionError("Node approval is required")
         if method == "access.request":
-            # Disconnect cleanup releases robot ownership and the old identity
-            # under this lock. A returning service must wait for that cleanup.
+            # A returning service must wait for the old connection to stop input.
             async with self.control_lock:
-                return await self.run(
+                status = await self.run(
                     self.access.request,
                     peer.id,
                     params.get("name"),
                     params.get("robot", False),
                     params.get("credential"),
                 )
+                tokens = {}
+                sequences = {}
+                identity = self.access.identities.get(peer.id)
+                if identity and status.get("status") == "approved" and status.get("robot"):
+                    for key, owner in self.owners.items():
+                        if owner.owner and owner.identity == identity:
+                            if owner.expired():
+                                await self._release(key)
+                            else:
+                                owner.owner = peer.id
+                                tokens[key] = owner.token
+                                sequences[key] = owner.sequence
+                # Credentials travel only on the authenticated service connection.
+                return {**status, "control_tokens": tokens, "control_sequences": sequences}
         if method == "status":
             own = await self.run(self.access.status, peer.id)
             if own["status"] != "approved":
@@ -237,6 +249,7 @@ class Application:
                     self.replay_barrier.cancel(params["run"], peer.id, key)
                     await self.replay_handoff.clear(key)
                     return True
+                self._require_ready(key)
                 if method == "replay.poll":
                     barrier = self.replay_barrier.poll(
                         params["run"],
@@ -489,7 +502,7 @@ class Application:
                         "feedback_age_ms": device.get("feedback_age_ms"),
                         "stale": device.get("stale", True) or node.get("status") != "online",
                         "node": key,
-                        "owner": surgeon.name if surgeon else None,
+                        "owner": surgeon.name if surgeon else owner.name if owner else None,
                         "node_online": node.get("status") == "online",
                         **({"controller": device["controller"]} if "controller" in device else {}),
                         **(
@@ -497,7 +510,7 @@ class Application:
                             if "connection_enabled" in device
                             else {}
                         ),
-                        "owner_id": surgeon.id if surgeon else None,
+                        "owner_id": owner.owner if owner else None,
                         **(
                             {"reset_scene_blocked": self.scene_reset_blocked(robot_id)}
                             if device.get("controls", {}).get("reset_scene")
@@ -556,6 +569,8 @@ class Application:
             if not owner.ready:
                 raise RuntimeError(self.faults[key])
             return result
+        if method == "robot.replay_release":
+            self._require_ready(key)
         node, device = key.split(":", 1)
         result = await self.node_call(node, method, {"key": device, **params})
         self.robot_state[key] = result["state"] if method == "robot.replay_release" else result
@@ -577,12 +592,10 @@ class Application:
                 raise RuntimeError(self.faults[key])
             return result
         if method == "robot.acquire":
-            if not owner.ready:
-                raise RuntimeError(
-                    "Previous stop was not confirmed; choose Retry hold on the patient dashboard. "
-                    + self.faults.get(key, "")
-                )
+            self._require_ready(key)
             token = await self.run(owner.acquire, peer)
+            owner.identity = self.access.identities.get(peer)
+            owner.name = self.access.surgeons[peer].name
             try:
                 self.robot_state[key] = await self.node_call(
                     node, "robot.prepare", {"key": device, "token": token}
@@ -600,10 +613,22 @@ class Application:
             if not owner.ready:
                 raise RuntimeError(self.faults[key])
             return result
+        self._require_ready(key)
         if method in {"robot.renew", "robot.hold"}:
-            self.robot_state[key] = await self.node_call(
-                node, method, {"key": device, "token": token}
-            )
+            try:
+                self.robot_state[key] = await self.node_call(
+                    node, method, {"key": device, "token": token}
+                )
+            except (PermissionError, RuntimeError) as exc:
+                if str(exc) != "Patient controller lease expired":
+                    raise
+                # The device's short motion lease can lapse while the patient
+                # still reserves this robot. Confirm Stop before restoring it;
+                # never retry a failed movement or acquire another owner's lock.
+                await self.node_call(node, "robot.release", {"key": device, "token": token})
+                self.robot_state[key] = await self.node_call(
+                    node, "robot.prepare", {"key": device, "token": token}
+                )
             return self.robot_state[key]
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
@@ -658,7 +683,15 @@ class Application:
                 ),
             },
         )
+        owner.activity()
         return self.robot_state[key]
+
+    def _require_ready(self, key):
+        if not self.owners[key].ready or key in self.faults:
+            raise RuntimeError(
+                "Previous stop was not confirmed; choose Retry hold on the patient dashboard. "
+                + self.faults.get(key, "")
+            )
 
     async def _release(self, key):
         self.replay_barrier.released(key)
@@ -681,23 +714,48 @@ class Application:
 
     async def _recover_holds(self):
         # Feedback recovery alone cannot confirm a failed Stop. Retry only hold,
-        # with no owner; new motion always requires a fresh surgeon input.
+        # preserving any reservation; new motion requires a fresh surgeon input.
         for robot in self.inventory()["robots"]:
             key = robot["id"]
             owner = self.owners.get(key)
-            if (
-                key in self.faults
-                and owner
-                and not owner.owner
-                and robot["status"] == "online"
-                and not robot["stale"]
-            ):
-                await self._release(key)
+            if key in self.faults and owner and robot["status"] == "online" and not robot["stale"]:
+                if owner.owner:
+                    await self._stop_reserved(key)
+                else:
+                    await self._release(key)
+
+    async def _stop_reserved(self, key):
+        """Confirm a stop without discarding the surgeon's reservation."""
+        owner = self.owners[key]
+        owner.ready = False
+        self.replay_barrier.released(key)
+        node, device = key.split(":", 1)
+        try:
+            await self.replay_handoff.released(key)
+            await self.node_call(node, "robot.release", {"key": device, "token": owner.token})
+            owner.ready = True
+            self.faults.pop(key, None)
+        except Exception as exc:
+            reason = str(exc) or f"{type(exc).__name__}: robot stop was not confirmed"
+            if self.faults.get(key) != reason:
+                LOG.warning("Disconnected controller stop: %s", reason)
+            owner.ready = False
+            self.faults[key] = reason
 
     async def _release_owner(self, peer):
         for key, owner in self.owners.items():
             if owner.owner == peer:
                 await self._release(key)
+
+    async def _suspend_owner(self, peer):
+        """Disconnect stops device input but preserves an identified surgeon's lock."""
+        for key, owner in self.owners.items():
+            if owner.owner != peer:
+                continue
+            if not owner.identity:
+                await self._release(key)
+                continue
+            await self._stop_reserved(key)
 
     async def connect(self, address, name, robot):
         if self.remote and self.remote_status.get("status") == "revoked":
@@ -746,6 +804,10 @@ class Application:
             self.remote_status = await self.remote.call(
                 "access.request", {"name": name, "robot": robot, "credential": self._identity()}
             )
+            self.tokens.update(self.remote_status.pop("control_tokens", {}))
+            self.sequences.update(self.remote_status.pop("control_sequences", {}))
+            for key in self.tokens:
+                self.sequences.setdefault(key, 0)
         except BaseException:
             await self.remote.close()
             raise
@@ -812,6 +874,7 @@ class Application:
             "role": self.role,
             "sdk": require_sdk().__version__,
             "patient": self.address,
+            "controlled_robots": list(self.tokens),
             "session": {
                 **self.remote_status,
                 **(
@@ -981,6 +1044,9 @@ class Application:
                     params["address"], params["name"], params.get("robot", False)
                 )
             if method == "disconnect":
+                for key in list(self.tokens):
+                    with contextlib.suppress(Exception):
+                        await self.action("robot.release", {"id": key})
                 if self.remote:
                     await self.remote.close()
                 self.remote_status = {"status": "disconnected"}
@@ -1161,6 +1227,9 @@ class Application:
             return await self.run(self.access.approve, params["id"], params.get("robot", False))
         if method in {"access.revoke", "access.reject"}:
             async with self.control_lock:
+                identity = self.access.identities.get(params["id"])
+                if params["id"].startswith("remembered:"):
+                    identity = params["id"].removeprefix("remembered:")
                 affected = await self.run(self.access.revoke, params["id"])
                 for peer_id in affected:
                     await self._close_viewers(peer_id)
@@ -1170,6 +1239,9 @@ class Application:
                         item["peer"].clear_frames()
                         item["peer"].event("revoked", {})
                     await self._release_owner(peer_id)
+                for key, owner in self.owners.items():
+                    if identity and owner.owner and owner.identity == identity:
+                        await self._release(key)
             return True
         if method == "robot.revoke":
             async with self.control_lock:
@@ -1395,6 +1467,7 @@ class Application:
                 elif self.remote and not self.remote.closed.is_set() and tick % 5 == 0:
                     before = time.time()
                     started = time.monotonic()
+                    observed_tokens = dict(self.tokens)
                     reply = await self.remote.call("status")
                     received = time.time()
                     state = await self.run(lambda value: value, reply)
@@ -1417,6 +1490,14 @@ class Application:
                         await self.controller.close()
                     self.remote_status = state
                     if state.get("status") == "approved":
+                        owned = {
+                            robot["id"]
+                            for robot in state.get("robots", [])
+                            if robot.get("owner_id") == state.get("id")
+                        }
+                        for key, token in observed_tokens.items():
+                            if key not in owned and self.tokens.get(key) == token:
+                                self.tokens.pop(key, None)
                         await self._sync_streams()
                 elif self.role == "surgeon" and self.remote and self.remote.closed.is_set():
                     if self.remote_status.get("status") != "disconnected":

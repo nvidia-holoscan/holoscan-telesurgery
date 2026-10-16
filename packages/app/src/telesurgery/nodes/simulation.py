@@ -4,9 +4,12 @@
 """Supervise one node's simulation while reporting startup progress."""
 
 import asyncio
+import logging
 
 from telesurgery_sim.environments.presets import PRESETS
 from telesurgery_sim.runtime.launch import Simulation
+
+LOG = logging.getLogger(__name__)
 
 
 class NodeSimulation:
@@ -33,6 +36,7 @@ class NodeSimulation:
             self.node.local.simulation = await self.simulation.start()
         except (OSError, RuntimeError, ValueError) as exc:
             self.error = str(exc)
+            LOG.error("Simulation %s could not start: %s", self.environment, self.error)
 
     def status(self):
         if self.changing:
@@ -44,6 +48,8 @@ class NodeSimulation:
         return {"environment": self.environment, "simulation": status}
 
     async def log(self):
+        if self.error:
+            return {"text": self.error, "updated_seconds_ago": None}
         if self.simulation:
             return await asyncio.to_thread(self.simulation.log)
         return {"text": self.error, "updated_seconds_ago": None}

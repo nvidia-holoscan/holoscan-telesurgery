@@ -13,8 +13,103 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 
 @pytest.mark.asyncio
+async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input():
+    robot = {
+        "id": "node:franka",
+        "name": "Franka",
+        "kind": "franka-sim",
+        "status": "online",
+        "simulation": True,
+        "controls": {"groups": {"joints": 7}, "step_deg": 1},
+        "state": {"sequence": 1, "control_active": False},
+    }
+    state = {
+        "role": "surgeon",
+        "sdk": "5",
+        "selected": [],
+        "controlled_robots": [],
+        "session": {
+            "id": "operator",
+            "name": "Operator",
+            "status": "approved",
+            "robot": True,
+            "robots": [robot],
+            "cameras": [],
+        },
+    }
+    calls = []
+    fail_renew = False
+    failed = asyncio.Event()
+
+    async def route(route):
+        path = route.request.url.removeprefix("http://localhost:8777/")
+        if path.startswith("api/status"):
+            await route.fulfill(json=state)
+        elif path == "api/action":
+            method = route.request.post_data_json["action"]
+            calls.append(method)
+            if method == "robot.acquire":
+                robot.update(owner="Operator", owner_id="operator")
+                state["controlled_robots"] = [robot["id"]]
+            elif method == "robot.renew" and fail_renew:
+                failed.set()
+                await route.fulfill(status=409, json={"error": "Patient request timed out"})
+                return
+            elif method == "robot.release":
+                robot.update(owner=None, owner_id=None)
+                state["controlled_robots"] = []
+            robot["state"]["sequence"] += 1
+            await route.fulfill(json={"result": robot["state"]})
+        else:
+            await route.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            context = await browser.new_context()
+            await context.route("http://localhost:8777/**", route)
+            page = await context.new_page()
+            await page.goto("http://localhost:8777/")
+            acquire = page.get_by_role("button", name="Acquire control", exact=True)
+            await acquire.click()
+            key = page.locator('.key-cap[data-key="g"]')
+            await expect(key).to_be_enabled()
+            await page.locator(".keyboard-controls").focus()
+            await page.keyboard.down("g")
+            async with asyncio.timeout(3):
+                while "robot.move" not in calls:
+                    await page.wait_for_timeout(25)
+            await page.reload()
+            await expect(key).to_be_enabled()
+            await expect(acquire).to_be_hidden()
+            assert calls.count("robot.acquire") == 1
+            assert "robot.release" not in calls
+            assert "robot.hold" in calls
+            moved = calls.count("robot.move")
+            await page.wait_for_timeout(700)
+            assert calls.count("robot.move") == moved
+            fail_renew = True
+            await asyncio.wait_for(failed.wait(), 3)
+            fail_renew = False
+            await expect(key).to_be_enabled()
+            assert "robot.release" not in calls
+            assert calls.count("robot.acquire") == 1
+            assert calls.count("robot.move") == moved
+            # The patient releases the lock while this tab is still open.
+            robot.update(owner=None, owner_id=None)
+            state["controlled_robots"] = []
+            await expect(acquire).to_be_visible()
+            await page.reload()
+            await expect(acquire).to_be_visible()
+            await expect(key).to_be_disabled()
+            assert calls.count("robot.acquire") == 1
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("hold_fails", [False, True])
-async def test_rejected_move_holds_control_unless_stop_also_fails(hold_fails):
+async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fails):
     robot = {
         "id": "node:franka",
         "name": "Franka",
@@ -67,18 +162,17 @@ async def test_rejected_move_holds_control_unless_stop_also_fails(hold_fails):
             await key.hover()
             await page.mouse.down()
             for _ in range(120):
-                if "robot.hold" in calls and (not hold_fails or "robot.release" in calls):
+                if "robot.hold" in calls:
                     break
                 await page.wait_for_timeout(25)
             assert "robot.hold" in calls, calls
             await page.wait_for_timeout(300)
             assert calls.count("robot.move") == 1  # Never replay the held key after rejection.
-            assert ("robot.release" in calls) == hold_fails
+            assert "robot.release" not in calls
             release = page.get_by_role("button", name="Release control", exact=True)
             if hold_fails:
-                await expect(release).to_be_hidden()
-            else:
-                await expect(release).to_be_visible()
+                await expect(key).to_be_disabled()
+            await expect(release).to_be_visible()
             await page.mouse.up()
         finally:
             await browser.close()

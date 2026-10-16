@@ -182,6 +182,7 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             await page.get_by_role("button", name="Stop", exact=True).click()
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
             assert calls[-1]["action"] == "robot.hold"
+            count = len(moves())
             robot["error"] = "Franka Home did not reach its target before timeout"
             await page.clock.run_for(1000)
             await expect(page.locator("#robots .status")).to_have_text("Control error")
@@ -189,8 +190,12 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             await expect(plus).to_be_disabled()
             robot["error"] = ""
             await page.clock.run_for(1000)
-            await expect(page.locator("#robots .status")).to_have_text("Available")
+            await expect(page.locator("#robots .status")).to_have_text("Active · you")
             await expect(page.locator("#robots .status")).to_have_class("status online")
+            await expect(plus).to_be_enabled()
+            assert len(moves()) == count  # Recovery keeps the lock but cannot resume old input.
+            assert len([c for c in calls if c["action"] == "robot.acquire"]) == 1
+            assert not any(c["action"] == "robot.release" for c in calls)
             await page.screenshot(path=str(tmp_path / "franka-steps.png"), full_page=True)
             assert not errors
         finally:

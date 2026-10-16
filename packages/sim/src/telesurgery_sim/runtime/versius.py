@@ -9,10 +9,50 @@ import queue
 import threading
 import time
 from concurrent.futures import Future
+from dataclasses import replace
+
+
+def capture_frame(camera, sequence, commands, *, depth=False):
+    """Capture one raw frame with complete source-stage timing."""
+    import cv2
+    import numpy as np
+    from telesurgery_core.transport.protocol import VideoHeader
+    from telesurgery_core.video.depth import attach
+    from telesurgery_core.video.formats import encode_raw
+    from telesurgery_core.video.model import Frame
+
+    capture_started = time.monotonic_ns()
+    pixels, _ = camera.get_data("rgb")
+    if pixels is None:
+        return None
+    rgb = np.asarray(pixels.numpy(), np.uint8)
+    if not rgb.size:
+        return None
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    pack_started = time.monotonic_ns()
+    header = VideoHeader(
+        sequence,
+        time.time_ns(),
+        bgr.shape[1],
+        bgr.shape[0],
+        sim_command_sequence=commands,
+        source_started_ns=capture_started,
+        acquisition_ns=pack_started - capture_started,
+    )
+    header, data = encode_raw(Frame(header, bgr))
+    if depth:
+        distances, _ = camera.get_data("distance_to_image_plane")
+        if distances is not None:
+            header, data = attach(
+                header,
+                data,
+                np.asarray(distances.numpy(), np.float32).reshape(header.height, header.width),
+            )
+    encoded = time.monotonic_ns()
+    return replace(header, pack_ns=encoded - pack_started, encoded_ns=encoded), data
 
 
 def run(app, args):
-    import cv2
     import numpy as np
     import omni.timeline
     import omni.usd
@@ -20,11 +60,8 @@ def run(app, args):
     from isaacsim.core.experimental.prims import RigidPrim
     from isaacsim.sensors.experimental.rtx import CameraSensor, RtxCamera
     from pxr import Gf, PhysxSchema, UsdGeom, UsdLux, UsdPhysics
-    from telesurgery_core.transport.protocol import MAX_FRAME, VideoHeader
+    from telesurgery_core.transport.protocol import MAX_FRAME
     from telesurgery_core.transport.zmq import open_socket
-    from telesurgery_core.video.depth import attach
-    from telesurgery_core.video.formats import encode_raw
-    from telesurgery_core.video.model import Frame
     from telesurgery_robots.simulation.state import SimRobot
     from telesurgery_robots.versius import ARMS
     from telesurgery_sim.environments.assets import fetch, place_static
@@ -326,29 +363,10 @@ def run(app, args):
                 for future, arm in reset_replies:
                     future.set_result(robots[arm].apply({"method": "get_state"}))
             for index, camera in enumerate(cameras):
-                pixels, _ = camera.get_data("rgb")
-                if pixels is None:
+                frame = capture_frame(camera, sequence, commands, depth=depth_enabled[index])
+                if frame is None:
                     continue
-                rgb = np.asarray(pixels.numpy(), np.uint8)
-                if not rgb.size:
-                    continue
-                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                header = VideoHeader(
-                    sequence,
-                    time.time_ns(),
-                    bgr.shape[1],
-                    bgr.shape[0],
-                    sim_command_sequence=commands,
-                )
-                header, data = encode_raw(Frame(header, bgr))
-                if depth_enabled[index]:
-                    distances, _ = camera.get_data("distance_to_image_plane")
-                    if distances is not None:
-                        header, data = attach(
-                            header,
-                            data,
-                            np.asarray(distances.numpy(), np.float32).reshape(bgr.shape[:2]),
-                        )
+                header, data = frame
                 try:
                     publishers[index].send_multipart([header.encode(), data], zmq.NOBLOCK)
                 except zmq.Again:

@@ -93,7 +93,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Use CUDA 13 minor-version compatibility instead of cuda-compat's newer driver.
 RUN apt-get purge -y 'cuda-compat-*' \
     && apt-get update && apt-get install -y --no-install-recommends \
-    python3.12-venv python3-tk python3-websocket libsdl2-2.0-0 xvfb xauth \
+    python3.12-venv python3-tk python3-websocket python3-yaml libsdl2-2.0-0 xvfb xauth \
     ca-certificates chrony docker.io \
     libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
     libvulkan1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6 \
@@ -116,5 +116,8 @@ COPY --from=application /opt/application/ /opt/telesurgery/
 COPY --from=application /app/packages ./packages
 COPY examples/controller-replays ./examples/controller-replays
 COPY pyproject.toml uv.lock README.md LICENSE NOTICE SECURITY.md ./
+# Native controls use desktop Python, whose dependencies are separate from the SDK venv.
+RUN PYTHONPATH=/app/packages/app/src:/app/packages/core/src \
+    /usr/bin/python3 -c 'import telesurgery.controller.window'
 ENTRYPOINT ["python", "-m", "telesurgery"]
 CMD ["--help"]

@@ -106,7 +106,8 @@ class NativeController:
                         ),
                     )
                 )
-                with (self.directory / "controller.log").open("w") as log:
+                log_path = self.directory / "controller.log"
+                with log_path.open("w") as log:
                     self.process = await asyncio.create_subprocess_exec(
                         python,
                         "-m",
@@ -124,8 +125,11 @@ class NativeController:
                         ):
                             return True
                         if state["status"] in {"error", "closed"}:
+                            exit_code = self.process.returncode
                             raise RuntimeError(
-                                state.get("error", "Native controller closed during startup")
+                                (state.get("error") or "Native controller closed during startup")
+                                + (f" (exit code {exit_code})" if exit_code is not None else "")
+                                + f"; see {log_path}"
                             )
                         await asyncio.sleep(0.05)
             except BaseException:

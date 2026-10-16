@@ -81,7 +81,11 @@ class NodeClient:
             )
         except BaseException:
             writer.close()
-            await writer.wait_closed()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), 2)
+            except (OSError, TimeoutError):
+                # TLS shutdown must not hide a rejected patient identity.
+                writer.transport.abort()
             raise
         self.peer = Peer(reader, writer, self.request, clock=self.clock, max_payload=0).start()
         while True:
