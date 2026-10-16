@@ -37,6 +37,8 @@ let state,
     refreshing = false,
     changingCameras = false,
     changingWorkspace = false,
+    switchingRobot = false,
+    changingController = false,
     robotId = null,
     preferredRobot = null,
     robotPreferenceKey,
@@ -97,15 +99,39 @@ const nativeControllerOpen = () => ["starting", "running"].includes(state?.nativ
 const controllerPreferences = () => Object.fromEntries([...motionValues].filter(([key]) =>
     [":arm-speed", ":roll-speed", ":grip-speed"].some(suffix => key.endsWith(suffix))));
 let restoredController;
+async function transferController(native) {
+    if (changingController) return;
+    changingController = true;
+    const id = robotId;
+    let transferred = false;
+    try {
+        if (native) {
+            const retain = await robots.prepareHandoff(id);
+            await action("controller.open", {
+                id, preferences: controllerPreferences(), input: robots.inputSelection(id),
+                retain_control: retain,
+            });
+            transferred = true;
+        } else {
+            const result = await action("controller.close", {retain_control: true});
+            if (result?.robot) {
+                robotId = preferredRobot = result.robot;
+                robots.acceptHandoff(result.robot, result.state);
+            }
+        }
+    } catch (error) {
+        if (native) await robots.recoverHandoff(id);
+        throw error;
+    } finally {
+        if (native) robots.finishHandoff(id, transferred);
+        changingController = false;
+    }
+}
 $("#native-controller").onclick = async () => {
     const control = $("#native-controller");
     control.disabled = true;
     try {
-        await robots.releaseAll();
-        await action(nativeControllerOpen()
-            ? "controller.close" : "controller.open", {
-                id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
-            });
+        await transferController(!nativeControllerOpen());
         await refresh();
     } catch (error) {
         notice(error);
@@ -688,6 +714,7 @@ function renderRobots(data, isPatient, approved) {
         picker.dataset.options = options;
     }
     picker.value = robotId || "";
+    picker.disabled = switchingRobot || changingController || changingWorkspace;
     $("#robot-choice").hidden = isPatient || !available;
     if (!isPatient) robotList = robotList.filter((r) => r.id === robotId);
     $("#robots-panel").hidden = isPatient
@@ -703,7 +730,8 @@ function renderRobots(data, isPatient, approved) {
           : "EXCLUSIVE ACCESS";
     const nativeOpen = nativeControllerOpen();
     $("#native-controller").hidden = isPatient || viewOnly;
-    $("#native-controller").disabled = !approved || (!nativeOpen && !robotId);
+    $("#native-controller").disabled = changingController || changingWorkspace || switchingRobot
+        || !approved || (!nativeOpen && !robotId);
     $("#native-controller").setAttribute("aria-pressed", String(nativeOpen));
     setIcon($("#native-controller"), nativeOpen ? "dock" : "popout", nativeOpen ? "Dock robot controls" : "Pop out robot controls");
     $("#native-controller-away").hidden = !nativeOpen;
@@ -935,10 +963,10 @@ function renderCurrent() {
     $("#empty-add-feeds").hidden = isPatient;
     $("#hide-all").disabled = !state.selected?.length;
     $("#popout-all").disabled =
-        changingWorkspace ||
+        changingWorkspace || changingController || switchingRobot ||
         (!selectedPopoutCameras().length && (!currentRobotControl() || nativeControllerOpen()));
     $("#dock-all").disabled =
-        changingWorkspace ||
+        changingWorkspace || changingController || switchingRobot ||
         (!nativeControllerOpen() &&
             !Object.keys(state.native_views || {}).some(nativeViewing));
     $("#show-all").disabled = !cameras.some((c) =>
@@ -979,14 +1007,38 @@ $("#disconnect").addEventListener("click", async () => {
 });
 $("#robot-selector").onchange = async (event) => {
     const selected = event.target.value;
-    await robots.releaseAll();
-    robotId = preferredRobot = selected;
-    try {
-        localStorage.setItem(robotPreferenceKey, selected);
-    } catch {
-        /* Selection remains usable without browser storage. */
-    }
+    event.target.value = robotId || "";
+    if (switchingRobot || changingController || changingWorkspace || selected === robotId) return;
+    switchingRobot = true;
+    robots.switching(true);
     renderCurrent();
+    try {
+        if (robots.hasControl()) {
+            const dialog = $("#switch-robot-dialog");
+            const next = state.session?.robots?.find(robot => robot.id === selected);
+            $("#switch-robot-name").textContent = next ? robotLabel(next) : selected;
+            dialog.returnValue = "cancel";
+            const confirmed = new Promise(resolve => dialog.addEventListener(
+                "close", () => resolve(dialog.returnValue === "switch"), {once: true},
+            ));
+            dialog.showModal();
+            if (!await confirmed) return;
+        }
+        if (!await robots.releaseAll())
+            throw new Error("Control release was not confirmed. Robot selection kept; retry release before switching.");
+        robotId = preferredRobot = selected;
+        try {
+            localStorage.setItem(robotPreferenceKey, selected);
+        } catch {
+            /* Selection remains usable without browser storage. */
+        }
+    } catch (error) {
+        notice(error);
+    } finally {
+        switchingRobot = false;
+        robots.switching(false);
+        renderCurrent();
+    }
 };
 function feeds() {
     robots.releaseAll();
@@ -1068,15 +1120,12 @@ async function changeWorkspace(native) {
     // Retire browser offers before native viewers claim those streams.
     renderCurrent();
     try {
-        await robots.releaseAll();
         const failures = [];
         try {
             if (native && currentRobotControl())
-                await action("controller.open", {
-                    id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
-                });
+                await transferController(true);
             else if (!native && nativeControllerOpen())
-                await action("controller.close");
+                await transferController(false);
         } catch (error) {
             failures.push(`Robot controls: ${error.message}`);
         }

@@ -68,6 +68,7 @@ class Control:
         self.pending = None
         self.owned = None
         self.releasing = False
+        self.release_failed = None
         self.stopping = self.moving = False
         self.last_renew = 0
         self.reply = {}
@@ -76,7 +77,12 @@ class Control:
 
     @property
     def ready(self):
-        return self.pending is None and not self.releasing and not self.stopping
+        return (
+            self.pending is None
+            and not self.releasing
+            and not self.stopping
+            and not self.release_failed
+        )
 
     def _send(self, method, params):
         if self.pending is not None:
@@ -94,6 +100,14 @@ class Control:
         self.owned = robot  # Keep the credential available if the reply is interrupted.
         self.error = ""
         return self._send("robot.acquire", {"id": robot})
+
+    def adopt(self, robot):
+        """Accept an explicit UI handoff by validating the existing lease only."""
+        if not self.ready or self.owned:
+            return False
+        self.owned = robot
+        self.error = ""
+        return self._send("robot.renew", {"id": robot})
 
     def move(self, robot, mode, command, speed, *, replay_run=None):
         if not self.ready or self.owned != robot:
@@ -117,7 +131,8 @@ class Control:
         self.stopping = bool(self.owned and self.moving)
 
     def release(self, robot=None):
-        self.owned = self.owned or robot
+        self.owned = self.owned or self.release_failed or robot
+        self.release_failed = None
         self.releasing = bool(self.owned)
 
     def poll(self, now):
@@ -133,6 +148,8 @@ class Control:
             except Exception as exc:
                 self.error = str(exc)
                 self.failed = True
+                if method == "robot.release":
+                    self.release_failed = robot
                 if method == "robot.move" and self.owned:
                     self.stop()
                 elif method != "robot.release":
@@ -140,6 +157,8 @@ class Control:
             if method == "robot.hold":
                 self.stopping = self.moving = False
             if method == "robot.release":
+                if not self.release_failed:
+                    self.error = ""
                 self.owned = None
                 self.releasing = False
                 self.stopping = self.moving = False

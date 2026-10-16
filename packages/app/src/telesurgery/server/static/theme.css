@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-:root[data-theme="dark"] {
+:is(:root, .theme-preview):is([data-theme="dark"], [data-theme="midnight"], [data-theme="ocean"]) {
     color-scheme: dark;
     --theme-page: #10171e;
     --theme-surface: #19232d;
@@ -27,20 +27,133 @@
     --theme-chart-wash: #19232d00;
 }
 
-.theme-choice {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0;
-    color: var(--muted);
-    font-size: 12px;
-    white-space: nowrap;
+:is(:root, .theme-preview)[data-theme="midnight"] {
+    --theme-page: #0c1020;
+    --theme-surface: #151c30;
+    --theme-surface-soft: #1c2640;
+    --theme-surface-hover: #283653;
+    --theme-selected: #2a3b35;
+    --theme-ink: #e9edf8;
+    --theme-text: #c5cee4;
+    --theme-muted: #a3b0cd;
+    --theme-border: #35425e;
+    --theme-line-soft: #2a3650;
+    --theme-chart-wash: #151c3000;
 }
-.theme-choice select {
-    width: auto;
-    min-width: 86px;
-    min-height: 34px;
+
+:is(:root, .theme-preview)[data-theme="ocean"] {
+    --theme-page: #0c1b20;
+    --theme-surface: #142c33;
+    --theme-surface-soft: #1a3740;
+    --theme-surface-hover: #24454e;
+    --theme-selected: #2b4534;
+    --theme-ink: #e4f2f2;
+    --theme-text: #c0d8da;
+    --theme-muted: #9fbec3;
+    --theme-border: #36565f;
+    --theme-line-soft: #294650;
+    --theme-chart-wash: #142c3300;
+}
+
+:is(:root, .theme-preview)[data-theme="warm"] {
+    color-scheme: light;
+    --theme-page: #f3efe7;
+    --theme-surface: #fffcf6;
+    --theme-surface-soft: #f3ede2;
+    --theme-surface-hover: #ebe4d6;
+    --theme-selected: #e6edda;
+    --theme-ink: #302e27;
+    --theme-text: #514e43;
+    --theme-muted: #706b5f;
+    --theme-border: #d8d0c2;
+    --theme-line-soft: #e6dfd3;
+    --theme-link: #46651b;
+    --theme-green-border: #95a777;
+    --theme-danger: #a33730;
+    --theme-danger-border: #dfbcb3;
+    --theme-warning: #795610;
+    --theme-warning-surface: #faedcd;
+    --theme-warning-border: #d9bd80;
+    --theme-shadow: #4b39201c;
+    --theme-stripe: #4b392006;
+    --theme-chart-wash: #fffcf600;
+}
+
+#appearance-panel {
+    position: fixed;
+    inset: auto;
     margin: 0;
-    padding: 5px 9px;
-    font-size: 12px;
+    width: min(300px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--ink);
+    background: var(--theme-surface, #fff);
+    box-shadow: 0 12px 40px var(--theme-shadow, #18211d24);
+}
+#appearance-panel h2 { font-size: 12px; margin-bottom: 10px; }
+#theme-choices {
+    margin: 0; padding: 0; border: 0;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px;
+}
+.theme-option {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 1px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--ink);
+    font-size: 10px;
+    cursor: pointer;
+}
+.theme-option:hover { background: var(--theme-surface-soft, #f6f8f7); }
+.theme-option:has(input:checked) {
+    background: var(--theme-selected, #edf5df);
+}
+.theme-option:has(input:focus-visible) { outline: 2px solid #76b900; outline-offset: 2px; }
+.theme-option input[type="radio"] {
+    position: absolute; inset: 0; z-index: 1; opacity: 0;
+    width: 100%; height: 100%; min-height: 0; padding: 0; margin: 0; cursor: pointer;
+}
+.theme-option > .icon {
+    position: absolute; right: 2px; top: 2px;
+    width: 14px; height: 14px; padding: 2px; border-radius: 50%;
+    background: #76b900; color: #172700; stroke-width: 2.5; visibility: hidden;
+}
+.theme-option:has(input:checked) > .icon { visibility: visible; }
+.theme-preview {
+    position: relative;
+    display: block;
+    flex: none;
+    width: 36px;
+    height: 28px;
+    border: 1px solid var(--theme-border, #e1e5e4);
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--theme-page, #f5f6f7);
+}
+.theme-preview[data-theme="light"] {
+    --theme-page: #f5f6f7;
+    --theme-surface: #fff;
+    --theme-border: #e1e5e4;
+}
+.theme-preview-bar {
+    display: block;
+    height: 6px;
+    border-bottom: 1px solid var(--theme-border, #e1e5e4);
+    background: var(--theme-surface, #fff);
+}
+.theme-preview-card {
+    display: block;
+    height: 13px;
+    margin: 3px 4px;
+    border-left: 3px solid #76b900;
+    border-radius: 2px;
+    background: var(--theme-surface, #fff);
 }

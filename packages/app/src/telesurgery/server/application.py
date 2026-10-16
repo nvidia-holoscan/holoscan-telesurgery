@@ -843,6 +843,14 @@ class Application:
                 robot, {**params, "enabled": params.get("enabled") is True and enabled}
             )
         if method == "controller.close":
+            if params.get("retain_control") is True:
+                closed = await self.controller.close(retain_control=True)
+                if closed.get("handoff_error"):
+                    raise RuntimeError(closed["handoff_error"])
+                if key := closed.get("handoff"):
+                    state = await self.action("robot.renew", {"id": key})
+                    return {"robot": key, "state": state}
+                return {"robot": None}
             await self.controller.close()
             return True
         if method == "controller.open":
@@ -859,12 +867,19 @@ class Application:
                 r["id"] == selected for r in self.remote_status.get("robots", [])
             ):
                 raise ValueError("Robot is unavailable")
+            retain = params.get("retain_control") is True
+            if retain:
+                if selected not in self.tokens:
+                    raise RuntimeError("Robot control is no longer acquired")
+                await self.action("replay.cancel", {"id": selected})
+                await self.action("robot.hold", {"id": selected})
             return await self.controller.open(
                 self.controller_server,
                 selected,
                 self.controller_certificate,
                 params.get("preferences"),
                 params.get("input"),
+                **({"retain_control": True} if retain else {}),
             )
         if method == "view.depth":
             return await self.native.display(**params)

@@ -33,12 +33,16 @@ SPDX-License-Identifier: Apache-2.0
                 ></a
             >
             <div class="header-actions">
-                <label class="theme-choice" for="theme-choice">Theme
-                    <select id="theme-choice" aria-label="Color theme">
-                        <option value="light">Light</option>
-                        <option value="dark">Dark</option>
-                    </select>
-                </label>
+                <button id="appearance-button" type="button" class="secondary icon-button"
+                    popovertarget="appearance-panel" aria-haspopup="dialog" aria-expanded="false"
+                    data-icon="appearance">Appearance</button>
+                <div id="appearance-panel" popover role="dialog" aria-labelledby="appearance-title">
+                    <h2 id="appearance-title">Appearance</h2>
+                    <p id="appearance-scope" class="sr-only">Surgeon dashboard</p>
+                    <fieldset id="theme-choices">
+                        <legend class="sr-only">Color theme</legend>
+                    </fieldset>
+                </div>
                 <div id="patient-stop-actions" class="actions" hidden>
                     <button
                         id="stop-all-streams"
@@ -695,6 +699,17 @@ SPDX-License-Identifier: Apache-2.0
                     <button type="submit" id="start-stream">
                         Start stream
                     </button>
+                </div>
+            </form>
+        </dialog>
+        <dialog id="switch-robot-dialog" aria-labelledby="switch-robot-title" data-dismiss-outside>
+            <form method="dialog">
+                <h2 id="switch-robot-title">Release control and switch?</h2>
+                <p>Release the current robot before selecting <strong id="switch-robot-name"></strong>.</p>
+                <p>Acquire control of the new robot when you are ready.</p>
+                <div class="actions">
+                    <button value="cancel" class="secondary" autofocus>Cancel</button>
+                    <button value="switch">Release control and switch</button>
                 </div>
             </form>
         </dialog>

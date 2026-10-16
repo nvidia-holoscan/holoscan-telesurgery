@@ -807,6 +807,16 @@ def test_franka_pen_pose_uses_bounded_cartesian_jog(robot, change, kind, axis, s
     assert all(math.hypot(*v) <= 1.000001 for v in command.values())
     assert driver.mapper.arm == "hand"
     assert driver.mapper.position_mm(driver.state) == [500, 0, 300]
+    # Reaching the target must keep the velocity session alive, even for
+    # hardware that cannot report a stop_reason during a full Hold.
+    for _ in range(4):
+        assert driver.tick(position=(0, 0, 0), orientation=(0, 0, 0, 1)) == (
+            "jog",
+            {"translation": [0, 0, 0], "rotation": [0, 0, 0]},
+        )
+        assert not driver.mapper.paused
+    mode, command = driver.tick(**change)
+    assert mode == "jog" and command[kind][axis] * sign > 0
     driver.state.update(stopping=True, stop_reason="released")
     assert driver.tick() is None
     assert not driver.mapper.paused

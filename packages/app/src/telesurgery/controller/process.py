@@ -7,6 +7,7 @@ import asyncio
 import json
 import math
 import os
+import signal
 import sys
 import tempfile
 from pathlib import Path
@@ -29,7 +30,16 @@ class NativeController:
             state["status"] = "closed"
         return state
 
-    async def open(self, server, robot=None, certificate=None, preferences=None, input_device=None):
+    async def open(
+        self,
+        server,
+        robot=None,
+        certificate=None,
+        preferences=None,
+        input_device=None,
+        *,
+        retain_control=False,
+    ):
         preferences = preferences or {}
         if (
             not isinstance(preferences, dict)
@@ -72,6 +82,7 @@ class NativeController:
                         "status_path": str(self.path),
                         "generation": self.temporary.name,
                         "input": input_device,
+                        "retain_control": retain_control,
                         "preferences": {**self.finished.get("preferences", {}), **preferences},
                     }
                 )
@@ -108,7 +119,9 @@ class NativeController:
                 async with asyncio.timeout(10):
                     while True:
                         state = self.status()
-                        if state["status"] == "running":
+                        if state["status"] == "running" and (
+                            not retain_control or state.get("acquired") == robot
+                        ):
                             return True
                         if state["status"] in {"error", "closed"}:
                             raise RuntimeError(
@@ -119,9 +132,12 @@ class NativeController:
                 await self._close()
                 raise
 
-    async def _close(self):
+    async def _close(self, retain_control=False):
         if self.process and self.process.returncode is None:
-            self.process.terminate()
+            if retain_control:
+                self.process.send_signal(signal.SIGUSR1)
+            else:
+                self.process.terminate()
             try:
                 await asyncio.wait_for(self.process.wait(), 10)
             except TimeoutError:
@@ -133,6 +149,7 @@ class NativeController:
             self.temporary.cleanup()
         self.temporary = self.path = None
 
-    async def close(self):
+    async def close(self, *, retain_control=False):
         async with self.lock:
-            await self._close()
+            await self._close(retain_control)
+            return self.finished

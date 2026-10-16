@@ -70,7 +70,7 @@ For hardware, use the [physical device commands](#physical-devices). On another 
 
 Approve each node under **Nodes** in Patient. The node automatically starts configured controllers, connects its robots and starts discovered streams using saved settings, or the device defaults on first use. Physical MIRA controller startup can enable motor power. Stop and Disconnect remain available; acquisition and motion commands remain explicit.
 
-Both dashboards have a **Light / Dark** theme selector. Patient defaults to Dark and Surgeon to Light; each remembers your choice in this browser.
+Use the **Appearance** palette icon in either dashboard to preview and choose **Light**, **Dark**, **Midnight**, **Ocean**, or **Warm**. Patient defaults to Dark and Surgeon to Light; each remembers your choice in this browser.
 
 ### 3. Surgeon
 

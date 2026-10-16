@@ -85,14 +85,16 @@ export function haplyInput(robot, send, stop, speeds) {
     ]) grip.append(element("p", text));
     container.append(header, calibrationError, range, position, arms, roll, hint);
     container.hidden = true;
-    let enabled = false, allowed = false, disposed = false, active = false;
+    let enabled = false, allowed = false, disposed = false, active = false, armed = false;
     let token = crypto.randomUUID(), busy = false, lastTick = performance.now();
     let calibrationAction, collecting = false, calibrationFailure = "", savedUntil = 0;
     let pauseReason = "";
     const halt = (reason = "") => {
+        const wasArmed = armed || active;
+        armed = false;
         token = crypto.randomUUID();
         status.textContent = status.textContent.replace(/^Active/, "Paused");
-        if (reason) {
+        if (reason && wasArmed) {
             pauseReason = reason;
             hint.textContent = reason;
             hint.hidden = false;
@@ -119,9 +121,9 @@ export function haplyInput(robot, send, stop, speeds) {
     cancel.onclick = () => requestCalibration("cancel");
     async function poll() {
         const now = performance.now();
-        if (now - lastTick > 200 && active)
+        if (now - lastTick > 200 && (active || armed))
             halt("Control input was delayed; tap Start to resume.");
-        if (blocked() && active)
+        if (blocked() && (active || armed))
             halt("Control paused; return to this window and tap Start to resume.");
         lastTick = now;
         if (disposed || !enabled || busy) return;
@@ -140,10 +142,11 @@ export function haplyInput(robot, send, stop, speeds) {
                 return;
             }
             const paused = result.paused || !motionEnabled || blocked();
+            armed = !paused;
             arm = result.arm === "right" ? "right" : "left";
             status.textContent = `${paused ? "Paused" : "Active"}${dual ? ` · ${arm === "right" ? "Right" : "Left"} arm` : ""}`;
             showFeedback();
-            if (!paused || !motionEnabled) pauseReason = "";
+            if (!paused) pauseReason = "";
             else if (result.error && !result.tracking_error) pauseReason = result.error;
             hint.textContent = result.error || pauseReason;
             hint.hidden = !hint.textContent;
@@ -199,12 +202,15 @@ export function haplyInput(robot, send, stop, speeds) {
         element: container, arms, roll, grip,
         feedback: showFeedback,
         update(on, available) {
-            if ((enabled && !on) || (allowed && !available)) halt();
+            if ((enabled && !on) || (allowed && !available)) halt(
+                !on ? "Input device changed; tap Start to resume."
+                    : "Robot control paused; tap Start to resume when the arm is ready.",
+            );
             enabled = on;
             allowed = available;
             container.hidden = !on;
         },
-        stop: halt,
+        stop: (reason = "Movement stopped; tap Start to resume.") => halt(reason),
         destroy() { disposed = true; clearInterval(timer); halt(); },
     };
 }

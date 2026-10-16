@@ -4,6 +4,7 @@
 """Local Inverse3/VerseGrip input and bounded robot simulation mappings."""
 
 import json
+import logging
 import math
 import shutil
 import subprocess
@@ -276,6 +277,8 @@ class HaplyMapper:
         self.calibration.action(action, sample)
 
     def halt(self, error=""):
+        if not getattr(self, "paused", True):
+            logging.info("Haply paused: %s", error or "controller input reset")
         self.paused = True
         self.neutral = False
         self.buttons = frozenset()
@@ -607,17 +610,15 @@ class CartesianHaply(HaplyMapper):
         try:
             position, orientation = self.pose(state)
         except (KeyError, TypeError, ValueError):
-            self.halt()
-            self.error = "Waiting for robot tool-position feedback."
+            self.halt("Waiting for robot tool-position feedback.")
             return "release", {}
         if state.get("stopping"):
-            # Reaching the pen target requests a normal, decelerated hold.
-            # Wait for that ramp before following the pen again; a controller
-            # fault still requires an explicit restart.
+            # A clutch or gripper release can request a decelerated hold.
+            # Wait when the adapter explicitly identifies a normal release;
+            # a controller fault still requires an explicit restart.
             if state.get("stop_reason") == "released":
                 return None
-            self.halt()
-            self.error = state.get("stop_reason") or "Robot motion stopped."
+            self.halt(state.get("stop_reason") or "Robot motion stopped.")
             return "release", {}
         self.error = ""
         config = inputs.controls["cartesian"]
@@ -645,8 +646,7 @@ class CartesianHaply(HaplyMapper):
             [error[2, 1] - error[1, 2], error[0, 2] - error[2, 0], error[1, 0] - error[0, 1]]
         )
         if angle > math.radians(90):
-            self.halt()
-            self.error = "Pen orientation exceeded the following range."
+            self.halt("Pen orientation exceeded the following range.")
             return "release", {}
         angular = axis * angle / max(1e-9, np.linalg.norm(axis))
         linear = target - position
@@ -654,9 +654,12 @@ class CartesianHaply(HaplyMapper):
             linear[:] = 0
         if np.linalg.norm(angular) < math.radians(0.3):
             angular[:] = 0
-        if not np.any(linear) and not np.any(angular):
-            release, self.active = self.active, False
-            return ("release", {}) if release else None
+        if not np.any(linear) and not np.any(angular) and not self.active:
+            return None
+        # Once following, keep the Cartesian session alive with a zero twist
+        # at rest. A full Hold enters braking and can disarm the UI or delay
+        # the next input poll. Fresh pen samples still gate every command;
+        # Stop, tracking loss and the controller watchdog retain their holds.
         scale = inputs.speed / 20
         # Slow down on approach. Both vectors remain inside the same validated
         # velocity envelope as keyboard/gamepad, including the node watchdog.

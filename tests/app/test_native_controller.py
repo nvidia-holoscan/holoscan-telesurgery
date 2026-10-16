@@ -7,6 +7,7 @@ import asyncio
 import json
 import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, call
@@ -525,6 +526,129 @@ def test_native_does_not_claim_observed_same_session_ownership():
         assert not calls
     finally:
         control.close()
+
+
+def test_failed_native_release_blocks_acquisition_until_explicit_retry():
+    control = Control(Mock())
+    failed, released = Future(), Future()
+    failed.set_exception(RuntimeError("Stop was not confirmed"))
+    released.set_result({"sequence": 2})
+    control.worker.shutdown()
+    control.worker = Mock()
+    control.worker.submit.side_effect = [failed, released]
+    control.owned = "first"
+    control.release()
+    control.poll(1)
+    control.poll(1.01)
+    assert control.release_failed == "first"
+    assert not control.owned and not control.ready
+    assert not control.acquire("second")
+    assert not control.move("first", "jog", {"joints": [1]}, 10)
+    control.poll(5)
+    assert control.worker.submit.call_count == 1  # No automatic retry or renewal.
+    control.release()
+    control.poll(5.01)
+    control.poll(5.02)
+    assert control.release_failed is None and control.ready
+    assert not control.error
+
+
+def test_native_handoff_validates_existing_lease_without_acquiring():
+    control = Control(Mock())
+    reply = Future()
+    reply.set_result({"sequence": 2})
+    control.worker.shutdown()
+    control.worker = Mock()
+    control.worker.submit.return_value = reply
+    assert control.adopt("robot")
+    assert not control.ready
+    control.worker.submit.assert_called_once_with(
+        control.client.action, "robot.renew", {"id": "robot"}
+    )
+    control.poll(1)
+    assert control.ready and control.owned == "robot"
+    assert not control.adopt("different")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_fails", [False, True])
+async def test_controller_handoff_requires_confirmed_hold_and_existing_lease(stop_fails):
+    service = SimpleNamespace(
+        role="surgeon",
+        remote_status={"status": "approved", "robot": True, "robots": [{"id": "robot"}]},
+        controller=SimpleNamespace(
+            open=AsyncMock(), close=AsyncMock(return_value={"handoff": "robot"})
+        ),
+        controller_server="http://localhost:8002",
+        controller_certificate=None,
+        tokens={"robot": "existing"},
+    )
+    calls = []
+
+    async def action(method, params):
+        calls.append(method)
+        if stop_fails and method == "robot.hold":
+            raise RuntimeError("Hold failed")
+        return {"sequence": 3}
+
+    service.action = action
+    if stop_fails:
+        with pytest.raises(RuntimeError, match="Hold failed"):
+            await Application.action(
+                service, "controller.open", {"id": "robot", "retain_control": True}
+            )
+        service.controller.open.assert_not_awaited()
+        return
+    await Application.action(service, "controller.open", {"id": "robot", "retain_control": True})
+    assert calls == ["replay.cancel", "robot.hold"]
+    service.controller.open.assert_awaited_once_with(
+        "http://localhost:8002", "robot", None, None, None, retain_control=True
+    )
+    returned = await Application.action(service, "controller.close", {"retain_control": True})
+    assert returned == {"robot": "robot", "state": {"sequence": 3}}
+    assert calls == ["replay.cancel", "robot.hold", "robot.renew"]
+    service.tokens.clear()
+    with pytest.raises(RuntimeError, match="no longer acquired"):
+        await Application.action(
+            service, "controller.open", {"id": "robot", "retain_control": True}
+        )
+
+
+@pytest.mark.parametrize("confirm,fail", [(False, False), (True, False), (True, True)])
+def test_native_switch_waits_for_confirmed_release(confirm, fail):
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.selected = "first"
+    window.robot_ids = ["first", "second"]
+    window.switching_robot = window.closing = False
+    window.pending_robot = None
+    window.root = Mock()
+    window.robot_choice = Mock()
+    window.robot_choice.current.return_value = 1
+    window.stop = Mock()
+    window.confirm_robot_switch = Mock(return_value=confirm)
+    window.apply_robot_selection = Mock()
+    window.control = Mock(owned="first", release_failed=None, releasing=False, pending=None)
+    window.select_robot()
+    window.confirm_robot_switch.assert_called_once_with("second")
+    window.apply_robot_selection.assert_not_called()
+    if not confirm:
+        window.control.release.assert_not_called()
+        assert not window.switching_robot
+        return
+    window.control.release.assert_called_once_with()
+    window.control.pending = object()
+    window.finish_robot_switch()
+    window.apply_robot_selection.assert_not_called()
+    window.control.pending = window.control.owned = None
+    window.control.release_failed = "first" if fail else None
+    window.finish_robot_switch()
+    assert not window.switching_robot and window.pending_robot is None
+    if fail:
+        window.apply_robot_selection.assert_not_called()
+    else:
+        window.apply_robot_selection.assert_called_once_with("second")
 
 
 def test_native_null_feedback_and_newer_command_reply():

@@ -195,11 +195,16 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 elif device == "gamepad":
                     assert await page.locator('.gamepad-controls [data-active="true"]').count() > 0
                 if device in {"keyboard", "gamepad"}:
-                    assert await page.locator(
-                        '.gripper-controls [data-pressed="true"], '
-                        '.gripper-controls [data-active="true"]'
-                    ).count() > 0
-                    await page.get_by_label("Color theme").select_option("dark")
+                    assert (
+                        await page.locator(
+                            '.gripper-controls [data-pressed="true"], '
+                            '.gripper-controls [data-active="true"]'
+                        ).count()
+                        > 0
+                    )
+                    await page.get_by_role("button", name="Appearance", exact=True).click()
+                    await page.get_by_role("radio", name="Dark", exact=True).check()
+                    await page.locator("#appearance-panel").evaluate("panel => panel.hidePopover()")
                     await page.locator("#robots-panel").screenshot(
                         path=str(tmp_path / "replay-active-dark.png")
                     )
