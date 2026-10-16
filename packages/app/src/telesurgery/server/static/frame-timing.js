@@ -21,6 +21,7 @@ export function pathReport(samples) {
         missing,
         stages: {},
         total: {},
+        unavailable_reason: samples.at(-1).unavailable_reason,
     };
     const total = (s) => names.reduce((sum, n) => sum + s.stages[n], 0);
     const decoded = samples
@@ -82,25 +83,33 @@ export function displayedPath(frame, metadata, clock) {
     const valid = (value) =>
         Number.isFinite(value) && value >= 0 ? value : null;
     const decode = valid(metadata.processingDuration * 1000);
+    const synchronized = Number.isFinite(clock?.offset) &&
+        Number.isFinite(clock?.error) && clock.error >= 0;
     // Resolve the full browser hop; sub-ms network transit alone can be below
     // clock uncertainty. Decode is subtracted so the remaining stage never overlaps.
     const playback =
-        clock && clock.error <= 1 && decode !== null
+        synchronized && decode !== null
             ? metadata.expectedDisplayTime -
               (frame.at_ms - clock.offset) -
               decode
             : NaN;
+    // A busy browser can have several milliseconds of clock uncertainty and
+    // still resolve a much larger display delay. Report that uncertainty instead
+    // of dropping every frame above an arbitrary one-millisecond cutoff.
+    const resolved = synchronized && Number.isFinite(playback) && playback >= clock.error;
     return {
         stages: {
             ...frame.stages,
             browser_decode_ms: decode,
-            browser_playout_ms:
-                Number.isFinite(playback) && playback >= clock.error
-                    ? playback
-                    : null,
+            browser_playout_ms: resolved ? playback : null,
         },
+        unavailable_reason: resolved ? undefined
+            : !synchronized ? "Waiting for browser clock synchronization."
+            : decode === null ? "The browser is not providing per-frame decode timing."
+            : !Number.isFinite(metadata.expectedDisplayTime) ? "The browser is not providing display timestamps."
+            : "Browser timing uncertainty exceeds the remaining display delay.",
         error_ms:
-            frame.error_ms === null || !clock
+            !Number.isFinite(frame.error_ms) || !synchronized
                 ? null
                 : frame.error_ms + clock.error,
     };

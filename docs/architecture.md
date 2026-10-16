@@ -126,6 +126,8 @@ Metrics retain 10,000 recent samples after warmup and up to one hour of 5-second
 
 `setup.sh` installs/enables chrony when needed; it persists across reboots and preserves an existing chrony/PTP service. No dashboard action changes the system clock. Same-host services compare monotonic clocks directly. Across hosts, fresh UTC reports are used when combined uncertainty is at most 1 ms; otherwise four-timestamp probes estimate relative clock offset with an RTT/asymmetry bound. Expired or invalid timing stays unavailable.
 
+Browser display timing matches frames by RTP timestamp and uses a separate relative clock estimate between the browser and surgeon service. Its uncertainty is included in the displayed total. A browser clock bound above 1 ms is still usable when the remaining WebRTC/display delay exceeds that bound; missing timestamps or an unresolved delay leave the total unavailable with an explanation.
+
 A shared LAN time server can improve accuracy. Across the internet, use trusted UTC sources at each site; hardware PTP is optional and requires compatible infrastructure. [Chrony error bounds](https://chrony-project.org/doc/latest/chronyc.html) · [Browser display timestamps](https://wicg.github.io/video-rvfc/)
 
 ## Connections and saved state

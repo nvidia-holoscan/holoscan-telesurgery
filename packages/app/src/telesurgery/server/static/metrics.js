@@ -267,7 +267,7 @@ export function latencyView(selected) {
             setCard(
                 "delivery",
                 path.total?.p99,
-                (patient
+                (!Number.isFinite(path.total?.p99) && path.unavailable_reason) || (patient
                     ? "Buffer → source transport handoff"
                     : holoviz
                       ? "Buffer → Holoviz handoff"
@@ -363,6 +363,8 @@ export function latencyView(selected) {
                 : "";
             $("#metrics-path-note").textContent = complete
                 ? "Stages add to each total. Columns follow the same frames."
+                : path.unavailable_reason
+                  ? `${path.unavailable_reason} Separate stage timings below.`
                 : path.missing?.length
                   ? `Total unavailable: ${path.missing.map((k) => stages[k]?.[0] || k).join(", ")}. Separate stage timings below.`
                   : patient
