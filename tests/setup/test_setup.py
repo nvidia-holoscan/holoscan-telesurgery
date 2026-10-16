@@ -140,7 +140,7 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
             "--target",
             str(root / "workspace/sim-deps"),
             "--no-deps",
-            "trimesh==5.1.0",
+            "trimesh==5.1.1",
         ],
         ["python", "-m", "telesurgery", "doctor"],
     ]

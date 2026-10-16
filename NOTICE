@@ -285,5 +285,5 @@ NVIDIA Isaac Sim EULA. Started with ACCEPT_EULA=Y. Not baked into the applicatio
 Isaac Healthcare assets 0.5.0, downloaded from https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/Healthcare/0.5.0/
 NVIDIA Omniverse license.
 
-Trimesh 5.1.0 (MIT), used to load operator-supplied Versius meshes.
+Trimesh 5.1.1 (MIT), used to load operator-supplied Versius meshes.
 https://github.com/mikedh/trimesh
