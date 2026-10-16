@@ -595,7 +595,7 @@ requires-dist = [
     { name = "pynvvideocodec", marker = "extra == 'codecs-cu13'", specifier = "==2.2.3" },
     { name = "telesurgery-app", editable = "packages/app" },
     { name = "telesurgery-robots", extras = ["franka"], marker = "extra == 'franka'", editable = "packages/robots" },
-    { name = "tensorrt-cu13-bindings", marker = "extra == 'tokenizer-cu13'", specifier = "==10.13.3.9.post1" },
+    { name = "tensorrt-cu13-bindings", marker = "extra == 'tokenizer-cu13'", specifier = "==11.4.0.106" },
     { name = "tensorrt-cu13-libs", marker = "extra == 'tokenizer-cu13'", specifier = "==10.13.3.9.post1" },
 ]
 provides-extras = ["franka", "codecs-cu13", "tokenizer-cu13"]
@@ -1241,12 +1241,13 @@ requires-dist = [
 
 [[package]]
 name = "tensorrt-cu13-bindings"
-version = "10.13.3.9.post1"
+version = "11.4.0.106"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/f0/83e5be4fcdf8d2b2512edabceb92743a030f92937a0bc5cf4822838255f9/tensorrt_cu13_bindings-10.13.3.9.post1-cp312-none-manylinux_2_28_x86_64.whl", hash = "sha256:4c50bd67de7eeabc4ade9d7e7a3614b948912aedaec00d53b88e9147aa2163d9", size = 1184624, upload-time = "2025-11-07T18:05:39.902Z" },
-    { url = "https://files.pythonhosted.org/packages/40/53/b88011c5dcfd776aa7f674dbe896e33dd357ca3f019ec071a405132be279/tensorrt_cu13_bindings-10.13.3.9.post1-cp312-none-manylinux_2_35_aarch64.whl", hash = "sha256:6c6cb30008273bc88bdd8ecbd59e130034944dc9a62e6e92e295c42be0d9cf5c", size = 1153884, upload-time = "2025-11-07T18:47:23.356Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/8f/c5b659a55e15bb1ef9295717d6289937ea1ecfea1cbce953faccff40d376/tensorrt_cu13_bindings-10.13.3.9.post1-cp312-none-win_amd64.whl", hash = "sha256:352a9668758c2d069b6a351d22602f1021d307c0d50b027f683110e0f4a435c3", size = 877104, upload-time = "2025-11-07T19:34:19.682Z" },
+    { url = "https://files.pythonhosted.org/packages/60/b6/f1a28d45bc43d98954381a14417b4254f8c96fbd7813427776feb8b20f21/tensorrt_cu13_bindings-11.4.0.106-cp312-none-manylinux_2_28_x86_64.whl", hash = "sha256:5fc7a6c412881f7212030893bd5531b1a0ff415c72c7678dfe4ead7a7765b38d", size = 1261182, upload-time = "2026-10-08T18:50:04.596Z" },
+    { url = "https://files.pythonhosted.org/packages/64/f4/e58cf129437aa6b0e9a79b3ce506f00f25699a123cbdfe55d62d12d9c331/tensorrt_cu13_bindings-11.4.0.106-cp312-none-manylinux_2_35_aarch64.whl", hash = "sha256:b5e20f07857f1065ecc80cfb319acf62bd39755b512baa8e1932014edf1aab6c", size = 1232740, upload-time = "2026-10-08T18:50:27.481Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/93/9ea63e5161fb60fff9b4b678ff665b712cd562264cc743c2733584a37420/tensorrt_cu13_bindings-11.4.0.106-cp312-none-win_amd64.whl", hash = "sha256:29f4a027db683f5b86824cc7df79d357a1b6f3b8401761ef6497c1ae81f21dc3", size = 895997, upload-time = "2026-10-08T18:50:51.96Z" },
+    { url = "https://files.pythonhosted.org/packages/97/f3/d784f25c45bfdd95f23fee2b1d30b7f4cb01e41163f7ffc8533eed038023/tensorrt_cu13_bindings-11.4.0.106-cp312-none-win_arm64.whl", hash = "sha256:33d4eb012c0e573dadf63e564dea25c357bb34bd2a6b0cad00e1b6baf82bef45", size = 833245, upload-time = "2026-10-08T18:51:10.036Z" },
 ]
 
 [[package]]
