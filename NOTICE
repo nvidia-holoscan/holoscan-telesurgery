@@ -204,8 +204,8 @@ Version 1.4.0. Development dependency.
 Licensed under Apache-2.0 (https://github.com/pytest-dev/pytest-asyncio/blob/v1.4.0/LICENSE)
 
 ruff (https://github.com/astral-sh/ruff)
-Version 0.16.9. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.16.9/LICENSE)
+Version 0.17.0. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.17.0/LICENSE)
 
 pre-commit (https://github.com/pre-commit/pre-commit)
 Version 4.6.2. Development dependency.
@@ -217,8 +217,8 @@ Revision v6.0.0. Development dependency.
 Licensed under MIT (https://github.com/pre-commit/pre-commit-hooks/blob/v6.0.0/LICENSE)
 
 ruff-pre-commit (https://github.com/astral-sh/ruff-pre-commit)
-Revision v0.16.9. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.16.9/LICENSE)
+Revision v0.17.0. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.17.0/LICENSE)
 
 shellcheck-py (https://github.com/shellcheck-py/shellcheck-py)
 Copyright (c) 2019 Ryan Rhee
