@@ -147,6 +147,9 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
                 },
             }
             if codec == "surgical-tokenizer":
+                # Closing the form precedes the status refresh. Reopen settings
+                # only after the dashboard has observed that capture is live.
+                await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_visible()
                 await page.get_by_role("button", name="Stream settings", exact=True).click()
                 await expect(page.get_by_label("Resolution", exact=True)).to_be_disabled()
                 await expect(page.get_by_label("Frame rate", exact=True)).to_be_disabled()
