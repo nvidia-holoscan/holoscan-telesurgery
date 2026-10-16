@@ -19,19 +19,33 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 @pytest.mark.parametrize("acquired", [False, True])
 @pytest.mark.parametrize("hard_reload", [False, True])
 async def test_input_preference_survives_reload_and_delayed_discovery(
-    device, acquired, hard_reload,
+    device,
+    acquired,
+    hard_reload,
 ):
     robot = {
-        "id": "node:mira", "name": "MIRA", "kind": "mira-sim", "simulation": True,
+        "id": "node:mira",
+        "name": "MIRA",
+        "kind": "mira-sim",
+        "simulation": True,
         "status": "online",
         "controls": controls(MiraSimulation({"uri": "unused"}), {"motion_enabled": True}),
         "state": {"sequence": 1},
     }
     state = {
-        "role": "surgeon", "sdk": "5", "patient": "patient-one:7447", "selected": [],
+        "role": "surgeon",
+        "sdk": "5",
+        "patient": "patient-one:7447",
+        "selected": [],
         "haply_available": True,
-        "session": {"id": "operator", "name": "Operator", "status": "approved",
-                    "robot": True, "robots": [robot], "cameras": []},
+        "session": {
+            "id": "operator",
+            "name": "Operator",
+            "status": "approved",
+            "robot": True,
+            "robots": [robot],
+            "cameras": [],
+        },
     }
     calls, errors = [], []
 

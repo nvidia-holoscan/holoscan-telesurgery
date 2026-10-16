@@ -313,16 +313,21 @@ def test_keyboard_repeat_pairs_and_stopped_hold(kind, interrupted):
 
 
 @pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
-def test_joint_tap_then_continuous_hold_and_real_release(kind):
+def test_joint_press_then_continuous_hold_and_real_release(kind):
     inputs = Inputs(robot(kind))
     inputs.mode = "joints"
     key = inputs.keyboard
     key.press("q", 0)
-    assert inputs.from_keyboard(0)[0] == "step"
-    assert inputs.from_keyboard(0.1) is None
-    assert inputs.from_keyboard(0.44) is None
-    assert inputs.from_keyboard(0.46)[0] == "jog"
-    assert inputs.from_keyboard(0.51)[0] == "jog"
+    if kind == "mira":
+        # MIRA starts a locally paced velocity immediately, with no tap delay.
+        for now in (0, 0.1, 0.44, 0.51):
+            assert inputs.from_keyboard(now)[0] == "velocity"
+    else:
+        assert inputs.from_keyboard(0)[0] == "step"
+        assert inputs.from_keyboard(0.1) is None
+        assert inputs.from_keyboard(0.44) is None
+        assert inputs.from_keyboard(0.46)[0] == "jog"
+        assert inputs.from_keyboard(0.51)[0] == "jog"
     key.release("q", 0.52)
     assert inputs.from_keyboard(0.54) == ("release", {})
     assert inputs.from_keyboard(0.8) is None
@@ -363,7 +368,9 @@ def test_gamepad_rearm_home_hold_and_grip(kind):
     neutral = [0] * 4
     assert inputs.from_gamepad(neutral, set(), state, 0) is None
     buttons = {4} if kind == "mira" else set()
-    assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.1)[0] == "jog"
+    assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.1)[0] == (
+        "velocity" if kind == "mira" else "jog"
+    )
     inputs.halt()
     assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.2) is None
     assert inputs.from_gamepad(neutral, set(), state, 0.3) is None

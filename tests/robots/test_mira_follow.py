@@ -40,7 +40,9 @@ class Rig:
                 "params": {
                     "arm": arm,
                     "pose": [x, 0.0, 0.0, 0.0, 0.0],
-                    "arm_percent": 20,
+                    # 50% permits 150 mm/s with this fixture's 10 mm/degree
+                    # Jacobian, leaving headroom for the requested 70 mm/s.
+                    "arm_percent": 50,
                     "roll_percent": 50,
                     "id": round(self.now * 1000),
                 },
@@ -126,7 +128,7 @@ def test_roll_contact_does_not_block_tool_retreat(deflection):
     follower.request(
         {
             "pose": [0, 50, 0, 0, -np.sign(deflection) * 20],
-            "arm_percent": 20,
+            "arm_percent": 50,
             "roll_percent": 50,
         }
     )
