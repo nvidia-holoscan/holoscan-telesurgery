@@ -87,8 +87,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0" \
     PATH=/opt/telesurgery/bin:$PATH
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# NVENC and graphics interop need the host's matching CUDA driver libraries.
+# Use CUDA 13 minor-version compatibility instead of cuda-compat's newer driver.
+RUN apt-get purge -y 'cuda-compat-*' \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3.12-venv python3-tk python3-websocket libsdl2-2.0-0 xvfb xauth \
     ca-certificates chrony docker.io \
     libgl1 libglib2.0-0t64 libegl1 libxkbcommon0 \
