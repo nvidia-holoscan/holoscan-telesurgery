@@ -138,8 +138,37 @@ export function robotControls(refresh, openMetrics) {
         releaseFailures = new Map(),
         acquiring = new Map(),
         holding = new Map(),
+        recovering = new Set(),
+        interrupted = new Set(),
         moving = new Set(),
         held = new Set();
+    const controlKey = id => `telesurgery-control:${JSON.stringify([state.patient || "local", id])}`;
+    function rememberControl(id, owned) {
+        try {
+            if (owned) sessionStorage.setItem(controlKey(id), "true");
+            else sessionStorage.removeItem(controlKey(id));
+        } catch {}
+    }
+    function rememberedControl(id) {
+        try { return sessionStorage.getItem(controlKey(id)) === "true"; } catch { return false; }
+    }
+    async function restoreControl(robot) {
+        const id = robot.id;
+        if (held.has(id) || recovering.has(id) || releasing.has(id) || acquiring.has(id) ||
+            !rememberedControl(id) || robot.owner_id !== state.session?.id || !eligible(robot)) return;
+        recovering.add(id);
+        try {
+            const result = await action("robot.hold", {id});
+            if (!rememberedControl(id) || !eligible(cards.get(id)?.robot || robot)) return;
+            held.add(id);
+            interrupted.delete(id);
+            acknowledge(id, result, true);
+        } catch {
+            // Keep the tab's intent across temporary network failures; never acquire here.
+        } finally {
+            recovering.delete(id);
+        }
+    }
     const inputKey = id => `telesurgery-input:${JSON.stringify([state.patient || "local", id])}`;
     function saveInput(id, input) {
         try { localStorage.setItem(inputKey(id), JSON.stringify(input)); } catch {}
@@ -259,7 +288,8 @@ export function robotControls(refresh, openMetrics) {
         );
     }
     function permitted(robot) {
-        return !switching && eligible(robot) && held.has(robot.id) && !releasing.has(robot.id);
+        return !switching && eligible(robot) && held.has(robot.id) &&
+            !interrupted.has(robot.id) && !releasing.has(robot.id);
     }
     async function acquire(robot) {
         if (switching || releaseFailures.size || !eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id)) return;
@@ -271,9 +301,11 @@ export function robotControls(refresh, openMetrics) {
         try {
             const result = await action("robot.acquire", {id: robot.id});
             held.add(robot.id);
+            rememberControl(robot.id, true);
+            interrupted.delete(robot.id);
             acknowledge(robot.id, result, true);
             if (started !== generation || !eligible(cards.get(robot.id)?.robot || robot))
-                await release(robot.id);
+                await hold(robot.id);
         } catch (error) {
             notice(error);
         } finally {
@@ -286,6 +318,8 @@ export function robotControls(refresh, openMetrics) {
         if (releasing.has(id)) return releasing.get(id);
         if (current?.id === id) current.cancelled = true;
         held.delete(id);
+        rememberControl(id, false);
+        interrupted.delete(id);
         moving.delete(id);
         const pending = action("robot.release", { id }).then(result => {
             acknowledge(id, result, false);
@@ -315,7 +349,8 @@ export function robotControls(refresh, openMetrics) {
             stepping.delete(id);
         } catch (error) {
             notice(error);
-            await release(id);
+            interrupted.add(id);
+            stopInputs(cards.get(id));
         } finally {
             holding.delete(id);
         }
@@ -370,8 +405,7 @@ export function robotControls(refresh, openMetrics) {
             if (!cancelled || !["Replay stopped", "Replay input is no longer current"].includes(error.message))
                 notice(error);
         } finally {
-            if (!eligible(robot)) await release(robot.id);
-            else if (input.cancelled) await hold(robot.id);
+            if (!eligible(robot) || input.cancelled) await hold(robot.id);
             current = null;
             complete();
         }
@@ -420,13 +454,15 @@ export function robotControls(refresh, openMetrics) {
     });
     window.addEventListener("pagehide", () => {
         generation++;
+        if (current) current.cancelled = true;
+        for (const card of cards.values()) stopInputs(card, "dashboard reloaded or closed");
         for (const id of new Set([...held, ...acquiring.keys(), ...releaseFailures.keys(), ...(current ? [current.id] : [])])) {
             fetch("/api/action", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 keepalive: true,
                 body: JSON.stringify({
-                    action: "robot.release",
+                    action: "robot.hold",
                     params: { id },
                 }),
             });
@@ -752,11 +788,13 @@ export function robotControls(refresh, openMetrics) {
         try {
             for (const id of held) {
                 try {
-                    acknowledge(id, await action("robot.renew", { id }), true);
+                    acknowledge(id, await action(interrupted.has(id) ? "robot.hold" : "robot.renew", { id }), true);
+                    interrupted.delete(id);
                 } catch {
+                    interrupted.add(id);
                     stopInputs(cards.get(id));
                     await stop();
-                    await release(id);
+                    await hold(id);
                 }
             }
         } finally {
@@ -836,7 +874,6 @@ export function robotControls(refresh, openMetrics) {
                     await action("robot.revoke", {id: robot.id});
                     await refresh();
                 }, "danger small icon-button robot-force-release", "leave");
-                force.disabled = robot.status !== "online";
                 actions.append(force);
             }
             const metrics = button(
@@ -849,6 +886,7 @@ export function robotControls(refresh, openMetrics) {
             return actions;
         },
         releaseAll,
+        pause: pauseAll,
         async prepareHandoff(id) {
             handingOff = id;
             switching = true;
@@ -863,16 +901,21 @@ export function robotControls(refresh, openMetrics) {
             try {
                 acknowledge(id, await action("robot.renew", {id}), true);
             } catch {
-                await release(id);
+                interrupted.add(id);
             }
         },
         finishHandoff(id, transferred) {
-            if (transferred) held.delete(id);
+            if (transferred) {
+                held.delete(id);
+                rememberControl(id, false);
+            }
             handingOff = null;
             switching = false;
         },
         acceptHandoff(id, feedback) {
             held.add(id);
+            rememberControl(id, true);
+            interrupted.delete(id);
             acknowledge(id, feedback, true);
         },
         hasControl: () => !!(held.size || acquiring.size || releasing.size || releaseFailures.size),
@@ -883,6 +926,18 @@ export function robotControls(refresh, openMetrics) {
         update(next, data) {
             state = next;
             visible = data.robots || [];
+            if (state.session?.status === "approved" && Array.isArray(state.controlled_robots)) {
+                for (const id of new Set([...held, ...visible.map(robot => robot.id)])) {
+                    if (!state.controlled_robots.includes(id) && !acquiring.has(id)) {
+                        if (held.has(id)) stopInputs(cards.get(id), "control released");
+                        held.delete(id);
+                        moving.delete(id);
+                        rememberControl(id, false);
+                        interrupted.delete(id);
+                        acknowledgements.delete(id);
+                    }
+                }
+            }
             const key = JSON.stringify([
                 visible.map((r) => [
                     r.id,
@@ -900,7 +955,7 @@ export function robotControls(refresh, openMetrics) {
                 // Presentation changes pause motion without surrendering the lease.
                 pauseAll();
                 for (const id of held)
-                    if (!visible.some(robot => robot.id === id)) release(id);
+                    if (!visible.some(robot => robot.id === id)) hold(id);
                 render();
                 signature = key;
             }
@@ -914,6 +969,7 @@ export function robotControls(refresh, openMetrics) {
                 robot = acknowledgedRobot(robot);
                 const card = cards.get(robot.id);
                 card.robot = robot;
+                restoreControl(robot);
                 if (
                     robot.status !== "online" ||
                     (!robot.state?.control_active &&
@@ -963,7 +1019,7 @@ export function robotControls(refresh, openMetrics) {
                             : !mine;
                     card.release.disabled =
                         state.role === "patient"
-                            ? robot.status !== "online"
+                            ? !robot.owner && robot.status !== "online"
                             : !mine || releasing.has(robot.id) || robot.node_online === false ||
                               robot.status === "disconnected" ||
                               state.session?.status !== "approved" ||
@@ -1053,7 +1109,10 @@ export function robotControls(refresh, openMetrics) {
                     !eligible(robot) && handingOff !== robot.id &&
                     (held.has(robot.id) || current?.id === robot.id)
                 )
-                    release(robot.id);
+                    {
+                        stopInputs(card, "controller connection interrupted");
+                        hold(robot.id);
+                    }
             }
         },
     };

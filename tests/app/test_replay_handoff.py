@@ -94,7 +94,7 @@ async def test_right_start_rejects_invalid_donor_presentation(handoff, condition
     if condition == "manual":
         await helper.clear("node:left")
     elif condition == "expired":
-        now[0] = 3
+        now[0] = helper.owners["node:left"].expires
     elif condition == "new_owner":
         helper.owners["node:left"].release()
         helper.owners["node:left"].acquire("new surgeon")

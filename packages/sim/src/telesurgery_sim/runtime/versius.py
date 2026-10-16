@@ -327,6 +327,7 @@ def run(app, args):
                     future.set_result(robots[arm].apply({"method": "get_state"}))
             for index, camera in enumerate(cameras):
                 pixels, _ = camera.get_data("rgb")
+                capture_started = time.monotonic_ns()
                 if pixels is None:
                     continue
                 rgb = np.asarray(pixels.numpy(), np.uint8)
@@ -339,6 +340,7 @@ def run(app, args):
                     bgr.shape[1],
                     bgr.shape[0],
                     sim_command_sequence=commands,
+                    source_started_ns=capture_started,
                 )
                 header, data = encode_raw(Frame(header, bgr))
                 if depth_enabled[index]:

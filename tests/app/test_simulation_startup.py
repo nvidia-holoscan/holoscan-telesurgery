@@ -11,9 +11,42 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from telesurgery.nodes.simulation import NodeSimulation
 from telesurgery.server.application import Application
 from telesurgery.server.http import create_app
 from telesurgery_sim.runtime.launch import Simulation
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_log", [False, True])
+async def test_missing_versius_assets_are_reported_in_node_and_simulation_logs(
+    tmp_path, monkeypatch, caplog, previous_log
+):
+    monkeypatch.setenv("TELESURGERY_WORKSPACE", str(tmp_path / "workspace"))
+    monkeypatch.setattr(
+        "telesurgery_sim.runtime.launch.simulation_support", lambda: {"supported": True}
+    )
+    launch = AsyncMock()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    directory = tmp_path / "node"
+    if previous_log:
+        simulation_directory = directory / "simulation"
+        simulation_directory.mkdir(parents=True)
+        (simulation_directory / "simulator.log").write_text("Previous simulation output")
+    local = SimpleNamespace(directory=directory, simulation=None)
+    room = NodeSimulation(SimpleNamespace(local=local))
+    try:
+        room.start("versius")
+        await room.task
+        status = room.status()["simulation"]
+        assert status["status"] == "error"
+        assert "BSU.urdf" in status["error"]
+        assert "Simulation versius could not start: " + status["error"] in caplog.text
+        assert (await room.log())["text"] == status["error"]
+        assert local.simulation is None
+        launch.assert_not_called()
+    finally:
+        await room.close()
 
 
 @pytest.mark.asyncio

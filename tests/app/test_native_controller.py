@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -23,6 +24,39 @@ from telesurgery_robots.adapters.simulation import (
     MiraSimulation,
     VersiusSimulation,
 )
+
+
+@pytest.mark.asyncio
+async def test_native_controller_early_exit_points_to_log(tmp_path, monkeypatch):
+    from telesurgery.controller.process import NativeController
+
+    monkeypatch.setenv("DISPLAY", ":unused")
+    create_process = asyncio.create_subprocess_exec
+    processes = []
+
+    async def fail_import(*args, **kwargs):
+        process = await create_process(
+            sys.executable,
+            "-c",
+            "raise ModuleNotFoundError(\"No module named 'yaml'\")",
+            **kwargs,
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_import)
+    controller = NativeController(tmp_path / "controller")
+    try:
+        with pytest.raises(RuntimeError, match="closed during startup.*exit code 1") as error:
+            await controller.open("http://127.0.0.1:8002")
+        log_path = tmp_path / "controller" / "controller.log"
+        assert str(log_path) in str(error.value)
+        assert "ModuleNotFoundError: No module named 'yaml'" in log_path.read_text()
+        assert processes[0].returncode == 1
+        assert controller.process is controller.temporary is controller.path is None
+        assert controller.status()["status"] == "closed"
+    finally:
+        await controller.close()
 
 
 @pytest.mark.asyncio
@@ -486,12 +520,14 @@ def test_slow_reply_cannot_queue_motion_and_hold_keeps_ownership_until_release()
 
 
 @pytest.mark.parametrize("hold_fails", [False, True])
-def test_native_move_error_stops_before_deciding_to_release(hold_fails):
+def test_native_move_error_retains_lock_and_blocks_input_until_hold_succeeds(hold_fails):
     calls = []
 
     def action(method, params):
         calls.append(method)
-        if method == "robot.move" or (method == "robot.hold" and hold_fails):
+        if method == "robot.move" or (
+            method == "robot.hold" and hold_fails and calls.count(method) == 1
+        ):
             raise RuntimeError("controller rejected request")
         return {"sequence": len(calls)}
 
@@ -510,8 +546,9 @@ def test_native_move_error_stops_before_deciding_to_release(hold_fails):
         control.move("robot", "jog", {"joints": [1]}, None)
         drain()
         assert calls[:3] == ["robot.acquire", "robot.move", "robot.hold"]
-        assert control.owned == (None if hold_fails else "robot")
-        assert ("robot.release" in calls) == hold_fails
+        assert control.owned == "robot"
+        assert "robot.release" not in calls
+        assert calls.count("robot.hold") == (2 if hold_fails else 1)
         assert not control.moving
     finally:
         control.close()
@@ -716,7 +753,10 @@ def test_native_rejects_non_dashboard_urls(url):
         Client(url)
 
 
-def test_native_acquire_release_visibility_and_paused_ownership(monkeypatch, virtual_display):
+@pytest.mark.parametrize("release_method", ["surgeon", "patient", "window"])
+def test_native_acquire_release_visibility_and_paused_ownership(
+    monkeypatch, virtual_display, release_method
+):
     import tkinter as tk
 
     from telesurgery.controller.window import Window
@@ -764,7 +804,25 @@ def test_native_acquire_release_visibility_and_paused_ownership(monkeypatch, vir
         assert window.permitted()
         window.stop()
         assert window.control.owned == "mira"
-        window.release_control()
+        if release_method == "window":
+            window.control.moving = True
+            root.tk.call(root.protocol("WM_DELETE_WINDOW"))
+            assert window.closing and window.return_control
+            assert window.control.owned == "mira" and not window.control.releasing
+            while window.control.stopping and time.monotonic() < deadline:
+                window.control.poll(time.monotonic())
+                time.sleep(0.001)
+            assert not window.control.stopping and window.control.owned == "mira"
+            assert calls == ["robot.acquire", "robot.hold"]
+            return
+        if release_method == "patient":
+            window.control.moving = True
+            window.update_status(
+                {"role": "surgeon", "session": window.session, "controlled_robots": []},
+                time.monotonic(),
+            )
+        else:
+            window.release_control()
         while window.control.owned and time.monotonic() < deadline:
             window.control.poll(time.monotonic())
             time.sleep(0.001)
@@ -773,8 +831,92 @@ def test_native_acquire_release_visibility_and_paused_ownership(monkeypatch, vir
         assert window.acquire_button.winfo_viewable()
         assert not window.release_button.winfo_viewable()
         assert not window.permitted()
-        assert calls == ["robot.acquire", "robot.release"]
+        assert window.control.ready
+        assert calls == (
+            ["robot.acquire"] if release_method == "patient" else ["robot.acquire", "robot.release"]
+        )
     finally:
         if window:
+            window.shutdown()
+        root.destroy()
+
+
+@pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
+@pytest.mark.parametrize("heartbeat_fails", [False, True])
+def test_native_reset_stays_enabled_during_heartbeat_and_waits_for_reply(
+    monkeypatch, virtual_display, kind, heartbeat_fails
+):
+    import tkinter as tk
+
+    from telesurgery.controller.window import Window
+
+    root = tk.Tk(screenName=virtual_display)
+    window = None
+    try:
+        monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+        monkeypatch.setattr(Window, "tick", lambda self: None)
+        monkeypatch.setattr(Window, "focused", lambda self: True)
+        monkeypatch.setattr(Window, "editing", lambda self: False)
+        client = SimpleNamespace(action=Mock())
+        window = Window(root, client)
+        fixture = robot(kind)
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {"status": "approved", "robot": True, "robots": [fixture]},
+            },
+            time.monotonic(),
+        )
+        window.control.owned = kind
+        submit = Mock(side_effect=lambda *args: Future())
+        monkeypatch.setattr(window.control.worker, "submit", submit)
+        window.feedback()
+        assert window.reset_button.enabled
+
+        now = time.monotonic()
+        window.control.poll(now)
+        heartbeat = window.control.pending[2]
+        assert window.control.pending[0] == "robot.renew"
+        for _ in range(10):
+            window.feedback()
+            assert window.reset_button.enabled
+        fixture["reset_scene_blocked"] = "Another arm is controlled by another surgeon."
+        window.feedback()
+        assert not window.reset_button.enabled
+        fixture["reset_scene_blocked"] = ""
+        window.feedback()
+
+        window.reset_button.press(None)
+        window.reset_button.release(None)
+        assert window.pending_reset
+        window.drive(now)
+        submit.assert_called_once_with(client.action, "robot.renew", {"id": kind})
+        window.feedback()
+        assert not window.reset_button.enabled
+
+        if heartbeat_fails:
+            heartbeat.set_exception(ConnectionError("Heartbeat interrupted"))
+        else:
+            heartbeat.set_result({"sequence": 2})
+        window.control.poll(now + 0.1)
+        window.drive(now + 0.1)
+        window.feedback()
+        assert not window.pending_reset
+        assert not window.reset_button.enabled
+        if heartbeat_fails:
+            assert window.control.interrupted
+            assert submit.call_count == 1  # A failed heartbeat must cancel the reset.
+        else:
+            assert submit.call_count == 2
+            submit.assert_called_with(
+                client.action, "robot.move", {"id": kind, "mode": "reset", "command": {}}
+            )
+            window.control.pending[2].set_result({"sequence": 3})
+            window.control.poll(now + 0.2)
+            window.feedback()
+            assert window.reset_button.enabled
+    finally:
+        if window:
+            window.control.pending = window.control.owned = None
             window.shutdown()
         root.destroy()

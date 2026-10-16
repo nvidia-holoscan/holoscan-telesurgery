@@ -271,6 +271,7 @@ libxrandr-dev and libxrandr2: MIT
 openssh-client: BSD-3-Clause
 pkg-config: GPL-2.0-or-later
 python3.12-dev and python3.12-venv: PSF-2.0
+python3-yaml: MIT. Used by desktop Python in native setup and the runtime image.
 
 Container images and proprietary NVIDIA components. These are not open-source packages.
 

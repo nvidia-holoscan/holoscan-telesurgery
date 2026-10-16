@@ -124,9 +124,10 @@ class Access:
 class Ownership:
     """Called only on the patient endpoint's serialized control path."""
 
-    def __init__(self, clock=time.monotonic, lease=2.0):
+    def __init__(self, clock=time.monotonic, lease=300.0):
         self.clock, self.lease = clock, lease
         self.owner = self.token = None
+        self.identity = self.name = None
         self.expires = 0
         self.sequence = -1
         self.ready = True
@@ -139,8 +140,12 @@ class Ownership:
         if self.owner is None:
             self.owner, self.token = peer, secrets.token_urlsafe(32)
             self.sequence = -1
-        self.expires = self.clock() + self.lease
+        self.activity()
         return self.token
+
+    def activity(self):
+        """Only acquisition and accepted input extend the inactivity deadline."""
+        self.expires = self.clock() + self.lease
 
     def validate(self, peer, token, sequence=None):
         if (
@@ -155,12 +160,12 @@ class Ownership:
             if type(sequence) is not int or sequence <= self.sequence:
                 raise ValueError("Stale robot command")
             self.sequence = sequence
-        self.expires = self.clock() + self.lease
 
     def expired(self):
         return self.owner is not None and self.clock() >= self.expires
 
     def release(self):
         self.owner = self.token = None
+        self.identity = self.name = None
         self.expires = 0
         self.sequence = -1

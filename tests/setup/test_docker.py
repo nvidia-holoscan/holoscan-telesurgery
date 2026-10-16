@@ -123,6 +123,7 @@ def test_shared_image_and_role_mounts(docker_launcher, options, role, sdk, suffi
     )
     commands = [json.loads(line) for line in records.read_text().splitlines()]
     build = next(c for c in commands if c[0] == "build")
+    assert build[build.index("--network") + 1] == "host"
     image = f"holoscan-telesurgery:0.1.7{suffix}"
     assert "--target" not in build
     assert build[build.index("--tag") + 1] == image

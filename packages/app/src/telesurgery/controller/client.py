@@ -74,6 +74,7 @@ class Control:
         self.reply = {}
         self.error = ""
         self.failed = False
+        self.interrupted = False
 
     @property
     def ready(self):
@@ -82,6 +83,7 @@ class Control:
             and not self.releasing
             and not self.stopping
             and not self.release_failed
+            and not self.interrupted
         )
 
     def _send(self, method, params):
@@ -145,15 +147,17 @@ class Control:
                 result = future.result()
                 if isinstance(result, dict):
                     self.reply[robot] = result
+                if method in {"robot.hold", "robot.renew", "robot.acquire"}:
+                    self.interrupted = False
             except Exception as exc:
                 self.error = str(exc)
                 self.failed = True
                 if method == "robot.release":
                     self.release_failed = robot
-                if method == "robot.move" and self.owned:
-                    self.stop()
-                elif method != "robot.release":
-                    self.release()
+                else:
+                    self.interrupted = True
+                    if method == "robot.move" and self.owned:
+                        self.stop()
             if method == "robot.hold":
                 self.stopping = self.moving = False
             if method == "robot.release":
@@ -162,13 +166,14 @@ class Control:
                 self.owned = None
                 self.releasing = False
                 self.stopping = self.moving = False
+                self.interrupted = False
             self.last_renew = now
         if self.releasing and self.owned:
             self._send("robot.release", {"id": self.owned})
         elif self.stopping and self.owned:
             self._send("robot.hold", {"id": self.owned})
         elif self.owned and now - self.last_renew >= 0.5:
-            self._send("robot.renew", {"id": self.owned})
+            self._send("robot.hold" if self.interrupted else "robot.renew", {"id": self.owned})
 
     def feedback(self, robot):
         state = robot.get("state") or {}
@@ -176,9 +181,9 @@ class Control:
         return reply if reply.get("sequence", -1) > state.get("sequence", -1) else state
 
     def close(self):
-        self.release()
+        self.stop()
         deadline = time.monotonic() + 9
-        while (self.owned or self.pending) and time.monotonic() < deadline:
+        while (self.pending or self.stopping or self.releasing) and time.monotonic() < deadline:
             self.poll(time.monotonic())
             time.sleep(0.01)
         self.worker.shutdown(wait=True, cancel_futures=True)

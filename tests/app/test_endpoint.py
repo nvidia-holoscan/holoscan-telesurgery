@@ -244,6 +244,26 @@ async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_
                     "robot.move",
                     {**command, "token": original, "sequence": 100, "sent_at": time.time()},
                 )
+            # A transport loss stops the device but reserves the surgeon's lock.
+            previous_id = other.remote_status["id"]
+            previous_token = other.tokens[robot_id]
+            previous_sequence = patient.owners[robot_id].sequence
+            await other.remote.close()
+            await until(lambda: previous_id not in patient.access.surgeons)
+            await until(lambda: other.remote_status.get("status") == "disconnected")
+            assert patient.owners[robot_id].owner == previous_id
+            with pytest.raises(RuntimeError, match="another surgeon"):
+                await winner.action("robot.acquire", {"id": robot_id})
+            resumed = await other.connect(address, "Same name", True)
+            assert resumed["status"] == "approved"
+            assert other.tokens[robot_id] == previous_token
+            assert other.sequences[robot_id] == previous_sequence
+            assert "control_tokens" not in resumed and "control_sequences" not in resumed
+            await until(lambda: "robots" in other.remote_status)
+            await other.action("robot.hold", {"id": robot_id})
+            assert observed.count("set_mira_cartesian_delta") == 2
+            await other.action("robot.move", command)
+            assert observed.count("set_mira_cartesian_delta") == 3
             await other.action("disconnect", {})
             await until(lambda: patient.owners[robot_id].owner is None)
             assert "hold" in observed

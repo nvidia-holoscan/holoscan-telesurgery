@@ -7,14 +7,45 @@ import asyncio
 import json
 import secrets
 import signal
+import ssl
 import stat
 from dataclasses import asdict
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from telesurgery.nodes.address import endpoint
-from telesurgery_core.configuration import load
+from telesurgery_core.configuration import load, save
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shutdown_error",
+    [None, ssl.SSLError(1, "APPLICATION_DATA_AFTER_CLOSE_NOTIFY"), TimeoutError()],
+)
+async def test_patient_identity_change_survives_tls_shutdown_errors(
+    tmp_path, monkeypatch, shutdown_error
+):
+    from telesurgery.nodes.client import NodeClient
+
+    pins = {"patient:7447": "previous-certificate-fingerprint"}
+    save(tmp_path / "peers.yaml", pins)
+    writer = Mock()
+    writer.get_extra_info.return_value.getpeercert.return_value = b"changed-certificate"
+    writer.wait_closed = AsyncMock(side_effect=shutdown_error)
+    monkeypatch.setattr(asyncio, "open_connection", AsyncMock(return_value=(AsyncMock(), writer)))
+    node = object.__new__(NodeClient)
+    node.directory = tmp_path
+    node.config = {"host": "patient", "port": 7447}
+    with pytest.raises(PermissionError, match="Patient endpoint identity changed"):
+        await node.connect()
+    writer.close.assert_called_once()
+    writer.wait_closed.assert_awaited_once()
+    if shutdown_error:
+        writer.transport.abort.assert_called_once()
+    else:
+        writer.transport.abort.assert_not_called()
+    assert load(tmp_path / "peers.yaml") == pins
 
 
 @pytest.mark.asyncio

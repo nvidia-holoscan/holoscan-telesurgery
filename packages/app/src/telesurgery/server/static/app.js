@@ -1097,7 +1097,7 @@ $("#robot-selector").onchange = async (event) => {
     }
 };
 function feeds() {
-    robots.releaseAll();
+    robots.pause("camera selection opened");
     $("#feed-dialog").showModal();
 }
 $("#add-feeds").onclick = feeds;

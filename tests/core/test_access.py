@@ -34,7 +34,7 @@ def test_ownership_never_replays_old_tokens_or_sequences():
     owner.validate("one", token, 1)
     with pytest.raises(ValueError, match="Stale"):
         owner.validate("one", token, 1)
-    now[0] += 3
+    now[0] += 300
     assert owner.expired()
     with pytest.raises(PermissionError):
         owner.validate("one", token, 2)
@@ -48,6 +48,22 @@ def test_ownership_never_replays_old_tokens_or_sequences():
     owner.ready = False
     with pytest.raises(RuntimeError):
         owner.acquire("one")
+
+
+def test_idle_validation_does_not_extend_five_minute_lock():
+    now = [10.0]
+    owner = Ownership(clock=lambda: now[0])
+    token = owner.acquire("one")
+    assert owner.expires == 310
+    for elapsed in (3, 60, 299):
+        now[0] = 10 + elapsed
+        owner.validate("one", token)
+        assert owner.expires == 310
+        assert not owner.expired()
+    owner.activity()
+    assert owner.expires == 609
+    now[0] = 609
+    assert owner.expired()
 
 
 def test_approval_survives_restart_but_never_follows_a_display_name(tmp_path):

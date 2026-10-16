@@ -95,7 +95,8 @@ if [[ "${1:-}" == patient || "${1:-}" == surgeon || "${1:-}" == node ]] &&
     ! systemctl is-enabled --quiet ptp4l phc2sys ntp ntpsec 2>/dev/null; then
     "$root/setup.sh" --docker --sdk "$sdk"
 fi
-build_args=(--build-arg "SDK=$sdk")
+# Use the host's routes for dependency downloads on VPN and restricted networks.
+build_args=(--network host --build-arg "SDK=$sdk")
 if [[ -n "${CUDAARCHS:-}" ]]; then build_args+=(--build-arg "CUDAARCHS=$CUDAARCHS"); fi
 docker build "${build_args[@]}" --tag "$image" "$root"
 mkdir -p "$workspace"

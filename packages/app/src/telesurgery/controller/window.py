@@ -61,7 +61,6 @@ class Window:
         changed=None,
         input_device=None,
         retain_control=False,
-        dock_on_close=False,
     ):
         self.root, self.client = root, client
         self.px = Scale(root)
@@ -193,7 +192,7 @@ class Window:
         root.bind("<KeyRelease>", self.key_up)
         root.bind("<FocusOut>", lambda _: root.after_idle(self.check_focus))
         root.bind("<Unmap>", lambda event: self.stop() if event.widget == root else None)
-        root.protocol("WM_DELETE_WINDOW", lambda: self.close(retain_control=dock_on_close))
+        root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(10, self.tick)
 
     @staticmethod
@@ -274,6 +273,7 @@ class Window:
             and self.eligible()
             and self.control.owned == self.selected
             and not self.control.releasing
+            and not self.control.interrupted
         )
 
     def available(self):
@@ -1062,6 +1062,17 @@ class Window:
             for r in self.session.get("robots", [])
             if r.get("controls", {}).get("groups")
         }
+        if (
+            self.control.owned is not None
+            and self.session.get("status") == "approved"
+            and "controlled_robots" in status
+            and self.control.owned not in status["controlled_robots"]
+            and self.control.pending is None
+        ):
+            self.stop("control released")
+            self.control.owned = None
+            self.control.interrupted = False
+            self.control.stopping = self.control.moving = False
         ids = list(self.robots)
         if ids != self.robot_ids:
             self.robot_ids = ids
@@ -1113,11 +1124,16 @@ class Window:
             if self.closing:
                 if (
                     self.control.pending is None
-                    and (not self.control.owned or (self.return_control and self.control.ready))
+                    and (
+                        not self.control.owned
+                        or (self.return_control and not self.control.stopping)
+                    )
                     and not self.replay.busy
                 ):
                     if self.return_control:
-                        self.handed_off, self.control.owned = self.control.owned, None
+                        if not self.control.interrupted:
+                            self.handed_off = self.control.owned
+                        self.control.owned = None
                     self.root.destroy()
                     return
             else:
@@ -1198,8 +1214,6 @@ class Window:
             self.inputs.keyboard.poll(now)
         if not self.eligible():
             self.stop()
-            if self.control.owned:
-                self.control.release()
             return
         if not self.permitted():
             self.stop()
@@ -1338,9 +1352,12 @@ class Window:
                     else self.stop_button,
                     padx=self.px(0, 8),
                 )
+            # A reset clicked during a heartbeat waits in drive() for control.ready.
             self.reset_button.update_state(
                 self.permitted()
-                and self.control.ready
+                and not self.control.stopping
+                and not self.control.release_failed
+                and (self.control.pending is None or self.control.pending[0] == "robot.renew")
                 and not self.pending_reset
                 and not robot.get("reset_scene_blocked")
             )
@@ -1521,7 +1538,7 @@ class Window:
             )
         )
 
-    def close(self, retain_control=False):
+    def close(self, retain_control=True):
         self.stop()
         self.return_control = retain_control
         self.returning_robot = self.control.owned if retain_control else None
@@ -1568,7 +1585,6 @@ def run(config):
             report,
             config.get("input"),
             retain_control=config.get("retain_control") is True,
-            dock_on_close=status_path is not None,
         )
         for number in (signal.SIGTERM, signal.SIGINT):
             signal.signal(number, lambda *_: window.close())
