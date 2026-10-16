@@ -154,8 +154,8 @@ Version 0.2.0.
 Licensed under MIT (https://github.com/pydron/ifaddr/blob/0.2.0/LICENSE.txt)
 
 numpy (https://github.com/numpy/numpy)
-Version 2.3.5.
-Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.3.5/LICENSE.txt)
+Version 2.5.4.
+Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.5.4/LICENSE.txt)
 
 opencv-python-headless (https://github.com/opencv/opencv-python)
 Version 5.0.0.93.
