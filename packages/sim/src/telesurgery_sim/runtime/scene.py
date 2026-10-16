@@ -494,11 +494,9 @@ def main():
             app.update()
             measured = feedback.read()
             if cartesian_feedback:
-                measured.update(
-                    cartesian_feedback.read(
-                        measured, idle=not robot._state().get("control_active", False)
-                    )
-                )
+                with robot_lock:
+                    idle = not robot._state().get("control_active", False)
+                measured.update(cartesian_feedback.read(measured, idle=idle))
             with robot_lock:
                 robot.feedback = measured
                 if cartesian_feedback:

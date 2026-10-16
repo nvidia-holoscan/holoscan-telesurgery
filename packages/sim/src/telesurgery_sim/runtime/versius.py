@@ -298,11 +298,9 @@ def run(app, args):
             app.update()
             for arm in robots:
                 measured = feedback[arm].read()
-                measured.update(
-                    tools[arm].read(
-                        measured, idle=not robots[arm]._state().get("control_active", False)
-                    )
-                )
+                with lock:
+                    idle = not robots[arm]._state().get("control_active", False)
+                measured.update(tools[arm].read(measured, idle=idle))
                 if measured.get("joints_deg") and rigs[arm]["fingers"]:
                     view = feedback[arm].views[0]
                     paths, positions = view.dof_paths[0], view.get_dof_positions().numpy()[0]
