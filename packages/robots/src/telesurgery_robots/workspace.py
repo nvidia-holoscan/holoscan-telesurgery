@@ -142,6 +142,9 @@ class Workspace:
         self.cancelled = threading.Event()
 
     def update(self, position, orientation, calculate, *, idle):
+        if not idle and self.job is not None and self.job.is_alive():
+            self.cancelled.set()
+            self.reference = None
         pose = np.r_[position, np.asarray(orientation).ravel()]
         outside = self.result is not None and (
             np.any(np.asarray(position) < np.asarray(self.result["min"]) - 0.002)

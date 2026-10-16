@@ -300,6 +300,10 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             assert adapter.read()["home_active"]  # Wait for the jaws too.
             for arm in measured:
                 measured[arm][5] = 0
+            assert adapter.read()["home_active"]  # Require stable feedback after arrival.
+            time.sleep(0.13)
+            assert adapter.read()["home_active"]
+            time.sleep(0.13)
             assert not adapter.read()["home_active"]
             for bad in (
                 {},

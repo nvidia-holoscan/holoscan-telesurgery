@@ -582,7 +582,7 @@ class Application:
         # Reject old input before it reaches the patient node's controller graph.
         sent = params.get("sent_at")
         mode = params.get("mode", "jog")
-        if mode not in {"step", "jog", "home", "grip", "cartesian", "follow", "reset"}:
+        if mode not in {"step", "jog", "velocity", "home", "grip", "cartesian", "follow", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if mode == "home" and not robot["controls"].get("home_deg"):
             raise ValueError("Home is not supported by this robot")
@@ -594,6 +594,8 @@ class Application:
             raise PermissionError(reason)
         if mode == "cartesian" and not robot["controls"].get("mira_cartesian"):
             raise ValueError("MIRA Cartesian jogging is not supported by this robot")
+        if mode == "velocity" and not robot["controls"].get("joint_velocity"):
+            raise ValueError("Joint velocity control is not supported by this robot")
         if mode == "follow" and not (
             robot.get("simulation") and robot["controls"].get("mira_follow")
         ):
@@ -623,7 +625,7 @@ class Application:
                 **({"speed_deg_s": params["speed_deg_s"]} if "speed_deg_s" in params else {}),
                 **(
                     {"mode": mode}
-                    if mode in {"home", "grip", "cartesian", "follow", "reset"}
+                    if mode in {"velocity", "home", "grip", "cartesian", "follow", "reset"}
                     or robot["controls"].get("step_mode")
                     else {}
                 ),

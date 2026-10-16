@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
-from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
+from telesurgery_robots.adapters.base import cartesian_rates, speed_value, values
 from telesurgery_robots.franka.cartesian import JOINT_LIMITS, CartesianTrajectory
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.franka.trajectory import JointTrajectory
@@ -23,6 +23,8 @@ from telesurgery_robots.mira.poses import (
     MIRA_SIM_HOME,
     roll_target,
 )
+from telesurgery_robots.mira.velocity import SIMULATION, JointVelocity
+from telesurgery_robots.mira.velocity import command as velocity_command
 
 
 class SimRobot:
@@ -56,6 +58,7 @@ class SimRobot:
         self.mira_progress = {}
         self.mira_follow = None
         self.mira_follow_error = ""
+        self.mira_velocity = JointVelocity(SIMULATION)
 
     @property
     def joint_target_velocity(self):
@@ -113,8 +116,20 @@ class SimRobot:
             )
         ):
             self.mode = None
-        if self.mode in {"mira-tool", "mira-follow"} and now >= self.deadline:
+        if self.mode in {"mira-tool", "mira-follow", "mira-velocity"} and now >= self.deadline:
             self._stop()
+        if self.mira_velocity.active:
+            if self.kinematics is None or now - self.kinematics[1] > 0.3:
+                self._stop()
+            else:
+                measured = {arm: data[0][:5].tolist() for arm, data in self.kinematics[0].items()}
+                limits = {arm: data[3] for arm, data in self.kinematics[0].items()}
+                targets = self.mira_velocity.advance(measured, now, limits)
+                if targets:
+                    for arm, row in targets.items():
+                        self.pose[arm][:5] = row[:5]
+                if not self.mira_velocity.active:
+                    self.mode = None
         if self.mira_follow is not None:
             if self.kinematics is None or now - self.kinematics[1] > 0.3:
                 self.mira_follow_error = "MIRA physics feedback is stale"
@@ -159,12 +174,13 @@ class SimRobot:
             self._grip_targets(self._grippers())
             if self.trajectory is None:
                 self.mode = None
-        if self.mode in {"mira-tool", "mira-follow"}:
+        if self.mode in {"mira-tool", "mira-follow", "mira-velocity"}:
             for arm in self.pose:
                 measured = self.feedback.get("joints_deg", {}).get(arm, self.pose[arm])
                 self.pose[arm][:5] = measured[:5]
             self.mode = None
         self.mira_follow = None
+        self.mira_velocity.clear()
         self.mira_progress.clear()
         self._grip_targets(self.grip.stop(self._grippers()))
         if self.cartesian:
@@ -213,7 +229,8 @@ class SimRobot:
                 if "joints" in self.pose
                 else {
                     "grippers": self._grippers(),
-                    "control_active": self.mode in {"home", "mira-tool", "mira-follow"}
+                    "control_active": self.mode
+                    in {"home", "mira-tool", "mira-follow", "mira-velocity"}
                     or bool(self.grip.rates),
                     "home_active": self.mode == "home",
                 }
@@ -276,6 +293,11 @@ class SimRobot:
             raise ValueError("MIRA is moving home; use Stop before manual control")
         if self.mode == "mira-follow" and method != "set_mira_tool_target":
             raise ValueError("Release MIRA target following before changing input")
+        if self.mode == "mira-velocity" and method not in {
+            "set_mira_joint_velocity",
+            "jog_gripper",
+        }:
+            raise ValueError("Release joint velocity input before changing input")
         if method == "set_home" and "joints" in self.pose:
             if set(params) - {"speed_deg_s"}:
                 raise ValueError("Home uses the configured pose")
@@ -298,10 +320,11 @@ class SimRobot:
                 raise ValueError("Franka is busy; release input before gripping")
             self.grip.command(gripper_rates(params, self.gripper_ranges), self._grippers())
         elif method == "set_cartesian_velocity" and "joints" in self.pose:
-            command = cartesian_command({key: params[key] for key in ("translation", "rotation")})
-            if set(params) - {"translation", "rotation", "speed_deg_s"}:
-                raise ValueError("Unexpected Cartesian parameters")
-            speed = speed_value(params.get("speed_deg_s"), FRANKA_SPEED)
+            command, speed = cartesian_rates(
+                {key: value for key, value in params.items() if key != "speed_deg_s"},
+                speed_value(params.get("speed_deg_s"), FRANKA_SPEED),
+                FRANKA_SPEED["max"],
+            )
             if self.kinematics is None or time.monotonic() - self.kinematics[2] > 0.3:
                 raise ValueError("Cartesian physics feedback is unavailable or stale")
             if self.trajectory is not None or self.mode == "home":
@@ -338,6 +361,19 @@ class SimRobot:
                 "step" if params.get("step") else "jog",
                 speed_value(params.get("speed_deg_s"), FRANKA_SPEED),
             )
+        elif method == "set_mira_joint_velocity" and "left" in self.pose:
+            rates = velocity_command(params, SIMULATION)
+            if self.mode not in {None, "mira-velocity"}:
+                raise ValueError("Release input before MIRA joint velocity control")
+            if self.kinematics is None or time.monotonic() - self.kinematics[1] > 0.3:
+                raise ValueError("MIRA physics feedback is unavailable or stale")
+            measured = {arm: data[0][:5].tolist() for arm, data in self.kinematics[0].items()}
+            # Match the existing mirrored right-arm keyboard/gamepad controls.
+            rates["right"] = [
+                v * sign for v, sign in zip(rates["right"], (1, -1, 1, -1, 1), strict=True)
+            ]
+            self.mira_velocity.request(rates, measured, time.monotonic())
+            self.mode, self.deadline = "mira-velocity", time.monotonic() + 0.2
         elif method == "set_mira_tool_target" and "left" in self.pose:
             target = follow_command(params)
             if self.mira_follow_error:

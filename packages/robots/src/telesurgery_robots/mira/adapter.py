@@ -27,6 +27,7 @@ from telesurgery_robots.mira.poses import (
     MIRA_STEP_LIMIT,
     roll_target,
 )
+from telesurgery_robots.mira.velocity import PHYSICAL, JointVelocity
 from telesurgery_robots.mira.workspace import vendor_bounds
 from telesurgery_robots.workspace import Workspace
 
@@ -44,12 +45,15 @@ class Mira:
         self.home_target = None
         self.home_holding = False
         self.home_deadline = 0.0
+        self.home_settled = None
+        self.home_sampled = 0.0
         self.grip = GripperJog()
         self.grip_stopping = set()
         self.roll_active = self.roll_holding = False
         self.tool_mode = False
         self.arm_holding = False
         self.jog_deadline = 0.0
+        self.velocity = JointVelocity(PHYSICAL)
 
     def state(self):
         if self.client is None:
@@ -59,6 +63,13 @@ class Mira:
         try:
             pose = self.client.send({"method": "get_mira_pose", "params": None})
             state = self._feedback(pose)
+            rolling = self.velocity.roll
+            target = self.velocity.advance(state["joints_deg"], time.monotonic())
+            if target is not None:
+                self.client.notify({"method": "set_mira_pose", "params": target})
+                if rolling:
+                    state = self._write_roll(target)
+                state["control_active"] = self.velocity.active or bool(self.grip.rates)
             if self.arm_holding or self.jog_deadline and time.monotonic() >= self.jog_deadline:
                 self.client.notify({"method": "set_mira_pose", "params": state["joints_deg"]})
                 self.arm_holding = False
@@ -127,16 +138,34 @@ class Mira:
             for arm in ("left", "right")
         }
         if self.home_target:
-            if all(
+            near = all(
                 all(
-                    abs(joints[arm][index] - target) <= 0.2
+                    abs(joints[arm][index] - target) <= 1.0
                     for index, target in enumerate(targets[:5])
                 )
                 and abs(joints[arm][5] - targets[5]) <= GRIP_COUNTS[arm] * 0.01
                 for arm, targets in self.home_target.items()
+            )
+            now = time.monotonic()
+            if not near or now - self.home_sampled > 0.3:
+                self.home_settled = None
+            if near and (
+                self.home_settled is None
+                or any(
+                    abs(value - self.home_settled[1][arm][index])
+                    > (0.1 if index < 5 else GRIP_COUNTS[arm] * 0.01)
+                    for arm in joints
+                    for index, value in enumerate(joints[arm])
+                )
             ):
+                # The physical controller settles with a small position error.
+                # Require a stable pose, not unattainable sub-degree accuracy.
+                self.home_settled = now, {arm: row.copy() for arm, row in joints.items()}
+            self.home_sampled = now
+            if self.home_settled is not None and now - self.home_settled[0] >= 0.25:
                 self.home_target = None
-            elif time.monotonic() >= self.home_deadline:
+                self.home_settled = None
+            elif now >= self.home_deadline:
                 self._cancel_home()
                 self.client.notify({"method": "set_mira_pose", "params": joints})
                 raise RuntimeError("MIRA Home timed out after 30 seconds; hold requested")
@@ -150,7 +179,8 @@ class Mira:
             "stop_acknowledged": False,
             "control_active": self.home_target is not None
             or bool(self.grip.rates)
-            or bool(self.jog_deadline),
+            or bool(self.jog_deadline)
+            or self.velocity.active,
             "home_active": self.home_target is not None,
             **({"targets_deg": self.home_target} if self.home_target else {}),
         }
@@ -165,6 +195,7 @@ class Mira:
             "jog_gripper",
             "set_mira_joint_delta",
             "jog_mira_cartesian",
+            "jog_joint_velocity",
         }:
             raise ValueError("Unsupported physical MIRA operation")
         if method == "set_home" and request.get("params"):
@@ -181,6 +212,12 @@ class Mira:
         if method == "jog_mira_cartesian":
             movement = command(request.get("params"))
             self.tool_mode = True
+        if method == "jog_joint_velocity":
+            from telesurgery_robots.mira.velocity import command as velocity_command
+
+            movement = velocity_command(request.get("params"), PHYSICAL)
+        elif method != "jog_gripper":
+            self.velocity.clear()
         if method in {"hold", "set_home"}:
             self.jog_deadline = 0.0
             if method == "hold":
@@ -192,6 +229,12 @@ class Mira:
         pose = state["joints_deg"]
         if self.home_target and method != "hold":
             raise ValueError("MIRA is moving home; use Stop before manual control")
+        if method == "jog_joint_velocity":
+            self.jog_deadline = 0.0
+            self.velocity.request(movement, pose, time.monotonic())
+            state["control_active"] = True
+            state["acknowledgement"] = "joint velocity accepted"
+            return state
         if method == "jog_gripper":
             self.grip.command(rates, state["grippers"])
             state["control_active"] = True
@@ -226,9 +269,10 @@ class Mira:
             for arm in pose:
                 pose[arm] = [*MIRA_HOME, MIRA_HOME_ROLL, MIRA_HOME_GRIP * GRIP_COUNTS[arm]]
             self.home_target = pose
+            self.home_settled = None
             self.home_deadline = time.monotonic() + 30
         try:
-            if method == "jog_mira_cartesian":
+            if method in {"jog_mira_cartesian", "set_mira_joint_delta"}:
                 self.jog_deadline = time.monotonic() + 0.2
             self.client.notify({"method": "set_mira_pose", "params": pose})
             if method == "set_home" or movement and any(movement[arm][4] for arm in movement):
@@ -250,13 +294,15 @@ class Mira:
         return state
 
     def _cancel_home(self):
+        self.home_settled = None
         if self.home_target is not None:
             self.home_holding = True
             self.grip_stopping.update(self.home_target)
             self.home_target = None
 
     def close(self):
-        self.arm_holding |= bool(self.jog_deadline)
+        self.arm_holding |= bool(self.jog_deadline) or self.velocity.active
+        self.velocity.clear()
         self.jog_deadline = 0.0
         self._cancel_home()
         self.roll_holding = self.roll_active
@@ -278,6 +324,14 @@ class MiraAdapter:
     home_deg = {"left": MIRA_HOME, "right": MIRA_HOME}
     grippers = ("left", "right")
     grip_speed = GRIP_SPEED
+    default_roll_speed_percent = 100
+    default_grip_speed_percent = 100
+    joint_velocity = PHYSICAL
+    control_period = 0.01
+
+    @property
+    def poll_interval(self):
+        return self.control_period if self.client.velocity.active or self.client.grip.rates else 0.1
 
     def __init__(self, spec):
         self.client = Mira(spec["uri"])
@@ -312,6 +366,9 @@ class MiraAdapter:
 
     def jog(self, command):
         return self.client.send({"method": "set_mira_joint_delta", "params": command})
+
+    def jog_velocity(self, command):
+        return self.client.send({"method": "jog_joint_velocity", "params": command})
 
     def jog_cartesian(self, movement):
         return self.client.send({"method": "jog_mira_cartesian", "params": movement})

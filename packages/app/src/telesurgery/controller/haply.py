@@ -664,12 +664,16 @@ class CartesianHaply(HaplyMapper):
         # Slow down on approach. Both vectors remain inside the same validated
         # velocity envelope as keyboard/gamepad, including the node watchdog.
         linear = linear * 2 / max(1e-9, config["linear_speed_m_s"] * scale)
-        angular = angular * 2 / max(1e-9, math.radians(config["angular_speed_deg_s"]) * scale)
-        angular *= inputs.roll_percent / 50
+        rotation_scale = inputs.roll_percent / 100 if config.get("independent_rotation") else scale
+        angular = (
+            angular * 2 / max(1e-9, math.radians(config["angular_speed_deg_s"]) * rotation_scale)
+        )
         linear /= max(1, np.linalg.norm(linear))
         angular /= max(1, np.linalg.norm(angular))
         self.last_sent, self.active = now, True
-        return "jog", {"translation": linear.tolist(), "rotation": angular.tolist()}
+        return "jog", inputs.cartesian_speed(
+            {"translation": linear.tolist(), "rotation": angular.tolist()}
+        )
 
 
 class BrowserHaply:

@@ -8,8 +8,9 @@ import math
 
 import numpy as np
 from telesurgery_robots.adapters.base import values
+from telesurgery_robots.mira.velocity import SIMULATION
 
-FOLLOW = {"version": 1, "linear_speed_mm_s": 1500.0, "joint_speed_deg_s": 180.0}
+FOLLOW = {"version": 1, "linear_speed_mm_s": 1500.0, "joint_speed_deg_s": SIMULATION["arm_deg_s"]}
 LOG = logging.getLogger(__name__)
 
 
@@ -95,7 +96,11 @@ class Follow:
         joints = np.linalg.lstsq(jacobian, change, rcond=1e-3)[0]
         requested = np.r_[
             joints / dt,
-            np.clip((target[4] - self.position[4]) / 0.05, -180 * roll_speed, 180 * roll_speed),
+            np.clip(
+                (target[4] - self.position[4]) / 0.05,
+                -SIMULATION["roll_deg_s"] * roll_speed,
+                SIMULATION["roll_deg_s"] * roll_speed,
+            ),
         ]
         requested[:4] /= max(
             1, np.max(np.abs(requested[:4])) / (FOLLOW["joint_speed_deg_s"] * arm_speed)

@@ -5,7 +5,7 @@
 
 import math
 
-from telesurgery_robots.adapters.base import cartesian_command, speed_value, values
+from telesurgery_robots.adapters.base import CARTESIAN_SPEED, cartesian_rates, speed_value, values
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.workspace import Workspace, axis_bounds
 
@@ -19,7 +19,7 @@ class Franka:
     home_deg = {"joints": FRANKA_HOME}
     speed_limits = FRANKA_SPEED
     default_arm_speed_percent = 75
-    cartesian = {"frame": "base", "linear_speed_m_s": 0.10, "angular_speed_deg_s": 30.0}
+    cartesian = CARTESIAN_SPEED
 
     def __init__(self, spec):
         try:
@@ -101,8 +101,10 @@ class Franka:
 
     def jog(self, command, *, speed_deg_s=None):
         if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
-            command = cartesian_command(command)
-            speed = math.radians(speed_value(speed_deg_s, self.speed_limits))
+            command, speed = cartesian_rates(
+                command, speed_value(speed_deg_s, self.speed_limits), self.speed_limits["max"]
+            )
+            speed = math.radians(speed)
             self.read()
             self.reader.jog_cartesian(command["translation"] + command["rotation"], speed=speed)
             return self.read()

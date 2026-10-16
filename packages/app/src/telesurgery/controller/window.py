@@ -565,6 +565,8 @@ class Window:
             )
             hint.pack(anchor="w", pady=self.px(6, 0))
             Tooltip(hint, BASE_DIRECTIONS)
+            if inputs.controls.get("cartesian", {}).get("independent_rotation"):
+                self.slider(self.controls, "roll", "Rotation speed")
         elif keyboard:
             grid = tk.Frame(self.controls, bg="white")
             grid.pack(fill="x")
@@ -609,7 +611,7 @@ class Window:
                                 row=index + 1, column=col, pady=self.px(2), padx=self.px(2)
                             )
             if inputs.dual and inputs.groups.get("left") == 5:
-                self.slider(self.controls, "roll", "Roll speed")
+                self.slider(self.controls, "roll", "Rotation speed")
         else:
             self.gamepad_mapping()
         if inputs.controls.get("grippers"):
@@ -766,7 +768,7 @@ class Window:
         ):
             self.label(self.controls, text, size=9).pack(anchor="w", pady=self.px(3))
         self.separator(self.controls)
-        self.slider(self.controls, "roll", "Roll speed")
+        self.slider(self.controls, "roll", "Rotation speed")
         self.label(self.controls, "Twist pen · Roll tool", size=9).pack(anchor="w", pady=self.px(3))
 
     def calibrate_haply(self, action=None):
@@ -839,6 +841,8 @@ class Window:
             hint = self.label(grid, "Arm-base directions", size=8, color=MUTED)
             hint.grid(row=1, column=1, sticky="se", pady=self.px(2))
             Tooltip(hint, BASE_DIRECTIONS)
+            if inputs.controls.get("cartesian", {}).get("independent_rotation"):
+                self.slider(self.controls, "roll", "Rotation speed")
         else:
             first, second = (
                 ("X / Y", "Z / elbow")
@@ -861,7 +865,7 @@ class Window:
                 )
         if roll:
             self.separator(self.controls)
-            self.slider(self.controls, "roll", "Roll speed")
+            self.slider(self.controls, "roll", "Rotation speed")
             grid = tk.Frame(self.controls, bg="white")
             grid.pack(fill="x")
             for column, (title, keys) in enumerate(
@@ -1212,7 +1216,7 @@ class Window:
                 self.control.move(
                     self.selected,
                     mode,
-                    command,
+                    self.inputs.cartesian_speed(command),
                     self.inputs.speed if self.inputs.controls.get("speed_deg_s") else None,
                 )
 

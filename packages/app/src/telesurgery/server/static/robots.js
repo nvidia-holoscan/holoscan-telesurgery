@@ -347,6 +347,9 @@ export function robotControls(refresh, openMetrics) {
         try {
             const card = cards.get(robot.id);
             const speed = robot.controls.speed_deg_s && (card?.armSpeed || card?.speed);
+            if (command.rotation && robot.controls.cartesian?.independent_rotation &&
+                command.rotation_speed_deg_s === undefined && replaySpeed === undefined)
+                command = {...command, rotation_speed_deg_s: card.rollSpeed.value()};
             const result = await action("robot.move", {
                 id: robot.id,
                 command,
@@ -522,7 +525,7 @@ export function robotControls(refresh, openMetrics) {
                 if (mira || franka) {
                     element_.classList.add("compact-controls", mira ? "mira-controls" : "franka-controls");
                     card.armSpeed = armSpeed(robot, () => stopInputs(card));
-                    if (pairedArms(robot) && robot.controls.groups.left === 5)
+                    if ((pairedArms(robot) && robot.controls.groups.left === 5) || robot.controls.cartesian?.independent_rotation)
                         card.rollSpeed = rollSpeed(robot, () => stopInputs(card));
                 } else {
                     card.step = jointStep(robot, () => stopInputs(card));
@@ -532,8 +535,9 @@ export function robotControls(refresh, openMetrics) {
                 if (robot.controls.grippers?.length)
                     card.gripSpeed = gripSpeed(robot, () => stopInputs(card));
                 const increment = (group, index, seconds = 0.05) =>
-                    card.armSpeed ? (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
+                    card.armSpeed ? (pairedArms(robot) && index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
                         : card.step.value();
+                const jointRate = (group, index) => (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).value();
                 const goHome = async () => {
                     if (!card.home || card.home.disabled) return;
                     card.home.disabled = true;
@@ -557,6 +561,7 @@ export function robotControls(refresh, openMetrics) {
                         } : null,
                         gripFeedback: velocity => card.grippers?.gamepad(velocity),
                         haplyAvailable: () => state.haply_available === true,
+                        jointSpeed: jointRate,
                     },
                 );
                 const mode = card.gamepad.select;
@@ -648,6 +653,7 @@ export function robotControls(refresh, openMetrics) {
                             : step(card.robot, command, motionMode),
                     () => endInput(robot.id),
                     increment,
+                    jointRate,
                 );
                 const placeControls = () => {
                     const input = mode.value === "keyboard" ? card.keyboard

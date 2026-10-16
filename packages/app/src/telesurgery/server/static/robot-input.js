@@ -127,7 +127,7 @@ export function armSpeed(robot, stop) {
     const maximum = robot.controls.max_step_deg || robot.controls.step_deg || 0.2;
     const limits = robot.controls.speed_deg_s || {
         min: 0,
-        max: maximum * 20,
+        max: robot.controls.joint_velocity?.arm_deg_s ?? maximum * 20,
         default: (robot.controls.default_step_deg || 0.2) * 20,
     };
     return motionSpeed(robot, stop, "arm-speed", "Arm speed", limits,
@@ -136,15 +136,16 @@ export function armSpeed(robot, stop) {
 
 export function rollSpeed(robot, stop) {
     const maximum = robot.controls.max_step_deg || robot.controls.step_deg || 0.2;
-    return motionSpeed(robot, stop, "roll-speed", "Roll speed", {
+    return motionSpeed(robot, stop, "roll-speed", "Rotation speed", {
         min: 0,
-        max: maximum * 20,
+        max: robot.controls.joint_velocity?.roll_deg_s ?? robot.controls.cartesian?.angular_speed_deg_s ?? maximum * 20,
         default: (robot.controls.default_step_deg || 0.2) * 20,
-    }, 50, maximum);
+    }, robot.controls.default_roll_speed_percent ?? 50, maximum);
 }
 
 export function gripSpeed(robot, stop) {
-    return motionSpeed(robot, stop, "grip-speed", "Grip speed", robot.controls.grip_speed_pct_s, 40);
+    return motionSpeed(robot, stop, "grip-speed", "Grip speed", robot.controls.grip_speed_pct_s,
+        robot.controls.default_grip_speed_percent ?? 40);
 }
 
 function motionSpeed(robot, stop, kind, title, limits, defaultPercent, maximumStep) {
@@ -153,6 +154,7 @@ function motionSpeed(robot, stop, kind, title, limits, defaultPercent, maximumSt
     let percent = Math.max(minimum, Math.min(100,
         motionValues.get(key) ?? defaultPercent));
     const container = element("div", undefined, "motion-value speed-control");
+    container.title = "Percentage of this robot’s configured speed limit. Acceleration, contact and joint limits can reduce actual speed.";
     const label = element("label", title);
     const slider = document.createElement("input");
     const output = element("output");
@@ -232,12 +234,17 @@ export function miraToolJog(robot, command) {
     const config = robot.controls.mira_cartesian;
     const maximum = robot.controls.max_step_deg || 1;
     return Object.fromEntries(Object.entries(command).map(([arm, values]) => {
-        const result = values.map((v, i) => v / maximum *
+        const rates = robot.controls.joint_velocity;
+        const result = values.map((v, i) => v / (rates ? (i === 4 ? rates.roll_deg_s : rates.arm_deg_s) / 20 : maximum) *
             (i < 3 ? config.linear_step_mm : i === 4 ?
                 (config.roll_step_deg ?? config.angular_step_deg) : config.angular_step_deg));
         const length = Math.hypot(...result.slice(0, 3));
         if (length > config.linear_step_mm)
             for (let i = 0; i < 3; i++) result[i] *= config.linear_step_mm / length;
+        for (const i of [3, 4]) {
+            const limit = i === 4 ? (config.roll_step_deg ?? config.angular_step_deg) : config.angular_step_deg;
+            result[i] = Math.max(-limit, Math.min(limit, result[i]));
+        }
         return [arm, result];
     }));
 }

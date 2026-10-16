@@ -49,7 +49,7 @@ function controllerBindings(id) {
 
 export function gamepadInput(
     robot, send, stop, stepSize = () => 0.2, gripSpeed = () => 20,
-    { home = null, gripFeedback = () => {}, haplyAvailable = () => false } = {},
+    { home = null, gripFeedback = () => {}, haplyAvailable = () => false, jointSpeed = null } = {},
 ) {
     const dual = pairedArms(robot);
     const franka = ["franka", "franka-sim"].includes(robot.kind) &&
@@ -111,6 +111,8 @@ export function gamepadInput(
         }
     }
     const miraCartesian = () => miraTool && group.value === "mira-tool";
+    const jointVelocity = () => Boolean(jointSpeed && robot.controls.joint_velocity && !cartesian && !miraCartesian());
+    const increment = (arm, index, seconds) => jointVelocity() ? jointSpeed(arm, index) : stepSize(arm, index, seconds);
     group.hidden = !toolControl && !miraTool && (shoulderGroups || group.options.length < 2);
     const status = element(
         "p",
@@ -138,6 +140,7 @@ export function gamepadInput(
     let handPosition = robot.state?.grippers?.hand ?? null, gripTarget = null, handToggleReady = false;
     let feedback = robot.state || {};
     function renderMapping() {
+        rollControls.hidden = !(roll || (cartesian && robot.controls.cartesian.independent_rotation));
         stickJoints.length = positionHeadings.length = cartesianKeys.length = 0;
         instructions.className = "gamepad-instructions";
         instructions.replaceChildren(enableKey, enableHint);
@@ -552,15 +555,15 @@ export function gamepadInput(
                         ["right", 2],
                     ]) {
                         for (let i = 0; i < 2; i++)
-                            command[arm][offset + i] = axes[start + i] * stepSize(arm, offset + i, seconds);
-                        if (roll) command[arm][4] = rollDirection[arm] * stepSize(arm, 4, seconds);
+                            command[arm][offset + i] = axes[start + i] * increment(arm, offset + i, seconds);
+                        if (roll) command[arm][4] = rollDirection[arm] * increment(arm, 4, seconds);
                     }
                 } else {
                     const [key, start] = group.value.split(":"),
                         offset = bankedJoints ? (alternate ? 4 : 0) : Number(start);
                     axes.forEach((v, i) => {
                         if (offset + i < command[key].length)
-                            command[key][offset + i] = v * stepSize(key, offset + i, seconds);
+                            command[key][offset + i] = v * increment(key, offset + i, seconds);
                     });
                 }
                 const movingJoints = Object.values(command).flat().some(v => v !== 0);
@@ -592,7 +595,7 @@ export function gamepadInput(
                     lastSentAt = now;
                     active = busy = true;
                     send(mode === "grip" ? { velocity } : miraCartesian() ? miraToolJog(robot, command) : command,
-                        mode === "jog" && miraCartesian() ? "cartesian" : mode)
+                        mode === "jog" ? miraCartesian() ? "cartesian" : jointVelocity() ? "velocity" : mode : mode)
                         .catch(halt)
                         .finally(() => {
                             busy = false;
@@ -602,8 +605,7 @@ export function gamepadInput(
                             // Input is read again; no motion is queued/replayed.
                             if (!disposed) {
                                 clearTimeout(timer);
-                                timer = setTimeout(poll, Math.max(0,
-                                    50 - (performance.now() - lastSentAt)));
+                                schedule();
                             }
                         });
                 }
@@ -613,7 +615,14 @@ export function gamepadInput(
                     : `Release ${enable}${roll || grippers.length ? " and tool buttons" : ""}; center sticks to enable`);
         }
         container.dataset.state = active ? "moving" : armed ? "ready" : "paused";
-        if (!disposed) timer = setTimeout(poll, 50);
+        if (!disposed) schedule();
+    }
+    function schedule() {
+        // Timers can fire just before the 50 ms send deadline. Recheck at the
+        // deadline instead of skipping another whole tick (halving the rate).
+        const remaining = lastSentAt + 50 - performance.now();
+        timer = setTimeout(poll, active && !busy
+            ? Math.max(1, Math.ceil(remaining)) : 50);
     }
     let timer = setTimeout(poll, 50);
     return {

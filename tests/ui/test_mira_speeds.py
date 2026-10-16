@@ -54,7 +54,7 @@ async def test_independent_speeds_timing_and_edit_interruption():
             }""")
             assert await page.evaluate("defaults") == ["20", "50", "40"]
             await expect(page.get_by_label("MIRA arm speed")).to_have_value("40")
-            await expect(page.get_by_label("MIRA roll speed")).to_have_value("10")
+            await expect(page.get_by_label("MIRA rotation speed")).to_have_value("10")
             await expect(page.get_by_label("MIRA grip speed")).to_have_value("60")
             await page.keyboard.down("q")
             await page.keyboard.down("t")
@@ -92,9 +92,9 @@ async def test_independent_speeds_timing_and_edit_interruption():
             assert moves[3]["command"] == {"left": [4, 0, 0, 0, 1], "right": [0] * 5}
             assert await page.evaluate("speeds[0].increment(1)") == 5
             before = await page.evaluate("stops")
-            await page.get_by_label("MIRA roll speed").focus()
-            await page.get_by_label("MIRA roll speed").press("ArrowRight")
-            await page.get_by_label("MIRA roll speed").press("Enter")
+            await page.get_by_label("MIRA rotation speed").focus()
+            await page.get_by_label("MIRA rotation speed").press("ArrowRight")
+            await page.get_by_label("MIRA rotation speed").press("Enter")
             await page.clock.run_for(250)
             assert await page.evaluate("stops") == before + 1
             assert await page.evaluate("moves.length") == 4

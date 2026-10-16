@@ -67,6 +67,10 @@ class Controller:
             self.next_poll = time.monotonic() + 2
             raise
         self.observed = time.monotonic()
+        if motion:
+            self.next_poll = min(
+                self.next_poll, self.observed + getattr(self.adapter, "poll_interval", 0.1)
+            )
         self.sample += 1
         self.feedback = {
             "status": "online",
@@ -115,7 +119,7 @@ class Controller:
         self.expires = time.monotonic() + 2
 
     def move(self, token, sequence, command, sent_at, mode="jog", speed_deg_s=None):
-        if mode not in {"step", "jog", "home", "grip", "cartesian", "follow", "reset"}:
+        if mode not in {"step", "jog", "velocity", "home", "grip", "cartesian", "follow", "reset"}:
             raise ValueError("Unknown robot motion mode")
         if type(sent_at) not in (float, int) or not math.isfinite(sent_at):
             raise ValueError("Invalid controller timestamp")
@@ -170,6 +174,14 @@ class Controller:
             command = tool_command(command, self.adapter.mira_cartesian)
             self.sequence = sequence
             return self.record(lambda: self.adapter.jog_cartesian(command), motion=True)
+        if mode == "velocity":
+            from telesurgery_robots.mira.velocity import command as velocity_command
+
+            if not hasattr(self.adapter, "jog_velocity"):
+                raise ValueError("Joint velocity control is not supported by this robot")
+            command = velocity_command(command, self.adapter.joint_velocity)
+            self.sequence = sequence
+            return self.record(lambda: self.adapter.jog_velocity(command), motion=True)
         if isinstance(command, dict) and set(command) & {"translation", "rotation"}:
             from telesurgery_robots.adapters.base import cartesian_command
 
@@ -245,9 +257,10 @@ class Controller:
                 if time.monotonic() < self.next_poll:
                     return
                 self.release()
-            if time.monotonic() >= self.next_poll and time.monotonic() - self.observed >= 0.1:
+            period = getattr(self.adapter, "poll_interval", 0.1)
+            if time.monotonic() >= self.next_poll and time.monotonic() - self.observed >= period:
                 self.state()
-                self.next_poll = time.monotonic() + 0.1
+                self.next_poll = time.monotonic() + period
         except Exception:
             pass  # record() exposes the failure; retry feedback after a bounded delay.
 
@@ -312,7 +325,9 @@ class Robots:
                     lambda: self.clock_offset,
                 )
                 name = "robot_" + hashlib.sha256(key.encode()).hexdigest()[:12]
-                graph = Executor(name, idle=controller.tick).start()
+                graph = Executor(
+                    name, idle=controller.tick, interval=getattr(adapter, "control_period", 0.1)
+                ).start()
                 self.devices[key], self.graphs[key] = controller, graph
                 self.specs[key] = {k: v for k, v in spec.items() if k != "motion_enabled"}
             except Exception as exc:

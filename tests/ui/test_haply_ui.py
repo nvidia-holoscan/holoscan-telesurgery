@@ -278,7 +278,9 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
             await expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_hidden()
             assert not any(c["action"].startswith("robot.") for c in calls)
             if kind == "mira":
-                await expect(page.get_by_label(f"{name} roll speed", exact=True)).to_be_visible()
+                await expect(
+                    page.get_by_label(f"{name} rotation speed", exact=True)
+                ).to_be_visible()
             assert not any(c["action"] == "robot.move" for c in calls)
             await expect(page.locator(".haply-controls")).to_contain_text(
                 "Tap single-dot button · Start / stop"
