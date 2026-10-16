@@ -99,8 +99,22 @@ const robots = robotControls(refresh, openMetrics);
 const nativeControllerOpen = () => ["starting", "running"].includes(state?.native_controller?.status);
 const controllerPreferences = () => Object.fromEntries([...motionValues].filter(([key]) =>
     [":arm-speed", ":roll-speed", ":grip-speed"].some(suffix => key.endsWith(suffix))));
-let restoredController;
+let restoredController, controllerStateInitialized = false;
 let controllerGeneration = 0;
+function restoreRobotPreference() {
+    if (state.role === "patient") return;
+    const key = `telesurgery-robot:${state.patient || "local"}`;
+    if (robotPreferenceKey === key) return;
+    robotPreferenceKey = key;
+    robotId = preferredRobot = null;
+    try { preferredRobot = localStorage.getItem(key); } catch {}
+}
+function rememberRobot(id) {
+    robotId = preferredRobot = id;
+    if (id && robotPreferenceKey) {
+        try { localStorage.setItem(robotPreferenceKey, id); } catch {}
+    }
+}
 async function transferController(native) {
     if (changingController) return;
     changingController = true;
@@ -119,7 +133,7 @@ async function transferController(native) {
             const result = await action("controller.close", {retain_control: true});
             state.native_controller = result?.controller || {...state.native_controller, status: "closed"};
             if (result?.robot) {
-                robotId = preferredRobot = result.robot;
+                rememberRobot(result.robot);
                 robots.acceptHandoff(result.robot, result.state);
             }
         }
@@ -141,7 +155,7 @@ async function acceptReturnedControl(native) {
         const result = await action("controller.close", {retain_control: true, generation: native.generation});
         if (result?.controller) state.native_controller = result.controller;
         if (result?.robot) {
-            robotId = preferredRobot = result.robot;
+            rememberRobot(result.robot);
             robots.acceptHandoff(result.robot, result.state);
         }
     } catch (error) {
@@ -717,23 +731,12 @@ function renderRobots(data, isPatient, approved) {
                 r.connection_enabled !== false &&
                 r.node_online !== false,
         );
-        const key = `telesurgery-robot:${state.patient || "local"}`;
-        if (robotPreferenceKey !== key) {
-            if (robotPreferenceKey) preferredRobot = null;
-            robotPreferenceKey = key;
-            robotId = null;
-            try {
-                preferredRobot ||= localStorage.getItem(key);
-            } catch {
-                /* Selection remains usable without browser storage. */
-            }
-        }
         if (robotList.some((r) => r.id === preferredRobot))
             robotId = preferredRobot;
     }
     if (!robotList.some((r) => r.id === robotId))
         robotId = isPatient || !preferredRobot ? robotList[0]?.id : null;
-    if (!isPatient && robotId) preferredRobot = robotId;
+    if (!isPatient && robotId && robotId !== preferredRobot) rememberRobot(robotId);
     const available = robotList.length;
     const picker = $("#robot-selector"),
         options = JSON.stringify([
@@ -789,13 +792,21 @@ function renderRobots(data, isPatient, approved) {
 }
 function renderCurrent() {
     if (!state) return;
+    restoreRobotPreference();
     const native = state.native_controller;
+    if (!controllerStateInitialized) {
+        controllerStateInitialized = true;
+        // A closed window in the initial snapshot is history, not a new dock.
+        // Only an outstanding lease handoff needs to be consumed after reload.
+        if (native?.status === "closed" && !native.handoff)
+            restoredController = native.generation;
+    }
     if (native?.status === "closed" && native.generation && native.generation !== restoredController) {
         restoredController = native.generation;
         for (const [key, value] of Object.entries(native.preferences || {}))
             motionValues.set(key, value);
         if (native.robot && state.session?.robots?.some(r => r.id === native.robot))
-            robotId = preferredRobot = native.robot;
+            rememberRobot(native.robot);
         if ("input" in native) robots.restoreInput(native.robot, native.input);
         robots.rebuild();
         if (native.handoff && !changingController) acceptReturnedControl(native);
@@ -1076,12 +1087,7 @@ $("#robot-selector").onchange = async (event) => {
         }
         if (!await robots.releaseAll())
             throw new Error("Control release was not confirmed. Robot selection kept; retry release before switching.");
-        robotId = preferredRobot = selected;
-        try {
-            localStorage.setItem(robotPreferenceKey, selected);
-        } catch {
-            /* Selection remains usable without browser storage. */
-        }
+        rememberRobot(selected);
     } catch (error) {
         notice(error);
     } finally {

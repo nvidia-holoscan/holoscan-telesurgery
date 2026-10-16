@@ -92,6 +92,8 @@ async def test_robot_switch_cancels_and_waits_for_successful_release():
             page = await browser.new_page()
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/")
+            await expect(page.locator("#robot-selector")).to_have_value("1")
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == "1"
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             picker = page.locator("#robot-selector")
             dialog = page.locator("#switch-robot-dialog")
@@ -122,6 +124,26 @@ async def test_robot_switch_cancels_and_waits_for_successful_release():
             assert not any(
                 c["action"] == "robot.acquire" and c["params"]["id"] == "2" for c in calls
             )
+            # An old native window must not replace a newer browser selection on reload.
+            state["native_controller"] = {
+                "status": "closed",
+                "generation": "old-window",
+                "robot": "1",
+                "input": None,
+            }
+            await page.reload()
+            await expect(picker).to_have_value("2")
+            await expect(page.get_by_label("Arm 2 input", exact=True)).to_be_visible()
+            assert not any(
+                c["action"] == "robot.acquire" and c["params"]["id"] == "2" for c in calls
+            )
+            # A restarting node does not overwrite the remembered robot with the first one.
+            robots[1]["status"] = "starting"
+            await page.reload()
+            await expect(picker).to_have_value("")
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == "2"
+            robots[1]["status"] = "online"
+            await expect(picker).to_have_value("2")
         finally:
             release_reply.set()
             await browser.close()
@@ -279,6 +301,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
                 )
             moves = len([c for c in calls if c["action"] == "robot.move"])
             await page.get_by_role("button", name="Dock robot controls", exact=True).click()
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == kind
             await expect(speed).to_have_value("55")
             await expect(page.locator("#robots")).to_be_visible()
             await expect(selector).to_have_value(selected)
