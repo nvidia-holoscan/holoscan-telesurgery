@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04 AS dependencies
+ARG CUDA_VERSION=13.4.2
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS dependencies
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT=/opt/telesurgery \
     UV_LINK_MODE=copy \
@@ -29,13 +30,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     python3.12 scripts/builders/dependencies.py --sdk "$SDK" --environment /opt/telesurgery --dependencies-only
 
 FROM dependencies AS native-build
+ARG CUDA_VERSION
+ARG TARGETARCH
 ARG CUDAARCHS=all-major
 ENV CUDAARCHS=$CUDAARCHS
 COPY dependencies ./dependencies
 COPY scripts/builders/sdk4.py scripts/builders/sdk5.py ./scripts/builders/
 RUN mkdir -p /opt/holoscan /opt/hololink /opt/sdk4-development
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
+    --mount=type=cache,id=telesurgery-build-${SDK}-cuda${CUDA_VERSION}-${TARGETARCH},target=/app/build,sharing=locked \
     mkdir -p /opt/cuda-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /opt/cuda-stubs/libcuda.so.1 \
     && LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
@@ -44,7 +47,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Native sources invalidate their own builds, while application edits reuse them.
 COPY native ./native
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
+    --mount=type=cache,id=telesurgery-build-${SDK}-cuda${CUDA_VERSION}-${TARGETARCH},target=/app/build,sharing=locked \
     mkdir -p /opt/cuda-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /opt/cuda-stubs/libcuda.so.1 \
     && LD_LIBRARY_PATH=/opt/cuda-stubs:$LD_LIBRARY_PATH sh -c \
@@ -53,12 +56,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY scripts/build_franka.sh ./scripts/
 COPY packages/robots/native ./packages/robots/native
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
+    --mount=type=cache,id=telesurgery-build-${SDK}-cuda${CUDA_VERSION}-${TARGETARCH},target=/app/build,sharing=locked \
     TELESURGERY_FRANKA_PREFIX=/opt/franka scripts/build_franka.sh --no-install-workspace
 # Install the patched codec after dependency syncs, which could replace its wheel.
 COPY scripts/builders/codecs.py ./scripts/builders/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,id=telesurgery-build-${SDK},target=/app/build,sharing=locked \
+    --mount=type=cache,id=telesurgery-build-${SDK}-cuda${CUDA_VERSION}-${TARGETARCH},target=/app/build,sharing=locked \
     python scripts/builders/codecs.py \
     && uv pip uninstall --python /opt/telesurgery/bin/python cmake ninja patchelf nanobind
 # Isaac Sim runs in its own container with these small gateway dependencies.
@@ -81,7 +84,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --editable packages/core --editable packages/robots --editable packages/runtime \
     --editable packages/sim --editable packages/app
 
-FROM nvcr.io/nvidia/cuda:13.4.2-runtime-ubuntu24.04 AS runtime
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics,display \
     PATH=/opt/telesurgery/bin:$PATH
