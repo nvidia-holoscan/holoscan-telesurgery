@@ -177,6 +177,63 @@ async def test_patient_can_revoke_disconnected_surgeon_and_block_resume(patient)
 
 
 @pytest.mark.asyncio
+async def test_reconnect_cannot_resume_until_disconnect_stop_is_confirmed(patient):
+    credentials = await acquire(patient)
+    owner = patient.owners["node:arm"]
+    deadline = owner.expires
+    device_call = patient.node_call
+
+    async def lost_stop(node, method, params):
+        if method == "robot.release":
+            # The request never reached the device; its old lease is still active.
+            raise ConnectionError("Stop reply unavailable")
+        return await device_call(node, method, params)
+
+    patient.node_call = lost_stop
+    await patient._suspend_owner("one")
+    patient.access.disconnect("one")
+    assert not owner.ready and patient.device.active
+    assert patient.faults["node:arm"] == "Stop reply unavailable"
+    patient.node_registry.configs["node"] = {"token": "node-token"}
+    await patient._request(
+        SimpleNamespace(id="node-returning"),
+        "node.register",
+        {"id": "node", "token": "node-token", "inventory": patient.nodes["node"]},
+    )
+    assert not owner.ready  # Re-enrollment cannot erase an unconfirmed stop.
+    reply = await patient._request(
+        SimpleNamespace(id="returning"),
+        "access.request",
+        {"name": "Surgeon", "robot": True, "credential": patient.credential},
+    )
+    assert reply["control_tokens"] == {"node:arm": credentials["token"]}
+    before = list(patient.calls)
+    for method in ("robot.acquire", "robot.renew", "robot.hold", "robot.move"):
+        with pytest.raises(RuntimeError, match="Previous stop was not confirmed"):
+            await patient._robot(
+                "returning",
+                method,
+                {**credentials, "sequence": 1, "command": {"axis": [0.1]}, "sent_at": time.time()},
+            )
+    with pytest.raises(RuntimeError, match="Previous stop was not confirmed"):
+        await patient._handoff_call(
+            "node:arm", "robot.replay_release", {"token": credentials["token"]}
+        )
+    assert patient.calls == before
+    patient.nodes["node"]["robots"][0]["stale"] = False
+    await patient._recover_holds()
+    assert not owner.ready and patient.device.active
+    patient.node_call = device_call
+    await patient._recover_holds()
+    assert owner.ready and not patient.device.active and not patient.faults
+    assert owner.owner == "returning" and owner.token == credentials["token"]
+    assert owner.expires == deadline
+    assert patient.calls[-1] == "robot.release"
+    await patient._robot("returning", "robot.renew", credentials)
+    assert patient.device.active and patient.device.adapter.moves == 0
+
+
+@pytest.mark.asyncio
 async def test_inactive_lock_expires_without_another_request(patient):
     await acquire(patient)
     owner = patient.owners["node:arm"]

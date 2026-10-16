@@ -183,7 +183,7 @@ class Application:
             self.nodes[params["id"]] = {**params["inventory"], "status": "online"}
             for key, owner in self.owners.items():
                 if key.startswith(f"{params['id']}:"):
-                    owner.ready = True
+                    owner.ready = key not in self.faults
             return {"registered": True, "server_time": time.time()}
         if peer.id in self.peer_nodes:
             if method == "node.inventory":
@@ -248,6 +248,7 @@ class Application:
                     self.replay_barrier.cancel(params["run"], peer.id, key)
                     await self.replay_handoff.clear(key)
                     return True
+                self._require_ready(key)
                 if method == "replay.poll":
                     barrier = self.replay_barrier.poll(
                         params["run"],
@@ -567,6 +568,8 @@ class Application:
             if not owner.ready:
                 raise RuntimeError(self.faults[key])
             return result
+        if method == "robot.replay_release":
+            self._require_ready(key)
         node, device = key.split(":", 1)
         result = await self.node_call(node, method, {"key": device, **params})
         self.robot_state[key] = result["state"] if method == "robot.replay_release" else result
@@ -588,11 +591,7 @@ class Application:
                 raise RuntimeError(self.faults[key])
             return result
         if method == "robot.acquire":
-            if not owner.ready:
-                raise RuntimeError(
-                    "Previous stop was not confirmed; choose Retry hold on the patient dashboard. "
-                    + self.faults.get(key, "")
-                )
+            self._require_ready(key)
             token = await self.run(owner.acquire, peer)
             owner.identity = self.access.identities.get(peer)
             owner.name = self.access.surgeons[peer].name
@@ -613,6 +612,7 @@ class Application:
             if not owner.ready:
                 raise RuntimeError(self.faults[key])
             return result
+        self._require_ready(key)
         if method in {"robot.renew", "robot.hold"}:
             try:
                 self.robot_state[key] = await self.node_call(
@@ -685,6 +685,13 @@ class Application:
         owner.activity()
         return self.robot_state[key]
 
+    def _require_ready(self, key):
+        if not self.owners[key].ready or key in self.faults:
+            raise RuntimeError(
+                "Previous stop was not confirmed; choose Retry hold on the patient dashboard. "
+                + self.faults.get(key, "")
+            )
+
     async def _release(self, key):
         self.replay_barrier.released(key)
         owner = self.owners[key]
@@ -706,18 +713,33 @@ class Application:
 
     async def _recover_holds(self):
         # Feedback recovery alone cannot confirm a failed Stop. Retry only hold,
-        # with no owner; new motion always requires a fresh surgeon input.
+        # preserving any reservation; new motion requires a fresh surgeon input.
         for robot in self.inventory()["robots"]:
             key = robot["id"]
             owner = self.owners.get(key)
-            if (
-                key in self.faults
-                and owner
-                and not owner.owner
-                and robot["status"] == "online"
-                and not robot["stale"]
-            ):
-                await self._release(key)
+            if key in self.faults and owner and robot["status"] == "online" and not robot["stale"]:
+                if owner.owner:
+                    await self._stop_reserved(key)
+                else:
+                    await self._release(key)
+
+    async def _stop_reserved(self, key):
+        """Confirm a stop without discarding the surgeon's reservation."""
+        owner = self.owners[key]
+        owner.ready = False
+        self.replay_barrier.released(key)
+        node, device = key.split(":", 1)
+        try:
+            await self.replay_handoff.released(key)
+            await self.node_call(node, "robot.release", {"key": device, "token": owner.token})
+            owner.ready = True
+            self.faults.pop(key, None)
+        except Exception as exc:
+            reason = str(exc) or f"{type(exc).__name__}: robot stop was not confirmed"
+            if self.faults.get(key) != reason:
+                LOG.warning("Disconnected controller stop: %s", reason)
+            owner.ready = False
+            self.faults[key] = reason
 
     async def _release_owner(self, peer):
         for key, owner in self.owners.items():
@@ -732,13 +754,7 @@ class Application:
             if not owner.identity:
                 await self._release(key)
                 continue
-            self.replay_barrier.released(key)
-            node, device = key.split(":", 1)
-            try:
-                await self.replay_handoff.released(key)
-                await self.node_call(node, "robot.release", {"key": device, "token": owner.token})
-            except Exception as exc:
-                LOG.warning("Disconnected controller stop: %s", exc)
+            await self._stop_reserved(key)
 
     async def connect(self, address, name, robot):
         if self.remote and self.remote_status.get("status") == "revoked":

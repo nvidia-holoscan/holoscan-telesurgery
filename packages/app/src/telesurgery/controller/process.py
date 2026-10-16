@@ -127,8 +127,7 @@ class NativeController:
                         if state["status"] in {"error", "closed"}:
                             exit_code = self.process.returncode
                             raise RuntimeError(
-                                state.get("error")
-                                or "Native controller closed during startup"
+                                (state.get("error") or "Native controller closed during startup")
                                 + (f" (exit code {exit_code})" if exit_code is not None else "")
                                 + f"; see {log_path}"
                             )

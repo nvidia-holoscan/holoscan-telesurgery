@@ -27,7 +27,8 @@ from telesurgery_robots.adapters.simulation import (
 
 
 @pytest.mark.asyncio
-async def test_native_controller_early_exit_points_to_log(tmp_path, monkeypatch):
+@pytest.mark.parametrize("reported_error", [None, "Unable to initialize native controls"])
+async def test_native_controller_early_exit_points_to_log(tmp_path, monkeypatch, reported_error):
     from telesurgery.controller.process import NativeController
 
     monkeypatch.setenv("DISPLAY", ":unused")
@@ -46,8 +47,18 @@ async def test_native_controller_early_exit_points_to_log(tmp_path, monkeypatch)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_import)
     controller = NativeController(tmp_path / "controller")
+    status = controller.status
+
+    def reported_status():
+        value = status()
+        if reported_error and controller.process and controller.process.returncode is not None:
+            return {**value, "status": "error", "error": reported_error}
+        return value
+
+    monkeypatch.setattr(controller, "status", reported_status)
     try:
-        with pytest.raises(RuntimeError, match="closed during startup.*exit code 1") as error:
+        message = reported_error or "closed during startup"
+        with pytest.raises(RuntimeError, match=message + ".*exit code 1") as error:
             await controller.open("http://127.0.0.1:8002")
         log_path = tmp_path / "controller" / "controller.log"
         assert str(log_path) in str(error.value)
