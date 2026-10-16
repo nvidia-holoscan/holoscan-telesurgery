@@ -17,7 +17,7 @@ const editing = () =>
         "input, textarea, select, button, a, [contenteditable]:not([contenteditable=false])",
     );
 
-export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
+export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpeed = null) {
     const dual = pairedArms(robot);
     const armPairs = {
         left: ["qa", "ws", "ed", "rf", "tg"],
@@ -64,7 +64,8 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         }
     }
     const miraCartesian = () => miraTool && group.value === "mira-tool";
-    const continuousTool = () => cartesian() || miraCartesian();
+    const jointVelocity = () => Boolean(jointSpeed && robot.controls.joint_velocity && !cartesian() && !miraCartesian());
+    const continuousTool = () => cartesian() || miraCartesian() || jointVelocity();
     group.hidden = (dual && !miraTool) || group.options.length < 2;
     const mapping = element("div", undefined, "keyboard-mapping");
     const arms = element("div", undefined, "motion-section");
@@ -118,10 +119,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     }
     function renderMapping() {
         halt();
+        rollControls.hidden = !((dual && robot.controls.groups.left === 5) ||
+            (cartesian() && robot.controls.cartesian.independent_rotation));
         armRows.classList.toggle("cartesian-keyboard", cartesian());
         if (cartesian()) {
             bindings.clear();
             armRows.replaceChildren();
+            rollRows.replaceChildren();
             feedbackLabels = [];
             for (const [title, rows] of [
                 ["Move", [
@@ -300,7 +304,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             const binding = bindings.get(key);
             if (binding)
                 value[binding.group][binding.index] +=
-                    binding.sign * (cartesian() ? 1 : stepSize(binding.group, binding.index, seconds));
+                    binding.sign * (cartesian() ? 1 : jointVelocity() ? jointSpeed(binding.group, binding.index) : stepSize(binding.group, binding.index, seconds));
         }
         return miraCartesian() ? miraToolJog(robot, value) : value;
     }
@@ -345,7 +349,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
         active = busy = true;
         lastSentAt = now;
         lastJogAt = continuous ? now : 0;
-        Promise.resolve(send(value, continuous, miraCartesian() ? "cartesian" : undefined))
+        Promise.resolve(send(value, continuous, miraCartesian() ? "cartesian" : jointVelocity() ? "velocity" : undefined))
             .catch(halt)
             .finally(() => {
                 busy = false;
@@ -410,7 +414,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
             issue(heldKeys, true);
         }
         for (const cap of mapping.querySelectorAll(".key-cap")) {
-            cap.dataset.pressed = String(keys.has(cap.dataset.key));
+            const replayKey = cap.dataset.key.replace(/^arrow/, "");
+            cap.dataset.pressed = String(replayInput
+                ? replayInput.keys.some(key => key === cap.dataset.key || key === replayKey) : keys.has(cap.dataset.key));
             cap.disabled = !enabled || !allowed;
         }
         // Timers may fire just before the requested deadline. Wait only the
@@ -424,11 +430,25 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2) {
     window.addEventListener("blur", halt);
     document.addEventListener("visibilitychange", halt);
     let timer = setTimeout(poll, 50);
+    let replayInput = null;
+    let manualMode = null;
     return {
         element: container,
         arms,
         roll: rollControls,
         get inlineFeedback() { return !cartesian(); },
+        replay(input) {
+            replayInput = input?.device === "keyboard" ? input : null;
+            if (replayInput && manualMode === null) manualMode = group.value;
+            const mode = replayInput?.mode;
+            const selection = replayInput ? mode === "joints" && toolControl ? "joints:0" : mode : manualMode;
+            if (selection && selection !== group.value && [...group.options].some(option => option.value === selection)) {
+                group.value = selection;
+                renderMapping();
+            }
+            if (!replayInput) manualMode = null;
+            mapping.dataset.replay = String(Boolean(replayInput));
+        },
         update(on, available) {
             if ((enabled && !on) || (allowed && !available)) halt();
             if (on && !enabled) {

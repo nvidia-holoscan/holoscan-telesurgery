@@ -7,6 +7,7 @@ import math
 
 from telesurgery.controller.haply import CartesianHaply
 from telesurgery.controller.replay import FeedbackPlayback
+from telesurgery.controller.replay_input import command_input
 
 
 def validate_checkpoints(rows, *, environment="mira", device="keyboard"):
@@ -120,30 +121,26 @@ class CheckpointPlayback(FeedbackPlayback):
         validate_checkpoints(self.rows, environment=self.environment, device=self.mapping.device)
         self.synchronized = 0
         self.independent_actions = manifest.get("independent_actions") is True
+        self.requires_presented_needle = manifest.get("requires_presented_needle") is True
         self.handoff_done = False
-        self.shadow = None
         self.handoff_waits = manifest.get("handoff_waits", {}).get(self.role, {})
         self.feedback_at = None
         self.feedback_period = 0.05
+        self.physics_wait_since = None
 
-    def select_pickup(self, shadow):
-        """Empty CMR practice stays clear of the left tool parked at Home."""
-        if type(shadow) is not bool:
-            raise RuntimeError("Restart the patient service to support independent pickup")
-        if self.shadow is not None:
-            if self.shadow != shadow:
-                raise RuntimeError("Replay pickup mode changed during motion")
-            return
-        if self.index:
-            raise RuntimeError("Select the pickup before starting motion")
-        self.shadow = shadow
-        prepared = False
-        for row in self.rows:
-            prepared |= "joint_pose" in row
-            if shadow and prepared and "tool_pose" in row:
-                # In the right arm's base frame, -Y moves away from the left
-                # Home tool. Keep the same approach, close and modest lift.
-                row["tool_pose"]["position_m"][1] -= 0.03
+    def display_input(self, result):
+        """Checkpoint files need not contain raw device samples; show sent corrections."""
+        request = result.get("request")
+        if result.get("done") or result.get("waiting_peer") or request and request[0] == "release":
+            self.input_display = None
+        elif request:
+            self.input_display = command_input(
+                self.mapping.inputs,
+                self.mapping.device,
+                request,
+                (self.input_display or {}).get("mode"),
+            )
+        return self.input_display
 
     @property
     def taking(self):
@@ -212,6 +209,27 @@ class CheckpointPlayback(FeedbackPlayback):
         if self.pending:
             self.pending["acknowledged"] = True
 
+    def waiting_for_physics(self, state, now):
+        """Keep a tool checkpoint pending during a bounded simulator delay."""
+        feedback = state.get("cartesian_feedback")
+        if self.environment not in {"franka", "versius"} or feedback is None:
+            return False
+        if not isinstance(feedback, dict) or type(feedback.get("ready")) is not bool:
+            raise ValueError("Replay requires valid Cartesian feedback status")
+        stopping = state.get("stopping")
+        reason = state.get("stop_reason")
+        if stopping and reason not in {"released", "input expired", "physics feedback stale"}:
+            raise RuntimeError(reason or "Robot motion stopped")
+        if not feedback["ready"] or stopping and reason == "physics feedback stale":
+            if self.physics_wait_since is None:
+                self.physics_wait_since = now
+            if now - self.physics_wait_since >= 1:
+                raise TimeoutError("Replay stopped: simulator physics feedback did not recover")
+            self.input_display = None
+            return True
+        self.physics_wait_since = None
+        return False
+
     @staticmethod
     def pose(state, arm, *, planned=False):
         field = "cartesian_target_mm_deg" if planned else "cartesian_mm_deg"
@@ -241,6 +259,8 @@ class CheckpointPlayback(FeedbackPlayback):
             self.feedback_period = max(now - self.feedback_at, self.feedback_period * 0.9, 0.05)
         self.feedback_at = now
         row = self.rows[self.index]
+        result["phase"] = row.get("phase")
+        self.input_row = row
         inputs = self.mapping.inputs
         inputs.arm_percent, inputs.roll_percent, inputs.grip_percent = row["speeds"]
         result["speed_deg_s"] = inputs.speed
@@ -274,6 +294,12 @@ class CheckpointPlayback(FeedbackPlayback):
         pending = self.pending
         if now > pending["deadline"]:
             raise TimeoutError("Replay stopped: measured motion did not reach its checkpoint")
+        if "tool_pose" in row and self.waiting_for_physics(state, now):
+            return {
+                **result,
+                "waiting_feedback": True,
+                "waiting_reason": "Waiting for simulator physics…",
+            }
         if state.get("stopping"):
             if state.get("stop_reason") not in {"released", "input expired"}:
                 raise RuntimeError(state.get("stop_reason") or "Robot motion stopped")
@@ -335,10 +361,11 @@ class CheckpointPlayback(FeedbackPlayback):
             if not reached and any(v for values in command.values() for v in values):
                 request = "cartesian", command
         elif "joint_pose" in row:
-            # Use ordinary bounded joint steps and observe each completion.
-            # Continuous joint jogs can expire during a long round trip and
-            # leave the next packet racing the controller's braking phase.
-            if pending.get("joint_issued"):
+            # Overlap bounded steps when the simulator reports its queued goal.
+            # The next goal stays within one step of the live drive target, so
+            # network delay cannot queue a long path or force a stop at every step.
+            queued = state.get("joint_goal_deg", {}).get("joints")
+            if queued is None and pending.get("joint_issued"):
                 if state.get("control_active"):
                     return {**result, "waiting_feedback": True}
                 pending["joint_issued"] = False
@@ -347,22 +374,27 @@ class CheckpointPlayback(FeedbackPlayback):
             planned = state.get("targets_deg", {}).get("joints", [])
             if any(
                 len(v) != len(goal) or not all(math.isfinite(x) for x in v)
-                for v in (actual, planned)
+                for v in (actual, planned, *([queued] if queued is not None else []))
             ):
                 raise ValueError("Replay requires measured and target joint feedback")
             errors = [abs(g - a) for g, a in zip(goal, actual, strict=True)]
             fraction = self.progress(sum(errors) / 0.1, now)
             reached = max(errors) <= 0.1
             if max(errors) <= 0.2 and state.get("control_active"):
-                self.due_at = now + 0.05
-                return {**result, "request": ("release", {}), "waiting_feedback": True}
+                # A bounded joint step already decelerates to its endpoint.
+                # Let it finish before changing modes; interrupting it here
+                # creates an unnecessary braking phase and loses the endpoint.
+                return {**result, "waiting_feedback": True}
             if not reached:
-                # A discrete step runs to completion at the configured speed.
-                # Use its advertised bound instead of a 50 ms jog increment;
-                # delayed acknowledgements must not stretch joint preparation.
                 limit = inputs.controls["max_step_deg"] * inputs.arm_percent / 100
+                target = planned if queued is None else queued
+                budget = (
+                    [limit] * len(goal)
+                    if queued is None
+                    else [max(0, limit - abs(q - p)) for q, p in zip(queued, planned, strict=True)]
+                )
                 command = [
-                    max(-limit, min(limit, g - p)) for g, p in zip(goal, planned, strict=True)
+                    max(-b, min(b, g - q)) for g, q, b in zip(goal, target, budget, strict=True)
                 ]
                 if any(abs(v) > 0.001 for v in command):
                     request = "step", {"joints": command}

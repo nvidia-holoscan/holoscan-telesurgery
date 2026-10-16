@@ -6,6 +6,13 @@
 import math
 from typing import Protocol
 
+CARTESIAN_SPEED = {
+    "frame": "base",
+    "linear_speed_m_s": 0.10,
+    "angular_speed_deg_s": 30.0,
+    "independent_rotation": True,
+}
+
 
 def values(data, length: int, bound: float) -> list[float]:
     if not isinstance(data, list) or len(data) != length:
@@ -57,7 +64,22 @@ def controls(adapter: Adapter, spec: dict) -> dict:
             else {}
         ),
         **({"speed_deg_s": adapter.speed_limits} if hasattr(adapter, "speed_limits") else {}),
+        **{
+            f"default_{kind}_speed_percent": getattr(adapter, f"default_{kind}_speed_percent")
+            for kind in ("arm", "roll", "grip")
+            if hasattr(adapter, f"default_{kind}_speed_percent")
+        },
         **({"cartesian": adapter.cartesian} if enabled and hasattr(adapter, "cartesian") else {}),
+        **(
+            {"joint_velocity": adapter.joint_velocity}
+            if enabled and hasattr(adapter, "joint_velocity")
+            else {}
+        ),
+        **(
+            {"mira_follow": adapter.mira_follow}
+            if adapter.simulation and hasattr(adapter, "mira_follow")
+            else {}
+        ),
         **(
             {"mira_cartesian": adapter.mira_cartesian}
             if enabled and hasattr(adapter, "mira_cartesian")
@@ -82,6 +104,39 @@ def validate_jog(adapter: Adapter, command: dict) -> dict:
 
 def cartesian_command(command):
     """Dimensionless, base-frame velocity requests; limits live on the node."""
-    if not isinstance(command, dict) or set(command) != {"translation", "rotation"}:
+    if (
+        not isinstance(command, dict)
+        or not {"translation", "rotation"} <= set(command)
+        or set(command) - {"translation", "rotation", "rotation_speed_deg_s"}
+    ):
         raise ValueError("Cartesian input requires translation and rotation")
-    return {key: values(command[key], 3, 1) for key in ("translation", "rotation")}
+    result = {key: values(command[key], 3, 1) for key in ("translation", "rotation")}
+    if "rotation_speed_deg_s" in command:
+        result["rotation_speed_deg_s"] = speed_value(
+            command["rotation_speed_deg_s"],
+            {
+                "min": 0.3,
+                "max": CARTESIAN_SPEED["angular_speed_deg_s"],
+                "default": 15.0,
+            },
+        )
+    return result
+
+
+def cartesian_rates(command, arm_speed, maximum_joint_speed):
+    """Apply independent tool rates through the existing bounded joint planner.
+
+    Older recordings omit the rotation limit and retain their original behavior.
+    The selected joint envelope stays constant even when one input axis is idle.
+    """
+    command = cartesian_command(command)
+    rotation = command.pop("rotation_speed_deg_s", None)
+    if rotation is None:
+        return command, arm_speed
+    rotational_joint_speed = maximum_joint_speed * rotation / CARTESIAN_SPEED["angular_speed_deg_s"]
+    speed = max(arm_speed, rotational_joint_speed)
+    for key, selected in (("translation", arm_speed), ("rotation", rotational_joint_speed)):
+        vector = command[key]
+        factor = selected / speed / max(1, math.hypot(*vector))
+        command[key] = [v * factor for v in vector]
+    return command, speed

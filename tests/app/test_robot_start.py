@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Controller startup is explicit, node-local and independent of motion access."""
+"""Controller startup is node-local and independent of surgeon motion access."""
 
 import asyncio
 import json
@@ -15,22 +15,16 @@ from telesurgery_robots.mira.controller import MiraController
 
 
 @pytest.mark.asyncio
-async def test_start_requires_confirmation_and_patient_role():
+async def test_start_requires_patient_role_without_extra_confirmation():
     patient = object.__new__(Application)
     patient.role = "patient"
     patient.node_call = AsyncMock(return_value=True)
-    for confirmation in (None, False, "true", 1):
-        with pytest.raises(PermissionError, match="operator"):
-            await patient.action("robot.start", {"id": "remote:mira", "confirmed": confirmation})
-    patient.node_call.assert_not_called()
-    await patient.action("robot.start", {"id": "remote:mira", "confirmed": True})
-    patient.node_call.assert_awaited_once_with(
-        "remote", "robot.start", {"id": "mira", "confirmed": True}
-    )
+    await patient.action("robot.start", {"id": "remote:mira"})
+    patient.node_call.assert_awaited_once_with("remote", "robot.start", {"id": "mira"})
     patient.role = "surgeon"
     patient.remote = SimpleNamespace(closed=asyncio.Event())
     with pytest.raises(PermissionError, match="surgeon"):
-        await patient.action("robot.start", {"id": "remote:mira", "confirmed": True})
+        await patient.action("robot.start", {"id": "remote:mira"})
     for method in ("robot.connect", "robot.disconnect", "robot.disconnect_all", "camera.stop_all"):
         with pytest.raises(PermissionError, match="surgeon"):
             await patient.action(method, {"id": "remote:mira"})
@@ -78,22 +72,20 @@ async def test_room_stop_reports_partial_failures(action, device_action, kind):
 
 
 @pytest.mark.asyncio
-async def test_node_checks_confirmation_and_does_not_restart_online_robot():
+async def test_node_starts_controller_without_restarting_online_robot():
     node = object.__new__(NodeService)
     node.room = None
     node.controller_lock = asyncio.Lock()
+    node.controller_errors = {}
     node.set_connection = AsyncMock()
     controller = SimpleNamespace(start=AsyncMock())
     node.controller = lambda key: controller
     feedback = {"status": "offline", "stale": True}
     node.robots = SimpleNamespace(report=lambda: {"mira": feedback})
-    with pytest.raises(PermissionError):
-        await node.call("robot.start", {"id": "mira"})
-    controller.start.assert_not_called()
-    await node.call("robot.start", {"id": "mira", "confirmed": True})
+    await node.call("robot.start", {"id": "mira"})
     controller.start.assert_awaited_once()
     feedback.update(status="online", stale=False)
-    await node.call("robot.start", {"id": "mira", "confirmed": True})
+    await node.call("robot.start", {"id": "mira"})
     controller.start.assert_awaited_once()
 
 
@@ -200,6 +192,7 @@ async def test_controller_stop_verifies_ownership_and_uses_container_id(tmp_path
 async def test_node_shutdown_closes_connections_before_owned_controllers_even_on_failure():
     node = object.__new__(NodeService)
     events = []
+    node.camera_starts = {}
 
     def disconnect():
         events.append("connections")

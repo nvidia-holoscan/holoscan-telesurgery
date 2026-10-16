@@ -15,6 +15,7 @@ export const stages = {
     decode_ms: ["Decode", "decode"],
     preview_encode_ms: ["Browser preview encode", "surgeon"],
     unpack_ms: ["Upload", "surgeon"],
+    view_processing_ms: ["View processing", "surgeon"],
     render_submit_ms: ["Holoviz handoff", "surgeon"],
     browser_queue_ms: ["WebRTC queue", "surgeon"],
     browser_decode_ms: ["Decode", "decode"],

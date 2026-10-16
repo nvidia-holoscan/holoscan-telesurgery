@@ -4,7 +4,7 @@
 import { action, button, element, notice } from "./ui.js";
 import { inputBlocked } from "./robot-input.js";
 
-export function replayControls(robot, prepare, send, hold, refresh, feedback) {
+export function replayControls(robot, prepare, send, hold, refresh, feedback, showInput = () => {}) {
     const control = button("Replay inputs", start, "secondary icon-button", "replay");
     const status = element("span", "", "replay-status");
     status.setAttribute("role", "status");
@@ -24,6 +24,7 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback) {
     async function stop(completed = false, reason = "operator stopped replay") {
         if (!active) return;
         active = false;
+        showInput(null);
         generation++;
         status.textContent = completed ? "Replay complete" : `Replay stopped · ${reason}`;
         if (!completed) {
@@ -40,6 +41,7 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback) {
         await prepare();
         if (!allowed || disposed || blocked()) return;
         active = true;
+        showInput({device: recording.device, keys: [], axes: [0, 0, 0, 0], buttons: []});
         const issued = ++generation;
         lastTick = performance.now();
         status.textContent = "Preparing replay…";
@@ -83,15 +85,23 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback) {
                 return;
             }
             if (result.state) feedback(result.state);
+            const progress = `Replaying · ${result.phase ? result.phase + " · " : ""}${Math.floor(result.elapsed)} s`;
             status.textContent = result.waiting ? "Waiting for the other surgeon…"
                 : result.waiting_peer ? (result.waiting_reason || "Waiting at handoff checkpoint…")
-                : result.waiting_feedback ? `Replaying · ${Math.floor(result.elapsed)} s · waiting for feedback`
-                : `Replaying · ${Math.floor(result.elapsed)} s`;
+                : result.waiting_feedback ? (result.waiting_reason || `${progress} · waiting for feedback`)
+                : progress;
             if (result.request) {
                 const [mode, command] = result.request;
-                if (mode === "release") await hold();
-                else if (!await send(mode === "grip" ? {velocity: command} : command, mode, result.speed_deg_s, result.run))
-                    throw new Error("Replay motion was interrupted");
+                if (mode === "release") {
+                    showInput({device: recording.device, keys: [], axes: [0, 0, 0, 0], buttons: []});
+                    await hold();
+                } else {
+                    const sending = send(mode === "grip" ? {velocity: command} : command, mode, result.speed_deg_s, result.run);
+                    showInput(result.input || {device: recording.device, keys: [], axes: [0, 0, 0, 0], buttons: []});
+                    if (!await sending) throw new Error("Replay motion was interrupted");
+                }
+            } else {
+                showInput(result.input || {device: recording.device, keys: [], axes: [0, 0, 0, 0], buttons: []});
             }
             if (result.done) await stop(true);
         } catch (error) {
@@ -116,6 +126,6 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback) {
                 !allowed ? "control no longer available" : "recording selection changed");
         },
         stop,
-        destroy() { disposed = true; clearInterval(timer); stop(); },
+        destroy() { disposed = true; clearInterval(timer); stop(); showInput(null); },
     };
 }

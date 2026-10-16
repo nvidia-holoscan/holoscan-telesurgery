@@ -259,6 +259,7 @@ libgl1: MIT
 libglib2.0-0t64: LGPL-2.1-or-later. Installed in the runtime image.
 libpoco-dev, libpocofoundation80t64, and libpoconet80t64: BSL-1.0. The runtime libraries are installed in the runtime image.
 liburdfdom-headers-dev: BSD-3-Clause
+libusb-0.1-4: LGPL-2.0-or-later. Installed on the host for Haply Hub's device manager.
 libusb-1.0-0: LGPL-2.1-or-later. Installed in the runtime image.
 libvulkan1: Apache-2.0
 libx11-dev and libx11-6: MIT

@@ -33,6 +33,7 @@ class NativeReplay:
         self.generation = 0
         self.last_heartbeat = 0
         self.phase = self.status = ""
+        self.input = None
 
     @property
     def busy(self):
@@ -55,6 +56,7 @@ class NativeReplay:
         self.active = True
         self.phase, self.status = "preparing", "Preparing replay…"
         self.result = None
+        self.input = None
         self.last_heartbeat = 0
         return True
 
@@ -62,6 +64,7 @@ class NativeReplay:
         if not self.active:
             return
         self.active = False
+        self.input = None
         self.generation += 1
         self.result = None
         self.cancel_needed = not completed
@@ -135,7 +138,11 @@ class NativeReplay:
                 if result.get("waiting")
                 else result.get("waiting_reason", "Waiting at handoff checkpoint…")
                 if result.get("waiting_peer")
-                else f"Replaying · {int(result['elapsed'])} s"
+                else result["waiting_reason"]
+                if result.get("waiting_feedback") and result.get("waiting_reason")
+                else "Replaying · "
+                + (f"{result['phase']} · " if result.get("phase") else "")
+                + f"{int(result['elapsed'])} s"
                 + (" · waiting for feedback" if result.get("waiting_feedback") else "")
             )
             if result.get("request"):
@@ -151,7 +158,9 @@ class NativeReplay:
                 ):
                     self.stop("replay motion was interrupted")
                     return
+            self.input = result.get("input")
             if result["done"]:
+                self.input = None
                 self.control.stop()
                 self.phase = "finishing"
             return

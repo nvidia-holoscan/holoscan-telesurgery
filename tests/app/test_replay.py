@@ -146,6 +146,33 @@ def test_playback_preserves_each_button_edge_when_two_samples_are_due():
     assert instance.read(0.12, {})["request"] == ("release", {})
 
 
+@pytest.mark.parametrize(
+    "ending", [{"done": True}, {"waiting_peer": True}, {"request": ("release", {})}]
+)
+@pytest.mark.parametrize("device", ["keyboard", "gamepad"])
+def test_input_display_tracks_dispatch_and_hold_until_release_or_completion(device, ending):
+    instance = Playback(
+        {"kind": "franka-sim", "controls": {"cartesian": {"linear_speed_m_s": 0.1}}},
+        {"device": device},
+        "franka",
+        [],
+        "run",
+    )
+    row = {"keys": ["w", "z"], "axes": [1, 0, 0, 0], "buttons": [2]}
+    instance.input_row = row
+    assert instance.display_input({"request": None}) is None
+    shown = instance.display_input({"request": ("jog", {})})
+    assert shown == {"device": device, **row}
+    # Waiting for robot feedback keeps the dispatched controls visible. Reading
+    # a new row alone must not switch the display before its command is sent.
+    row["keys"].clear()
+    instance.input_row = {"keys": [], "axes": [0, 0, 0, 0], "buttons": []}
+    assert instance.display_input({"request": None}) == shown
+    assert shown["keys"] == ["w", "z"]
+    assert instance.display_input(ending) is None
+    assert instance.display_input({"request": None}) is None
+
+
 def test_handoff_barrier_tracks_each_owner_and_survives_motion_acknowledgements(catalog):
     path, manifest = catalog.recordings["versius/keyboard"]
     manifest["barriers"] = 2

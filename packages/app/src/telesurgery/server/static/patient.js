@@ -6,6 +6,28 @@ import { openLog } from "./logs.js";
 import { icon } from "./icons.js";
 import { deviceStatus } from "./device-status.js";
 const nodeName = (node) => node.name;
+function uptimeText(node) {
+    const seconds = node.uptime_s;
+    let duration = "—";
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor(seconds / 3600) % 24;
+        const minutes = Math.floor(seconds / 60) % 60;
+        duration = days ? `${days}d ${hours}h ${minutes}m`
+            : hours ? `${hours}h ${minutes}m`
+            : minutes ? `${minutes}m` : `${Math.floor(seconds)}s`;
+    }
+    const label = node.status === "online" ? "Uptime" : "Last uptime";
+    return `${label} ${duration}`;
+}
+function uptime(node) {
+    const value = element("span", uptimeText(node), "node-uptime");
+    value.dataset.nodeUptime = node.id;
+    value.title = node.status === "online"
+        ? "Time since the node service started; reconnecting does not reset it."
+        : "Last reported node service uptime before disconnection.";
+    return value;
+}
 export function patientPages(changed, removeNode, refresh) {
     let state, signature, identitySignature;
     $("#preview-devices").onclick = () =>
@@ -34,10 +56,11 @@ export function patientPages(changed, removeNode, refresh) {
     window.addEventListener("hashchange", changed);
     function status(node) {
         const line = element("div", undefined, "node-status-line");
+        const summary = element("div", undefined, "node-status-summary");
         const simulation = node.simulation;
         const loading =
             node.status === "online" && simulation?.status === "loading";
-        line.append(
+        summary.append(
             element(
                 "span",
                 loading
@@ -47,10 +70,12 @@ export function patientPages(changed, removeNode, refresh) {
                       : node.status,
                 `status ${loading ? "starting" : node.status}`,
             ),
+            uptime(node),
         );
+        line.append(summary);
         const label = simulation ? "Simulation logs" : "Node logs";
         const log = button(
-            label,
+            "Logs",
             () =>
                 openLog(
                     `${nodeName(node)} · ${label}`,
@@ -59,6 +84,8 @@ export function patientPages(changed, removeNode, refresh) {
             "text-link",
             "logs",
         );
+        log.title = label;
+        log.setAttribute("aria-label", label);
         log.setAttribute("aria-haspopup", "dialog");
         line.append(log);
         const remove = button(
@@ -80,6 +107,10 @@ export function patientPages(changed, removeNode, refresh) {
         current,
         update(next) {
             state = next;
+            for (const value of document.querySelectorAll("[data-node-uptime]")) {
+                const node = state.nodes?.find(node => node.id === value.dataset.nodeUptime);
+                if (node) value.textContent = uptimeText(node);
+            }
             const { page, node: id } = current();
             for (const section of document.querySelectorAll("[data-page]"))
                 section.hidden = section.dataset.page !== page;
@@ -100,7 +131,7 @@ export function patientPages(changed, removeNode, refresh) {
             $("#camera-panel").hidden = !selected;
             $("#patient-node-header .back-link").hidden =
                 state.nodes?.length === 1;
-            const identityKey = JSON.stringify(selected);
+            const identityKey = JSON.stringify(selected && {...selected, uptime_s: undefined});
             if (selected && identitySignature !== identityKey) {
                 identitySignature = identityKey;
                 $("#node-name").textContent = nodeName(selected);
@@ -159,7 +190,7 @@ export function patientPages(changed, removeNode, refresh) {
             $("#robot-total").textContent =
                 `${state.robots?.length || 0} controllers discovered`;
             const key = JSON.stringify([
-                state.nodes,
+                state.nodes?.map(({uptime_s, ...node}) => node),
                 (state.cameras || []).map(({ frames, ...camera }) => camera),
                 state.robots?.map(
                     ({ state, feedback_age_ms, ...robot }) => robot,

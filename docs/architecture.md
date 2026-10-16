@@ -69,6 +69,12 @@ Depth is optional for RealSense and simulation. Aligned float32 distances in met
 
 The patient selects capture format, resolution, FPS and codec; surgeon viewers follow those settings. Encoding can change through Stream settings while capture continues; a replacement encoder prepares in the background before taking over. Capture format, resolution and FPS changes require stopping the stream. Available modes come from the device. Simulation offers 640×480, 1280×720, 1920×1080, 2560×1440 and 3840×2160 with native render products. H.264 is the stream default. Surgical Neural Tokenizer also supports browser viewing; H.265, nvJPEG and raw BGR8 use Holoviz.
 
+Each view has independent **− / zoom level / +** controls. Open the zoom level for a 1–4× slider, Reset and **Select area**. Draw an area in the browser to zoom with preserved proportions; drag the enlarged image to pan. Opening Holoviz closes the browser video path and carries over the same zoom and crop. Its dashboard card adjusts zoom and pan using metadata only; switch back to the browser to draw another area. Settings survive viewer switches and page refreshes for the life of the local service. Streams that require Holoviz have slider/pan controls but no browser area selection.
+
+Browser zoom transforms the existing video layer without application frame readback or re-encoding; hardware acceleration depends on the browser. Native zoom slices a GPU tensor without allocating a crop image. SDK 4 passes its row stride to Holoviz; SDK 5 copies the selected rows in the existing provider-owned display handoff, without adding another GPU copy. Holoviz scales during rendering. Optional depth visualization retains its existing processing costs.
+
+On the patient dashboard, camera details show **Camera zoom** only for writable V4L2 absolute-zoom controls. Changes use the device's reported bounds and steps, are read back, and apply without restarting capture. They affect the outgoing image for all viewers. Values are device units, not a claim of optical zoom or focal length; support depends on the camera and its driver. Intel RealSense D405/D455 do not expose this control. The audited BRIO and Spark USB camera do.
+
 HSB discovery finds boards, not sensor models. It defaults to IMX274 sensor 0 and offers 1080p60 and 4K60. Configure another sensor in the node's `workspace/nodes/NAME/devices.yaml`:
 
 ```yaml
@@ -106,16 +112,21 @@ Timing starts when the application receives a frame buffer. Sensor acquisition a
 | Transport                 | Serialization, TLS/network, assembly and receiver dispatch                   |
 | Receive / WebRTC queues   | Surgeon dispatch and browser relay scheduling                                |
 | Decode                    | GPU or browser decode and output preparation                                 |
+| View processing           | Native depth composition and crop metadata selection after decode            |
 | Display handoff           | Native Holoviz handoff, or browser delivery and estimated display scheduling |
 | Pack / Upload             | Replaces Encode / Decode for uncompressed BGR8                               |
 
 P50/P95/P99/P99.9 bars use matched frames ranked by total latency, so their stage contributions add to that total. Independent stage percentiles need not add up. Top cards show P99; frame spacing describes cadence. Payload size includes the application transport frame, not Ethernet/TCP/TLS overhead.
+
+View processing excludes the renderer's zoom sampling. Browser compositor work is included in estimated WebRTC + display timing and cannot be isolated as GPU zoom time through the current browser APIs. Native render/scanout and camera-firmware zoom before buffer delivery remain outside the measured boundary. A near-zero crop-metadata time is not a claim of zero added display latency.
 
 Metrics retain 10,000 recent samples after warmup and up to one hour of 5-second history buckets. Browser timing records while its metrics panel is open; server/native timing records while frames flow. Reset clears the selected device. Collection is bounded and percentile aggregation runs outside frame callbacks.
 
 ### Clock synchronization
 
 `setup.sh` installs/enables chrony when needed; it persists across reboots and preserves an existing chrony/PTP service. No dashboard action changes the system clock. Same-host services compare monotonic clocks directly. Across hosts, fresh UTC reports are used when combined uncertainty is at most 1 ms; otherwise four-timestamp probes estimate relative clock offset with an RTT/asymmetry bound. Expired or invalid timing stays unavailable.
+
+Browser display timing matches frames by RTP timestamp and uses a separate relative clock estimate between the browser and surgeon service. Its uncertainty is included in the displayed total. A browser clock bound above 1 ms is still usable when the remaining WebRTC/display delay exceeds that bound; missing timestamps or an unresolved delay leave the total unavailable with an explanation.
 
 A shared LAN time server can improve accuracy. Across the internet, use trusted UTC sources at each site; hardware PTP is optional and requires compatible infrastructure. [Chrony error bounds](https://chrony-project.org/doc/latest/chronyc.html) · [Browser display timestamps](https://wicg.github.io/video-rvfc/)
 
@@ -125,13 +136,15 @@ Dashboards bind to `127.0.0.1` by default; `--host` changes the bind address. `-
 
 Service connections use TLS 1.3 with certificate pinning. The first patient connection trusts the presented certificate; later connections reject identity changes. Surgeon approvals identify the service credential, not the display name. Pending surgeons receive no devices or video.
 
+Nodes start discovered camera streams once they are admitted and, for simulation, the scene is ready. Saved capture/encoding settings take precedence over device defaults. A failed automatic start is shown in the inventory and requires an explicit retry. Stop prevents automatic restart for the rest of that node session. Set `auto_start: false` on a manually configured camera to opt out. Robot connection attempts and configured vendor controllers start by default, with `auto_connect: false` as the corresponding robot option. Vendor startup can enable motor power on physical MIRA; acquisition and motion commands remain explicit. Controller startup failures require a manual retry, and already running controllers are reused.
+
 | Port        | Purpose                                               |
 | ----------- | ----------------------------------------------------- |
 | 8000 / 8002 | Patient / surgeon dashboards                          |
 | 7447        | Patient application endpoint                          |
 | Automatic   | Direct node video; use node `--port` for a fixed port |
 
-`./workspace` holds saved state, simulation dependencies, assets, caches and logs. Use `--workspace PATH` with setup and run commands to choose another directory. Dashboards use `ROLE-PORT` and nodes use `nodes/NAME` within it. Private YAML files store credentials, nodes, settings, certificate pins and approvals using atomic writes. Connections and robot locks are temporary. Coordinator loss stops streams and requests controller hold; reconnecting does not restart streams. Shutdown closes connections and joins the Holoscan graphs.
+`./workspace` holds saved state, simulation dependencies, assets, caches and logs. Use `--workspace PATH` with setup and run commands to choose another directory. Dashboards use `ROLE-PORT` and nodes use `nodes/NAME` within it. Private YAML files store credentials, nodes, settings, certificate pins and approvals using atomic writes. Connections and robot locks are temporary. Coordinator loss stops streams and requests controller hold; after re-admission, streams interrupted by the link loss restart with their saved settings, while streams explicitly stopped by the operator remain stopped. Shutdown closes connections and joins the Holoscan graphs.
 
 `run.sh status` and `run.sh stop` manage services within a workspace across native execution and Docker. Native services hold `service.lock` and publish a private, atomic `service.json` containing their PID, process start time, host, boot, and PID namespace. Shutdown verifies process identity and signals through a Linux PID descriptor to avoid PID reuse races. Older native services are discovered from the kernel's owners of the existing service locks and their application command lines. Docker services have workspace, user, role, instance, and log labels and stable names; management uses the verified container ID. Older launcher containers are identified by their entrypoint, user, and workspace mount. Stopping a node also stops its managed MIRA controller after closing device connections; a temporary patient disconnection leaves that controller running.
 

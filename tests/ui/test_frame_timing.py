@@ -35,7 +35,8 @@ async def test_browser_endpoints_missing_clocks_rounding_and_history():
                 const metadata={receiveTime:15,processingDuration:.002,
                     expectedDisplayTime:30,presentationTime:31};
                 const path=displayedPath(frame,metadata,{offset:990,error:.1});
-                const missing=displayedPath(frame,metadata,{offset:990,error:2});
+                const uncertain=displayedPath(frame,metadata,{offset:990,error:2});
+                const missing=displayedPath(frame,metadata,{offset:990,error:20});
                 const noClock=displayedPath(frame,metadata,null);
                 const samples=[path,{...path,stages:{...path.stages,
                     encode_ms:9.999,browser_playout_ms:8.341}}];
@@ -61,11 +62,13 @@ async def test_browser_endpoints_missing_clocks_rounding_and_history():
                     range.value=value;range.dispatchEvent(new Event('change'));
                     windows.push(root.querySelector('svg text:last-child').textContent);
                 }
-                return {path,missing,noClock,sums,totals,windows,
+                return {path,uncertain,missing,noClock,sums,totals,windows,
                     bars:root.querySelectorAll('.latency-bar-row').length};
             }""")
             assert result["path"]["stages"]["browser_decode_ms"] == 2
             assert result["path"]["stages"]["browser_playout_ms"] == 18
+            assert result["uncertain"]["stages"]["browser_playout_ms"] == 18
+            assert result["uncertain"]["error_ms"] == 2
             assert result["missing"]["stages"]["browser_playout_ms"] is None
             assert result["noClock"]["stages"]["browser_playout_ms"] is None
             assert result["sums"] == result["totals"]

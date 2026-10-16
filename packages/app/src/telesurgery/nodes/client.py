@@ -26,6 +26,7 @@ LOG = logging.getLogger(__name__)
 
 class NodeClient:
     def __init__(self, directory, config, environment=None, sim_gui=False):
+        self.started_at = time.monotonic()
         self.directory, self.config = Path(directory), config
         self.environment, self.sim_gui = environment, sim_gui
         self.clock = Clock()
@@ -125,6 +126,7 @@ class NodeClient:
             **await self.node.call("inventory"),
             "name": self.config["name"],
             "video": self.video.address,
+            "uptime_s": max(0, int(time.monotonic() - self.started_at)),
         }
 
     async def run(self):

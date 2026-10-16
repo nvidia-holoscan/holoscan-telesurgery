@@ -530,7 +530,17 @@ async def test_patient_inline_previews_preserve_media_and_alignment(tmp_path, ro
                     .click()
                 )
                 await page.wait_for_function("document.fullscreenElement !== null")
-                assert (await video.bounding_box())["height"] > original_height * 1.5
+                await page.wait_for_function(
+                    """originalHeight => {
+                        const tile = document.fullscreenElement;
+                        const bounds = tile.getBoundingClientRect();
+                        return Math.abs(bounds.width - innerWidth) < 1
+                            && Math.abs(bounds.height - innerHeight) < 1
+                            && tile.querySelector('video').getBoundingClientRect().height
+                                > originalHeight;
+                    }""",
+                    arg=original_height,
+                )
                 await page.get_by_role("button", name="Exit fullscreen", exact=True).first.click()
                 await page.wait_for_function("document.fullscreenElement === null")
             assert await page.evaluate("window.offers") == 2

@@ -28,7 +28,11 @@ async def until(predicate):
 async def test_removed_camera_does_not_block_selecting_replacement(
     tmp_path, monkeypatch, enrolled_node
 ):
-    cameras = [{"id": key, "name": key, "kind": "fixture"} for key in ("old", "retained")]
+    # Exercise removal from discovery without retaining an active camera worker.
+    cameras = [
+        {"id": key, "name": key, "kind": "fixture", "auto_start": False}
+        for key in ("old", "retained")
+    ]
     monkeypatch.setattr("telesurgery.nodes.local.discover", lambda *_: (list(cameras), []))
     patient = Application("patient", tmp_path / "patient", endpoint_port=0)
     surgeon = Application("surgeon", tmp_path / "surgeon")
@@ -40,7 +44,7 @@ async def test_removed_camera_does_not_block_selecting_replacement(
         await patient.action("access.approve", {"id": grant["id"]})
         await until(lambda: surgeon.remote_status.get("status") == "approved")
         await surgeon.action("view", {"cameras": [f"{key}:old", f"{key}:retained"]})
-        cameras[0] = {"id": "new", "name": "new", "kind": "fixture"}
+        cameras[0] = {"id": "new", "name": "new", "kind": "fixture", "auto_start": False}
         await until(lambda: surgeon.selected == {f"{key}:retained"})
         await surgeon.action("view", {"cameras": [f"{key}:new", f"{key}:retained"]})
         assert surgeon.selected == {f"{key}:new", f"{key}:retained"}

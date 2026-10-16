@@ -12,6 +12,8 @@ SPDX-License-Identifier: Apache-2.0
         <title>Holoscan Telesurgery</title>
         <link rel="stylesheet" href="/static/style.css" />
         <link rel="stylesheet" href="/static/metrics.css" />
+        <link rel="stylesheet" href="/static/theme.css" />
+        <link rel="stylesheet" href="/static/view-zoom.css" />
         <script type="module" src="/static/app.js"></script>
     </head>
     <body>
@@ -32,6 +34,16 @@ SPDX-License-Identifier: Apache-2.0
                 ></a
             >
             <div class="header-actions">
+                <button id="appearance-button" type="button" class="secondary icon-button"
+                    popovertarget="appearance-panel" aria-haspopup="dialog" aria-expanded="false"
+                    data-icon="appearance">Appearance</button>
+                <div id="appearance-panel" popover role="dialog" aria-labelledby="appearance-title">
+                    <h2 id="appearance-title">Appearance</h2>
+                    <p id="appearance-scope">Surgeon dashboard</p>
+                    <fieldset id="theme-choices">
+                        <legend class="sr-only">Color theme</legend>
+                    </fieldset>
+                </div>
                 <div id="patient-stop-actions" class="actions" hidden>
                     <button
                         id="stop-all-streams"
@@ -691,6 +703,17 @@ SPDX-License-Identifier: Apache-2.0
                 </div>
             </form>
         </dialog>
+        <dialog id="switch-robot-dialog" aria-labelledby="switch-robot-title" data-dismiss-outside>
+            <form method="dialog">
+                <h2 id="switch-robot-title">Release control and switch?</h2>
+                <p>Release the current robot before selecting <strong id="switch-robot-name"></strong>.</p>
+                <p>Acquire control of the new robot when you are ready.</p>
+                <div class="actions">
+                    <button value="cancel" class="secondary" autofocus>Cancel</button>
+                    <button value="switch">Release control and switch</button>
+                </div>
+            </form>
+        </dialog>
         <dialog
             id="remove-node-dialog"
             aria-labelledby="remove-node-title"
@@ -721,45 +744,6 @@ SPDX-License-Identifier: Apache-2.0
                         class="danger"
                     >
                         Remove node
-                    </button>
-                </div>
-            </form>
-        </dialog>
-        <dialog
-            id="robot-start-dialog"
-            aria-labelledby="robot-start-title"
-            data-dismiss-outside
-        >
-            <form id="robot-start-form">
-                <h2 id="robot-start-title">
-                    Bring <span id="robot-start-name"></span> online?
-                </h2>
-                <p>
-                    Starting the controller can enable motor power. Surgeon
-                    motion access remains unchanged.
-                </p>
-                <label class="check">
-                    <input type="checkbox" id="robot-operator-ready" required />
-                    An operator is at the robot with the emergency stop
-                    available.
-                </label>
-                <p
-                    id="robot-start-error"
-                    class="error-text"
-                    role="alert"
-                    hidden
-                ></p>
-                <div class="actions">
-                    <button
-                        type="button"
-                        id="cancel-robot-start"
-                        class="secondary"
-                        autofocus
-                    >
-                        Cancel
-                    </button>
-                    <button type="submit" id="confirm-robot-start" disabled>
-                        Bring online
                     </button>
                 </div>
             </form>

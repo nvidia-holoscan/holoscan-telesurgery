@@ -26,6 +26,8 @@ import { depthView, nativeDepthControls } from "./depth.js";
 import { equipmentTable } from "./equipment.js";
 import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
+import { setThemeRole } from "./theme.js";
+import { viewZoom, cameraZoom } from "./view-zoom.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -36,6 +38,8 @@ let state,
     refreshing = false,
     changingCameras = false,
     changingWorkspace = false,
+    switchingRobot = false,
+    changingController = false,
     robotId = null,
     preferredRobot = null,
     robotPreferenceKey,
@@ -95,16 +99,78 @@ const robots = robotControls(refresh, openMetrics);
 const nativeControllerOpen = () => ["starting", "running"].includes(state?.native_controller?.status);
 const controllerPreferences = () => Object.fromEntries([...motionValues].filter(([key]) =>
     [":arm-speed", ":roll-speed", ":grip-speed"].some(suffix => key.endsWith(suffix))));
-let restoredController;
+let restoredController, controllerStateInitialized = false;
+let controllerGeneration = 0;
+function restoreRobotPreference() {
+    if (state.role === "patient") return;
+    const key = `telesurgery-robot:${state.patient || "local"}`;
+    if (robotPreferenceKey === key) return;
+    robotPreferenceKey = key;
+    robotId = preferredRobot = null;
+    try { preferredRobot = localStorage.getItem(key); } catch {}
+}
+function rememberRobot(id) {
+    robotId = preferredRobot = id;
+    if (id && robotPreferenceKey) {
+        try { localStorage.setItem(robotPreferenceKey, id); } catch {}
+    }
+}
+async function transferController(native) {
+    if (changingController) return;
+    changingController = true;
+    controllerGeneration++;
+    const id = robotId;
+    let transferred = false;
+    try {
+        if (native) {
+            const retain = await robots.prepareHandoff(id);
+            await action("controller.open", {
+                id, preferences: controllerPreferences(), input: robots.inputSelection(id),
+                retain_control: retain,
+            });
+            transferred = true;
+        } else {
+            const result = await action("controller.close", {retain_control: true});
+            state.native_controller = result?.controller || {...state.native_controller, status: "closed"};
+            if (result?.robot) {
+                rememberRobot(result.robot);
+                robots.acceptHandoff(result.robot, result.state);
+            }
+        }
+    } catch (error) {
+        if (native) await robots.recoverHandoff(id);
+        throw error;
+    } finally {
+        if (native) robots.finishHandoff(id, transferred);
+        controllerGeneration++;
+        changingController = false;
+    }
+}
+async function acceptReturnedControl(native) {
+    changingController = true;
+    controllerGeneration++;
+    try {
+        // A window-manager close returns an existing lease. Never acquire a
+        // different robot or resurrect a lease that expired while the web was away.
+        const result = await action("controller.close", {retain_control: true, generation: native.generation});
+        if (result?.controller) state.native_controller = result.controller;
+        if (result?.robot) {
+            rememberRobot(result.robot);
+            robots.acceptHandoff(result.robot, result.state);
+        }
+    } catch (error) {
+        notice(error);
+    } finally {
+        controllerGeneration++;
+        changingController = false;
+        renderCurrent();
+    }
+}
 $("#native-controller").onclick = async () => {
     const control = $("#native-controller");
     control.disabled = true;
     try {
-        await robots.releaseAll();
-        await action(nativeControllerOpen()
-            ? "controller.close" : "controller.open", {
-                id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
-            });
+        await transferController(!nativeControllerOpen());
         await refresh();
     } catch (error) {
         notice(error);
@@ -131,6 +197,7 @@ async function openMetrics(device) {
     metrics.open({ device, title: item?.name || "Metrics" });
 }
 function renderChanged(name, value, render) {
+    if (name === "cameras" && document.activeElement?.closest(".camera-zoom")) return;
     const signature = JSON.stringify(value);
     if (rendered.get(name) !== signature) {
         render();
@@ -170,6 +237,7 @@ function nativeViewing(id) {
     return ["starting", "running"].includes(state.native_views?.[id]?.status);
 }
 async function displayCamera(id, native) {
+    await tiles.get(id)?.zoom?.flush();
     await action(native ? "view.holoviz" : "view.browser", { camera: id });
     if (state.role === "patient") {
         equipment.close();
@@ -261,7 +329,12 @@ async function openVideo(camera) {
     );
     const stage = element("div", undefined, "depth-stage");
     stage.append(video);
-    tile.append(stage, caption);
+    const viewport = element("div", undefined, "view-viewport");
+    const surface = element("div", undefined, "view-surface");
+    video.style.aspectRatio = `${camera.width} / ${camera.height}`;
+    viewport.append(stage);
+    surface.append(viewport);
+    tile.append(surface, caption);
     if (state.role === "surgeon") layout.attach(tile, camera);
     $("#videos").append(tile);
     const peer = new RTCPeerConnection({ iceServers: [] });
@@ -270,7 +343,8 @@ async function openVideo(camera) {
         peer,
         title,
         timing: frameTiming(peer, video),
-        depth: depthView(peer, video, stage, caption, camera),
+        depth: depthView(peer, video, stage, caption, camera, state.view_displays?.[camera.id]),
+        zoom: viewZoom(camera, { viewport, stage, surface, initial: state.view_zooms?.[camera.id] }),
     });
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
@@ -325,6 +399,7 @@ function closeVideo(id) {
     tiles.delete(id);
     item.timing.stop();
     item.depth.stop();
+    item.zoom.stop();
     item.peer.close();
     item.tile.remove();
 }
@@ -522,6 +597,10 @@ function cameraCard(camera) {
     if (state.native_views?.[camera.id]?.error)
         card.append(element("p", state.native_views[camera.id].error));
     card.append(controls);
+    if (state.role === "patient") {
+        const zoom = cameraZoom(camera);
+        if (zoom) card.append(zoom);
+    }
     if (camera.error) card.append(element("p", camera.error));
     if (camera.encoding_error)
         card.append(element("p", camera.encoding_error, "encoding-warning"));
@@ -652,23 +731,12 @@ function renderRobots(data, isPatient, approved) {
                 r.connection_enabled !== false &&
                 r.node_online !== false,
         );
-        const key = `telesurgery-robot:${state.patient || "local"}`;
-        if (robotPreferenceKey !== key) {
-            if (robotPreferenceKey) preferredRobot = null;
-            robotPreferenceKey = key;
-            robotId = null;
-            try {
-                preferredRobot ||= localStorage.getItem(key);
-            } catch {
-                /* Selection remains usable without browser storage. */
-            }
-        }
         if (robotList.some((r) => r.id === preferredRobot))
             robotId = preferredRobot;
     }
     if (!robotList.some((r) => r.id === robotId))
         robotId = isPatient || !preferredRobot ? robotList[0]?.id : null;
-    if (!isPatient && robotId) preferredRobot = robotId;
+    if (!isPatient && robotId && robotId !== preferredRobot) rememberRobot(robotId);
     const available = robotList.length;
     const picker = $("#robot-selector"),
         options = JSON.stringify([
@@ -687,6 +755,7 @@ function renderRobots(data, isPatient, approved) {
         picker.dataset.options = options;
     }
     picker.value = robotId || "";
+    picker.disabled = switchingRobot || changingController || changingWorkspace;
     $("#robot-choice").hidden = isPatient || !available;
     if (!isPatient) robotList = robotList.filter((r) => r.id === robotId);
     $("#robots-panel").hidden = isPatient
@@ -702,7 +771,8 @@ function renderRobots(data, isPatient, approved) {
           : "EXCLUSIVE ACCESS";
     const nativeOpen = nativeControllerOpen();
     $("#native-controller").hidden = isPatient || viewOnly;
-    $("#native-controller").disabled = !approved || (!nativeOpen && !robotId);
+    $("#native-controller").disabled = changingController || changingWorkspace || switchingRobot
+        || !approved || (!nativeOpen && !robotId);
     $("#native-controller").setAttribute("aria-pressed", String(nativeOpen));
     setIcon($("#native-controller"), nativeOpen ? "dock" : "popout", nativeOpen ? "Dock robot controls" : "Pop out robot controls");
     $("#native-controller-away").hidden = !nativeOpen;
@@ -722,18 +792,28 @@ function renderRobots(data, isPatient, approved) {
 }
 function renderCurrent() {
     if (!state) return;
+    restoreRobotPreference();
     const native = state.native_controller;
+    if (!controllerStateInitialized) {
+        controllerStateInitialized = true;
+        // A closed window in the initial snapshot is history, not a new dock.
+        // Only an outstanding lease handoff needs to be consumed after reload.
+        if (native?.status === "closed" && !native.handoff)
+            restoredController = native.generation;
+    }
     if (native?.status === "closed" && native.generation && native.generation !== restoredController) {
         restoredController = native.generation;
         for (const [key, value] of Object.entries(native.preferences || {}))
             motionValues.set(key, value);
         if (native.robot && state.session?.robots?.some(r => r.id === native.robot))
-            robotId = preferredRobot = native.robot;
+            rememberRobot(native.robot);
         if ("input" in native) robots.restoreInput(native.robot, native.input);
         robots.rebuild();
+        if (native.handoff && !changingController) acceptReturnedControl(native);
     }
     const isPatient = state.role === "patient",
         approved = state.session?.status === "approved";
+    setThemeRole(state.role);
     document.body.dataset.role = state.role;
     $("#role").textContent = isPatient ? "Patient" : "Surgeon";
     $("#connection").textContent = isPatient
@@ -859,6 +939,10 @@ function renderCurrent() {
                     `${codecName(camera.codec)} · Holoviz is open`,
                 );
                 tile.classList.add("native-tile");
+                tile.append(viewZoom(camera, {
+                    native: true,
+                    initial: state.view_zooms?.[camera.id],
+                }).element);
                 nativeDepthControls(
                     camera,
                     tile,
@@ -933,10 +1017,10 @@ function renderCurrent() {
     $("#empty-add-feeds").hidden = isPatient;
     $("#hide-all").disabled = !state.selected?.length;
     $("#popout-all").disabled =
-        changingWorkspace ||
+        changingWorkspace || changingController || switchingRobot ||
         (!selectedPopoutCameras().length && (!currentRobotControl() || nativeControllerOpen()));
     $("#dock-all").disabled =
-        changingWorkspace ||
+        changingWorkspace || changingController || switchingRobot ||
         (!nativeControllerOpen() &&
             !Object.keys(state.native_views || {}).some(nativeViewing));
     $("#show-all").disabled = !cameras.some((c) =>
@@ -948,7 +1032,14 @@ async function refresh() {
     if (refreshing) return;
     refreshing = true;
     try {
-        state = await api("/api/status");
+        let requestedGeneration, next;
+        do {
+            requestedGeneration = controllerGeneration;
+            next = await api("/api/status");
+        } while (requestedGeneration !== controllerGeneration);
+        // A pre-dock response must not mark the browser's returned lease as
+        // ineligible merely because it still describes the native window as open.
+        state = next;
         renderCurrent();
     } catch (error) {
         notice(error);
@@ -977,14 +1068,33 @@ $("#disconnect").addEventListener("click", async () => {
 });
 $("#robot-selector").onchange = async (event) => {
     const selected = event.target.value;
-    await robots.releaseAll();
-    robotId = preferredRobot = selected;
-    try {
-        localStorage.setItem(robotPreferenceKey, selected);
-    } catch {
-        /* Selection remains usable without browser storage. */
-    }
+    event.target.value = robotId || "";
+    if (switchingRobot || changingController || changingWorkspace || selected === robotId) return;
+    switchingRobot = true;
+    robots.switching(true);
     renderCurrent();
+    try {
+        if (robots.hasControl()) {
+            const dialog = $("#switch-robot-dialog");
+            const next = state.session?.robots?.find(robot => robot.id === selected);
+            $("#switch-robot-name").textContent = next ? robotLabel(next) : selected;
+            dialog.returnValue = "cancel";
+            const confirmed = new Promise(resolve => dialog.addEventListener(
+                "close", () => resolve(dialog.returnValue === "switch"), {once: true},
+            ));
+            dialog.showModal();
+            if (!await confirmed) return;
+        }
+        if (!await robots.releaseAll())
+            throw new Error("Control release was not confirmed. Robot selection kept; retry release before switching.");
+        rememberRobot(selected);
+    } catch (error) {
+        notice(error);
+    } finally {
+        switchingRobot = false;
+        robots.switching(false);
+        renderCurrent();
+    }
 };
 function feeds() {
     robots.releaseAll();
@@ -1056,6 +1166,7 @@ function selectedPopoutCameras() {
 }
 async function changeWorkspace(native) {
     if (changingWorkspace) return;
+    await Promise.all([...tiles.values()].map(item => item.zoom.flush()));
     const selectedCameras = native ? selectedPopoutCameras() : [];
     changingWorkspace = native ? "popout" : "dock";
     const control = $(native ? "#popout-all" : "#dock-all");
@@ -1066,15 +1177,12 @@ async function changeWorkspace(native) {
     // Retire browser offers before native viewers claim those streams.
     renderCurrent();
     try {
-        await robots.releaseAll();
         const failures = [];
         try {
             if (native && currentRobotControl())
-                await action("controller.open", {
-                    id: robotId, preferences: controllerPreferences(), input: robots.inputSelection(robotId),
-                });
+                await transferController(true);
             else if (!native && nativeControllerOpen())
-                await action("controller.close");
+                await transferController(false);
         } catch (error) {
             failures.push(`Robot controls: ${error.message}`);
         }

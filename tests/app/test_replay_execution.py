@@ -10,6 +10,7 @@ import shutil
 import threading
 import time
 
+import numpy as np
 import pytest
 
 pytest.importorskip("holoscan")
@@ -20,6 +21,83 @@ from telesurgery_robots.simulation.state import SimRobot  # noqa: E402
 from websockets.sync.server import serve  # noqa: E402
 
 pytestmark = [pytest.mark.sdk, pytest.mark.asyncio]
+
+
+@pytest.mark.parametrize("failure", ["physics", "transport", "other", "old_sim"])
+async def test_checkpoint_discards_explicit_physics_rejection_without_retrying_motion(
+    tmp_path, failure
+):
+    from types import SimpleNamespace
+
+    from telesurgery.controller.checkpoint_replay import CheckpointPlayback
+    from telesurgery_robots.adapters.base import controls
+    from telesurgery_robots.adapters.simulation import VersiusSimulation
+
+    app = Application("surgeon", tmp_path)
+    key = "node:left"
+    robot = {"kind": "versius-sim", "controls": controls(VersiusSimulation({"uri": "unused"}), {})}
+    goal = {
+        "frame": "base",
+        "end_effector": "TCP",
+        "position_m": [0.01, 0, 0],
+        "orientation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    }
+    playback = CheckpointPlayback(
+        robot,
+        {"device": "gamepad"},
+        "left",
+        [{"t": 0, "speeds": [20, 50, 40], "tool_pose": goal}],
+        "run",
+    )
+    held = {"tool_pose": {**goal, "position_m": [0, 0, 0]}, "control_active": False}
+    step = playback.read(0, held)
+    if failure != "old_sim":
+        held["cartesian_feedback"] = {"ready": False, "age_ms": 350}
+    error = {
+        "transport": ConnectionError("Controller reply failed"),
+        "other": RuntimeError("Controller rejected request: joint limit"),
+    }.get(
+        failure,
+        RuntimeError(
+            "Controller rejected request: Cartesian physics feedback is unavailable or stale"
+        ),
+    )
+    calls = []
+
+    async def remote(method, params=None, **kwargs):
+        calls.append(method)
+        if method == "robot.move":
+            raise error
+        if method == "robot.renew":
+            return held
+        assert method == "status"
+        return {"id": "surgeon", "robots": [{"id": key, "owner_id": "surgeon"}]}
+
+    async def run(function, *args, **kwargs):
+        return function(*args)
+
+    app.run = run
+    app.remote = SimpleNamespace(call=remote, closed=asyncio.Event())
+    app.tokens[key], app.sequences[key], app.replays[key] = "token", 0, playback
+    mode, command = step["request"]
+    params = {
+        "id": key,
+        "mode": mode,
+        "command": command,
+        "replay": True,
+        "replay_run": "run",
+    }
+    if failure == "physics":
+        assert await app.action("robot.move", params) == held
+        assert calls == ["robot.move", "robot.renew"]
+        assert playback.request is None and playback.pending["acknowledged"]
+        assert playback.read(0, held)["request"] is None
+        assert playback.index == 0 and app.tokens[key] == "token"
+    else:
+        with pytest.raises(type(error), match=str(error)):
+            await app.action("robot.move", params)
+        assert calls.count("robot.move") == 1
+        assert ("robot.renew" in calls) == (failure == "old_sim")
 
 
 @pytest.mark.parametrize("updated_patient", [True, False])
@@ -321,6 +399,9 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_grasps(
                     assert robots["right"]._grippers()["hand"] == pytest.approx(0.1)
                     assert not robots["right"].grip.rates
             if independent:
+                # Supply a fresh stationary physics sample alongside the tool pose.
+                joints = np.asarray(robots[role].pose["joints"])
+                robots[role].kinematics = (joints, np.zeros((6, len(joints))), time.monotonic())
                 robots[role].feedback = {
                     "tool_pose": pose,
                     "grippers": {"hand": max(0.1, robots[role].finger_target / 0.04)},
@@ -353,6 +434,7 @@ async def test_two_surgeons_release_donor_only_after_delayed_receiver_grasps(
                 "device": "haply",
                 "barriers": 0 if independent else 1,
                 "independent_actions": independent,
+                "requires_presented_needle": independent,
                 "task": "Handoff fixture",
                 "handoff_group": "handoff-fixture",
                 "replay_verified": True,

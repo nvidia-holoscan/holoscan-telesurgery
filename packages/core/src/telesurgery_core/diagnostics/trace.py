@@ -23,6 +23,7 @@ STAGES = (
     "decode_ms",
     "preview_encode_ms",
     "unpack_ms",
+    "view_processing_ms",
     "render_submit_ms",
     "browser_queue_ms",
     "browser_decode_ms",

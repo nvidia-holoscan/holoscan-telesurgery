@@ -163,6 +163,7 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             await page.keyboard.down("q")
             await page.clock.run_for(80)
             await page.get_by_label("Selected robot").select_option("host:other")
+            await page.get_by_role("button", name="Release control and switch", exact=True).click()
             await page.clock.run_for(100)
             assert all(c["params"]["id"] == "host:robot" for c in calls)
             await page.keyboard.up("q")

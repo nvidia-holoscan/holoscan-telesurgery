@@ -36,7 +36,7 @@ def controller_name(name):
         return "PlayStation controller"
     if re.search(r"nintendo|switch.*pro|joy.?con|057e", name, re.I):
         return "Nintendo controller"
-    if re.search(r"xbox|x-box|xinput", name, re.I):
+    if re.search(r"xbox|x-box|xinput|microsoft.*controller|045e", name, re.I):
         return "Xbox controller"
     name = re.sub(r"\s*\([^)]*\)\s*", " ", name).strip()
     return name[:25] + "…" if len(name) > 26 else name or "Gamepad"
@@ -48,7 +48,7 @@ def controller_bindings(name):
         labels = ("L1", "R1", "△", "✕", "□", "○", "PS button", "Options")
     elif re.search(r"nintendo|switch.*pro|joy.?con|057e", name, re.I):
         labels = ("L", "R", "X", "B", "Y", "A", "Home button", "+")
-    elif re.search(r"xbox|x-box|xinput", name, re.I):
+    elif re.search(r"xbox|x-box|xinput|microsoft.*controller|045e", name, re.I):
         labels = ("LB", "RB", "Y", "A", "X", "B", "Xbox button", "Menu ☰")
     else:
         labels = (

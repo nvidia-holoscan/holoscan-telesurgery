@@ -1,0 +1,109 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0 */
+
+.view-surface {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 9;
+    max-height: 65vh;
+    background: #151b15;
+}
+.view-viewport {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    flex: 0 0 auto;
+    background: #151b15;
+    isolation: isolate;
+}
+.view-viewport .depth-stage { transform-origin: center; height: 100%; width: 100%; }
+body[data-role] .view-viewport video { max-height: none; height: 100%; }
+.view-viewport[data-zoomed="true"] { cursor: grab; touch-action: none; }
+.view-viewport[data-zoomed="true"]:active { cursor: grabbing; }
+.view-viewport[data-selecting="true"] { cursor: crosshair; touch-action: none; }
+.view-viewport:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.view-zoom {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    padding: 2px;
+    border: 1px solid #ffffff35;
+    border-radius: 9px;
+    background: #15201deb;
+    color: #f6faf7;
+    box-shadow: 0 2px 8px #0003;
+    font-size: 12px;
+    z-index: 4;
+    cursor: default;
+}
+.view-zoom .zoom-step, .view-zoom .zoom-level, .view-zoom .zoom-reset, .view-zoom .zoom-area {
+    min-width: 30px;
+    min-height: 30px;
+    border: 0;
+    border-radius: 5px;
+    padding: 5px 7px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.view-zoom .zoom-step .icon { width: 16px; height: 16px; }
+.view-zoom > .zoom-step, .view-zoom .zoom-level {
+    height: 26px;
+    min-height: 26px;
+    padding: 0 5px;
+    line-height: 1;
+}
+.view-zoom > .zoom-step { width: 28px; min-width: 28px; }
+.view-zoom button:hover, .view-zoom summary:hover { background: #ffffff18; }
+.view-zoom button:focus-visible, .view-zoom summary:focus-visible { outline: 2px solid #a5db60; outline-offset: -2px; }
+.view-zoom .zoom-level { display: grid; place-items: center; min-width: 44px; font-variant-numeric: tabular-nums; font-weight: 600; list-style: none; }
+.zoom-level::-webkit-details-marker { display: none; }
+.view-zoom button:disabled { opacity: .35; cursor: default; }
+.zoom-panel {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    width: 236px;
+    padding: 12px;
+    border: 1px solid #ffffff35;
+    border-radius: 10px;
+    background: #15201df5;
+    color: #f6faf7;
+    box-shadow: 0 4px 20px #0004;
+    cursor: default;
+}
+.zoom-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+.zoom-heading strong { font-size: 12px; }
+.view-zoom .zoom-reset { min-height: 26px; font-size: 11px; font-weight: 500; }
+.zoom-reset .icon { width: 13px; height: 13px; }
+.zoom-panel input[type="range"], .camera-zoom input[type="range"] { display: block; width: 100%; margin: 0; padding: 0; height: 24px; accent-color: var(--green); cursor: pointer; }
+.zoom-range-labels { display: flex; justify-content: space-between; font-size: 10px; opacity: .7; }
+.view-zoom .zoom-area { display: flex; width: 100%; margin-top: 9px; border: 1px solid #ffffff35; font-size: 12px; font-weight: 500; }
+.zoom-area .icon { width: 15px; height: 15px; }
+.view-zoom .zoom-help { display: block; margin-top: 9px; color: inherit; opacity: .75; font-size: 10px; line-height: 1.5; }
+.zoom-selection { position: absolute; border: 2px solid #b7ef66; background: #76b90020; box-shadow: 0 0 0 100vmax #0005; pointer-events: none; z-index: 2; }
+.zoom-instruction { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 5px 9px; border-radius: 5px; background: #15201deb; color: #fff; font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 3; }
+.native-zoom { position: relative; bottom: auto; right: auto; width: fit-content; margin-top: 12px; background: var(--theme-surface, #fff); color: var(--ink); border-color: var(--border); box-shadow: none; z-index: 5; }
+.native-zoom .zoom-panel { background: var(--theme-surface, #fff); color: var(--ink); border-color: var(--border); }
+.native-zoom button:hover, .native-zoom summary:hover { background: var(--theme-stripe, #edf0ee); }
+.zoom-pan { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.zoom-pan > span { font-size: 11px; color: var(--muted); }
+.camera-zoom { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.camera-zoom summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.camera-zoom-panel { padding-top: 10px; max-width: 440px; }
+.camera-zoom-range { display: grid; grid-template-columns: minmax(0, 1fr) 35px auto; align-items: center; gap: 10px; }
+.camera-zoom output { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); text-align: right; }
+.camera-zoom .zoom-range-labels { margin-right: 116px; }
+.camera-zoom-panel > small { display: block; color: var(--muted); font-size: 11px; margin-top: 8px; }
+.video-tile:fullscreen .view-surface { flex: 1; min-height: 0; max-height: none; aspect-ratio: auto; }
+body[data-role] .video-tile:fullscreen .view-viewport video { height: 100%; }
+.video-tile:fullscreen .view-viewport .depth-stage canvas { aspect-ratio: auto; }
+@media (pointer: coarse) {
+    .view-zoom .zoom-step, .view-zoom .zoom-level { min-width: 40px; min-height: 40px; }
+}

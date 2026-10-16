@@ -4,11 +4,13 @@
 """Isaac Sim's local controller protocol behind the same physical adapter contract."""
 
 from telesurgery_core.transport.rpc import RpcClient
-from telesurgery_robots.adapters.base import cartesian_command, speed_value
+from telesurgery_robots.adapters.base import CARTESIAN_SPEED, cartesian_command, speed_value
 from telesurgery_robots.franka.poses import FRANKA_HOME, FRANKA_SPEED
 from telesurgery_robots.mira.cartesian import SIM_CARTESIAN
+from telesurgery_robots.mira.follow import FOLLOW
 from telesurgery_robots.mira.gripper import GRIP_SPEED
 from telesurgery_robots.mira.poses import MIRA_SIM_HOME
+from telesurgery_robots.mira.velocity import SIMULATION
 from telesurgery_robots.versius import HOME as VERSIUS_HOME
 
 
@@ -50,6 +52,14 @@ class SimulationAdapter:
 
 class MiraSimulation(SimulationAdapter):
     mira_cartesian = SIM_CARTESIAN
+    mira_follow = FOLLOW
+    joint_velocity = SIMULATION
+
+    def jog_velocity(self, command):
+        return self.request("set_mira_joint_velocity", command)
+
+    def follow_tool(self, command):
+        return self.request("set_mira_tool_target", command)
 
     def jog_cartesian(self, command):
         return self.request("jog_mira_cartesian", command)
@@ -72,7 +82,7 @@ class FrankaSimulation(SimulationAdapter):
     method = "set_joint_delta"
     home_deg = {"joints": FRANKA_HOME}
     speed_limits = FRANKA_SPEED
-    cartesian = {"frame": "base", "linear_speed_m_s": 0.10, "angular_speed_deg_s": 30.0}
+    cartesian = CARTESIAN_SPEED
     grippers = ()
     grip_speed = GRIP_SPEED
 

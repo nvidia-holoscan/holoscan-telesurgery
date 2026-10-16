@@ -162,7 +162,8 @@ def test_camera_selection_uses_system_python_despite_shadowed_path(setup, monkey
 def test_missing_controller_libraries_use_distribution_versions(setup, monkeypatch, sdk):
     _, invoke = setup
     monkeypatch.setenv(
-        "SETUP_MISSING_PACKAGES", "libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth"
+        "SETUP_MISSING_PACKAGES",
+        "libusb-0.1-4 libsdl2-2.0-0 python3-tk python3-websocket xvfb xauth",
     )
     result, records = invoke("--sdk", sdk)
     assert result.returncode == 0, result.stderr
@@ -176,6 +177,7 @@ def test_missing_controller_libraries_use_distribution_versions(setup, monkeypat
             "-y",
             "--no-remove",
             "--no-install-recommends",
+            "libusb-0.1-4",
             "libsdl2-2.0-0",
             "python3-tk",
             "python3-websocket",
@@ -183,6 +185,26 @@ def test_missing_controller_libraries_use_distribution_versions(setup, monkeypat
             "xauth",
         ]
     ]
+
+
+@pytest.mark.parametrize("options", [("--sdk", "4"), ("--sdk", "5"), ("--docker",)])
+def test_missing_haply_hub_library_is_installed_even_with_cached_setup(setup, monkeypatch, options):
+    _, invoke = setup
+    monkeypatch.setenv("SETUP_CACHE_HIT", "1")
+    monkeypatch.setenv("SETUP_MISSING_PACKAGES", "libusb-0.1-4")
+    result, records = invoke(*options)
+    assert result.returncode == 0, result.stderr
+    commands = [item["command"] for item in records]
+    assert [
+        "apt-get",
+        "install",
+        "-y",
+        "--no-remove",
+        "--no-install-recommends",
+        "libusb-0.1-4",
+    ] in commands
+    assert not any(command[0] == "uv" for command in commands)
+    assert not any("scripts/setup_haply.py" in command for command in commands)
 
 
 @pytest.mark.parametrize("options", [(), ("--profile", "franka")])

@@ -60,15 +60,43 @@ Open **[localhost:8000](http://localhost:8000)**. Your room starts empty.
 
 ### 2. Nodes
 
-Start a simulation (`mira`, `franka` or [CMR Versius](#cmr-versius-simulation)):
+Choose a **simulation** node or a **physical** node. Physical nodes can provide cameras (including HSB), robots, or both.
+
+#### Simulation nodes
+
+Select a simulation with `--sim`: `mira`, `franka` or [CMR Versius](#cmr-versius-simulation) (`versius`).
 
 ```bash
 ./run.sh --docker node --patient 127.0.0.1 --sim mira
 ```
 
-For hardware, use the [physical device commands](#physical-devices). On another machine, replace `127.0.0.1` with the patient IP.
+#### Physical nodes
 
-Approve each node under **Nodes** in Patient, then start streams and connect robots.
+For cameras, including HSB, start a node without a robot profile:
+
+```bash
+./run.sh --docker node --patient 127.0.0.1
+```
+
+Cameras are discovered automatically. Connect HSB boards to the configured camera network before starting the node. If the node previously used a robot profile, add `--profile none` to clear its saved profile selection.
+
+Add a robot profile to include a physical robot alongside any cameras.
+
+Start a physical Franka node after enabling FCI in Desk:
+
+```bash
+./run.sh --docker node --patient 127.0.0.1 --profile franka
+```
+
+Start a physical MIRA node after copying the vendor API executable to `workspace/mira-api` (or supply its path with `--mira-api PATH`):
+
+```bash
+./run.sh --docker node --patient 127.0.0.1 --profile mira
+```
+
+Run each node on the host running its simulation or connected to its physical devices. If Patient runs on another machine, replace `127.0.0.1` with its IP. See [physical devices](#physical-devices) for Franka address overrides, native setup and HSB cameras.
+
+Approve each node under **Nodes** in Patient. The node automatically starts configured controllers, connects its robots and starts discovered streams using saved settings, or the device defaults on first use.
 
 ### 3. Surgeon
 

@@ -67,7 +67,9 @@ class Inputs:
         self.dual = set(self.groups) == {"left", "right"}
         self.mode = "cartesian" if self.controls.get("cartesian") else "joints"
         self.keyboard = Keyboard()
-        self.arm_percent, self.roll_percent, self.grip_percent = 20, 50, 40
+        self.arm_percent = self.controls.get("default_arm_speed_percent", 20)
+        self.roll_percent = self.controls.get("default_roll_speed_percent", 50)
+        self.grip_percent = self.controls.get("default_grip_speed_percent", 40)
         self.last_sent = self.last_jog = float("-inf")
         self.last_grip = {}
         self.last_mode = None
@@ -85,7 +87,12 @@ class Inputs:
     @property
     def speed(self):
         limit = self.controls.get("speed_deg_s", {})
-        maximum = limit.get("max", self.controls.get("max_step_deg", 0.2) * 20)
+        maximum = limit.get(
+            "max",
+            self.controls.get("joint_velocity", {}).get(
+                "arm_deg_s", self.controls.get("max_step_deg", 0.2) * 20
+            ),
+        )
         return max(limit.get("min", 0), maximum * self.arm_percent / 100)
 
     @property
@@ -94,7 +101,12 @@ class Inputs:
 
     def increment(self, index, seconds):
         maximum = self.controls.get("max_step_deg", self.controls.get("step_deg", 0.2))
-        speed = maximum * 20 * self.roll_percent / 100 if self.dual and index == 4 else self.speed
+        if self.dual and index == 4:
+            maximum = self.controls.get("mira_cartesian", {}).get("roll_step_deg", maximum)
+        roll = self.controls.get("joint_velocity", {}).get("roll_deg_s", maximum * 20)
+        speed = roll * self.roll_percent / 100 if self.dual and index == 4 else self.speed
+        if self.mode == "joints" and self.controls.get("joint_velocity"):
+            return speed
         return min(maximum, speed * seconds)
 
     def bindings(self):
@@ -127,11 +139,12 @@ class Inputs:
             return command
         config = self.controls["mira_cartesian"]
         maximum = self.controls.get("max_step_deg", 1)
+        rates = self.controls.get("joint_velocity", {})
         result = {}
         for group, values in command.items():
             values = [
                 v
-                / maximum
+                / (rates.get("roll_deg_s" if i == 4 else "arm_deg_s", maximum * 20) / 20)
                 * (
                     config.get("roll_step_deg", config["angular_step_deg"])
                     if i == 4
@@ -140,8 +153,24 @@ class Inputs:
                 for i, v in enumerate(values)
             ]
             scale = max(1, math.hypot(*values[:3]) / config["linear_step_mm"])
+            for i in (3, 4):
+                limit = (
+                    config.get("roll_step_deg", config["angular_step_deg"])
+                    if i == 4
+                    else config["angular_step_deg"]
+                )
+                values[i] = max(-limit, min(limit, values[i]))
             result[group] = [v / scale if i < 3 else v for i, v in enumerate(values)]
         return result
+
+    def cartesian_speed(self, command):
+        config = self.controls.get("cartesian", {})
+        if "rotation" in command and config.get("independent_rotation"):
+            return {
+                **command,
+                "rotation_speed_deg_s": config["angular_speed_deg_s"] * self.roll_percent / 100,
+            }
+        return command
 
     def _choose(self, command, grip, now, *, step=False):
         moving = any(v for values in command.values() for v in values)
@@ -162,6 +191,8 @@ class Inputs:
             self.last_grip = dict(grip)
         else:
             mode = "cartesian" if self.mode == "mira-tool" else "step" if step else "jog"
+            if self.mode == "joints" and self.controls.get("joint_velocity"):
+                mode = "velocity"
             value = self._tool(command)
             self.last_jog = now
             self.joint_active = moving
@@ -183,7 +214,7 @@ class Inputs:
         command = self._empty()
         step = False
         if motion:
-            if self.mode == "joints":
+            if self.mode == "joints" and not self.controls.get("joint_velocity"):
                 if not self.dual:
                     motion = motion[:1]
                 fresh = [key for key in motion if key not in self.stepped]

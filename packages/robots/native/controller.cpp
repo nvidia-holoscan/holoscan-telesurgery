@@ -5,6 +5,7 @@
 #include <franka/robot.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 
 #include <atomic>
@@ -121,6 +122,15 @@ class Controller {
   bool active() const { return running_; }
   bool homing() const { return running_ && homing_; }
   bool stopping() const { return running_ && stopped_; }
+
+  // Pure model evaluation; never reads or commands the robot. Tool frames come
+  // from the same measured snapshot as the reference joints.
+  auto kinematics(const telesurgery::Joints& q, const std::array<double, 16>& flange,
+                  const std::array<double, 16>& tool) const {
+    telesurgery::validate_target(q);
+    return std::make_pair(model_->pose(franka::Frame::kEndEffector, q, flange, tool),
+                          model_->zeroJacobian(franka::Frame::kEndEffector, q, flange, tool));
+  }
 
   void close() {
     hold();
@@ -286,6 +296,7 @@ NB_MODULE(_franka, m) {
            nb::arg("speed") = telesurgery::default_speed, nb::call_guard<nb::gil_scoped_release>())
       .def("hold", &Controller::hold, nb::call_guard<nb::gil_scoped_release>())
       .def("close", &Controller::close, nb::call_guard<nb::gil_scoped_release>())
+      .def("kinematics", &Controller::kinematics, nb::call_guard<nb::gil_scoped_release>())
       .def("read", [](Controller& controller) {
         franka::RobotState state;
         {
@@ -297,6 +308,8 @@ NB_MODULE(_franka, m) {
         result["dq"] = state.dq;
         result["tau_J"] = state.tau_J;
         result["O_T_EE"] = state.O_T_EE;
+        result["F_T_EE"] = state.F_T_EE;
+        result["EE_T_K"] = state.EE_T_K;
         result["device_time_ms"] = state.time.toMSec();
         result["faults"] = static_cast<std::string>(state.current_errors);
         result["control_active"] = controller.active();

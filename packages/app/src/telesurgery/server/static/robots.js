@@ -127,22 +127,44 @@ export function robotControls(refresh, openMetrics) {
         signature,
         selectedInput = null,
         current = null,
+        switching = false,
+        handingOff = null,
         generation = 0;
     const cards = new Map(),
         restoredInputs = new Map(),
         acknowledgements = new Map(),
         stepping = new Map(),
         releasing = new Map(),
-        acquiring = new Set(),
+        releaseFailures = new Map(),
+        acquiring = new Map(),
         holding = new Map(),
         moving = new Set(),
         held = new Set();
+    const inputKey = id => `telesurgery-input:${JSON.stringify([state.patient || "local", id])}`;
+    function saveInput(id, input) {
+        try { localStorage.setItem(inputKey(id), JSON.stringify(input)); } catch {}
+    }
+    function savedInput(id) {
+        try {
+            const saved = localStorage.getItem(inputKey(id));
+            if (saved === null) return undefined;
+            const input = JSON.parse(saved);
+            if (input === null || (input && typeof input === "object" && (
+                (typeof input.id === "string" && Number.isInteger(input.index) && input.index >= 0) ||
+                (typeof input.name === "string" && Number.isInteger(input.ordinal) &&
+                    Number.isInteger(input.count) && input.ordinal >= 0 && input.ordinal < input.count)
+            ))) return input;
+        } catch {}
+        return undefined;
+    }
     function stopInputs(card, reason = "operator stopped replay") {
-        card?.replay?.stop(false, reason);
-        card?.haply?.stop();
+        const replay = card?.replay?.stop(false, reason);
+        card?.haply?.stop(reason === "operator stopped replay"
+            ? "Movement stopped; tap Start to resume." : `${reason}; tap Start to resume.`);
         card?.gamepad?.stop();
         card?.keyboard?.stop();
         card?.grippers?.stop();
+        return replay;
     }
     function motionState(robot) {
         const reply = acknowledgements.get(robot.id);
@@ -187,6 +209,7 @@ export function robotControls(refresh, openMetrics) {
             card.acquire.hidden = owned;
         }
         card?.grippers?.feedback(result);
+        card?.haply?.feedback(result);
         if (card && (result.stopping || result.home_active)) {
             card.keyboard?.feedback(result);
             card.keyboard?.update(card.mode?.value === "keyboard", false);
@@ -203,17 +226,12 @@ export function robotControls(refresh, openMetrics) {
     }
     function connectionButton(robot) {
         const connected = robot.connection_enabled;
+        const needsStart = robot.controller && robot.controller.status !== "running"
+            && robot.status !== "online";
         const control = button(
-            connected ? "Disconnect" : "Connect",
+            needsStart ? "Start controller" : connected ? "Disconnect" : "Connect",
             async () => {
-                if (
-                    !connected &&
-                    robot.controller &&
-                    robot.controller.status !== "running"
-                ) {
-                    startRobot(robot);
-                    return;
-                }
+                if (needsStart) return startRobot(robot);
                 await action(connected ? "robot.disconnect" : "robot.connect", {
                     id: robot.id,
                 });
@@ -222,7 +240,8 @@ export function robotControls(refresh, openMetrics) {
             "secondary small",
         );
         control.disabled = robot.node_online === false;
-        control.title = connected
+        control.title = needsStart ? "Start the configured controller and connect to the robot"
+            : connected
             ? "Release this application's robot connection"
             : "Connect to the robot controller";
         return control;
@@ -240,11 +259,12 @@ export function robotControls(refresh, openMetrics) {
         );
     }
     function permitted(robot) {
-        return eligible(robot) && held.has(robot.id) && !releasing.has(robot.id);
+        return !switching && eligible(robot) && held.has(robot.id) && !releasing.has(robot.id);
     }
     async function acquire(robot) {
-        if (!eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id)) return;
-        acquiring.add(robot.id);
+        if (switching || releaseFailures.size || !eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id)) return;
+        let complete;
+        acquiring.set(robot.id, new Promise(resolve => { complete = resolve; }));
         const started = generation;
         stopInputs(cards.get(robot.id));
         cards.get(robot.id)?.acquire.blur();
@@ -258,6 +278,7 @@ export function robotControls(refresh, openMetrics) {
             notice(error);
         } finally {
             acquiring.delete(robot.id);
+            complete();
             await refresh();
         }
     }
@@ -266,13 +287,19 @@ export function robotControls(refresh, openMetrics) {
         if (current?.id === id) current.cancelled = true;
         held.delete(id);
         moving.delete(id);
-        const pending = action("robot.release", { id });
+        const pending = action("robot.release", { id }).then(result => {
+            acknowledge(id, result, false);
+            stepping.delete(id);
+            releaseFailures.delete(id);
+            return true;
+        }).catch(error => {
+            releaseFailures.set(id, error);
+            notice(error);
+            return false;
+        });
         releasing.set(id, pending);
         try {
-            acknowledge(id, await pending, false);
-            stepping.delete(id);
-        } catch (error) {
-            notice(error);
+            return await pending;
         } finally {
             releasing.delete(id);
         }
@@ -320,6 +347,9 @@ export function robotControls(refresh, openMetrics) {
         try {
             const card = cards.get(robot.id);
             const speed = robot.controls.speed_deg_s && (card?.armSpeed || card?.speed);
+            if (command.rotation && robot.controls.cartesian?.independent_rotation &&
+                command.rotation_speed_deg_s === undefined && replaySpeed === undefined)
+                command = {...command, rotation_speed_deg_s: card.rollSpeed.value()};
             const result = await action("robot.move", {
                 id: robot.id,
                 command,
@@ -353,13 +383,15 @@ export function robotControls(refresh, openMetrics) {
     }
     async function pauseAll(reason, keepReplays = false) {
         const continuing = new Set();
+        const stopped = [];
         for (const [id, card] of cards) {
             if (keepReplays && !document.hidden && card.robot.simulation && card.replay?.active)
                 continuing.add(id);
-            else stopInputs(card, reason);
+            else stopped.push(stopInputs(card, reason));
         }
         if (current && !continuing.has(current.id)) await stop();
         for (const id of held) if (!continuing.has(id)) await hold(id);
+        await Promise.all(stopped);
     }
     async function step(robot, command, mode = "step") {
         if (current || releasing.has(robot.id)) return;
@@ -373,8 +405,11 @@ export function robotControls(refresh, openMetrics) {
         if (current) current.cancelled = true;
         for (const card of cards.values()) stopInputs(card);
         await stop();
-        for (const id of [...held]) await release(id);
-        await Promise.allSettled([...releasing.values()]);
+        await Promise.all([...acquiring.values()]);
+        const results = await Promise.all(
+            [...new Set([...held, ...releasing.keys(), ...releaseFailures.keys()])].map(release),
+        );
+        return results.every(Boolean) && releaseFailures.size === 0;
     }
     window.addEventListener("blur", () => pauseAll("dashboard lost focus", true));
     window.addEventListener("keydown", (event) => {
@@ -385,7 +420,7 @@ export function robotControls(refresh, openMetrics) {
     });
     window.addEventListener("pagehide", () => {
         generation++;
-        for (const id of new Set([...held, ...acquiring, ...(current ? [current.id] : [])])) {
+        for (const id of new Set([...held, ...acquiring.keys(), ...releaseFailures.keys(), ...(current ? [current.id] : [])])) {
             fetch("/api/action", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -458,7 +493,6 @@ export function robotControls(refresh, openMetrics) {
                         card.start = button("Bring online", () =>
                             startRobot(card.robot),
                         );
-                        card.start.setAttribute("aria-haspopup", "dialog");
                         actions.append(card.start);
                     }
                     card.logs = button(
@@ -486,12 +520,12 @@ export function robotControls(refresh, openMetrics) {
                 actions.append(card.release);
                 element_.append(actions);
             } else if (state.session?.robot && jogGroups(robot).length) {
-                const mira = robot.kind === "mira" || robot.kind === "mira-sim";
-                const franka = robot.kind === "franka" || robot.kind === "franka-sim" || robot.kind === "versius-sim";
+                const mira = !!robot.controls.mira_cartesian || robot.kind === "mira" || robot.kind === "mira-sim";
+                const franka = !!robot.controls.cartesian || robot.kind === "franka" || robot.kind === "franka-sim" || robot.kind === "versius-sim";
                 if (mira || franka) {
                     element_.classList.add("compact-controls", mira ? "mira-controls" : "franka-controls");
                     card.armSpeed = armSpeed(robot, () => stopInputs(card));
-                    if (pairedArms(robot) && robot.controls.groups.left === 5)
+                    if ((pairedArms(robot) && robot.controls.groups.left === 5) || robot.controls.cartesian?.independent_rotation)
                         card.rollSpeed = rollSpeed(robot, () => stopInputs(card));
                 } else {
                     card.step = jointStep(robot, () => stopInputs(card));
@@ -501,8 +535,9 @@ export function robotControls(refresh, openMetrics) {
                 if (robot.controls.grippers?.length)
                     card.gripSpeed = gripSpeed(robot, () => stopInputs(card));
                 const increment = (group, index, seconds = 0.05) =>
-                    card.armSpeed ? (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
+                    card.armSpeed ? (pairedArms(robot) && index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
                         : card.step.value();
+                const jointRate = (group, index) => (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).value();
                 const goHome = async () => {
                     if (!card.home || card.home.disabled) return;
                     card.home.disabled = true;
@@ -526,6 +561,7 @@ export function robotControls(refresh, openMetrics) {
                         } : null,
                         gripFeedback: velocity => card.grippers?.gamepad(velocity),
                         haplyAvailable: () => state.haply_available === true,
+                        jointSpeed: jointRate,
                     },
                 );
                 const mode = card.gamepad.select;
@@ -595,6 +631,11 @@ export function robotControls(refresh, openMetrics) {
                     () => endInput(robot.id),
                     refresh,
                     result => acknowledge(robot.id, result, true),
+                    input => {
+                        card.keyboard?.replay(input);
+                        card.gamepad?.replay(input);
+                        card.grippers?.replay(input);
+                    },
                 );
                 buttons.append(card.replay.button, card.stop);
                 element_.append(actions, card.replay.status, card.gamepad.discovery);
@@ -612,6 +653,7 @@ export function robotControls(refresh, openMetrics) {
                             : step(card.robot, command, motionMode),
                     () => endInput(robot.id),
                     increment,
+                    jointRate,
                 );
                 const placeControls = () => {
                     const input = mode.value === "keyboard" ? card.keyboard
@@ -631,8 +673,10 @@ export function robotControls(refresh, openMetrics) {
                     renderFeedback(card.pose, card.robot);
                     if (card.gamepad.inlineFeedback) card.pose.hidden = true;
                 });
-                mode.onchange = async () => {
+                mode.onchange = async event => {
                     selectedInput = card.gamepad.selection();
+                    // Discovery and temporary disconnects must not overwrite the operator's choice.
+                    if (!event.detail?.automatic) saveInput(robot.id, selectedInput);
                     await pauseAll();
                     const available = permitted(card.robot) &&
                         !motionState(card.robot).home_active && !motionState(card.robot).stopping;
@@ -668,8 +712,11 @@ export function robotControls(refresh, openMetrics) {
                     }, true);
                 }
                 placeControls();
-                card.gamepad.restore(restoredInputs.has(robot.id)
-                    ? restoredInputs.get(robot.id) : selectedInput);
+                const preference = savedInput(robot.id);
+                const handedOff = restoredInputs.has(robot.id);
+                card.gamepad.restore(handedOff ? restoredInputs.get(robot.id)
+                    : preference !== undefined ? preference : selectedInput,
+                    {wait: !handedOff && preference !== undefined});
                 restoredInputs.delete(robot.id);
                 element_.append(pose);
             } else
@@ -718,7 +765,11 @@ export function robotControls(refresh, openMetrics) {
     }, 500);
     return {
         inputSelection(id) { return cards.get(id)?.gamepad?.handoff() ?? null; },
-        restoreInput(id, input) { restoredInputs.set(id, input); selectedInput = input; },
+        restoreInput(id, input) {
+            restoredInputs.set(id, input);
+            selectedInput = input;
+            if (state) saveInput(id, input);
+        },
         rebuild() { signature = null; },
         patientActions(robot) {
             const actions = element(
@@ -758,7 +809,6 @@ export function robotControls(refresh, openMetrics) {
                     ["running", "unavailable"].includes(
                         robot.controller.status,
                     );
-                start.setAttribute("aria-haspopup", "dialog");
                 const logs = button(
                     "Logs",
                     () =>
@@ -799,6 +849,37 @@ export function robotControls(refresh, openMetrics) {
             return actions;
         },
         releaseAll,
+        async prepareHandoff(id) {
+            handingOff = id;
+            switching = true;
+            await pauseAll("Controls moved to another window");
+            await Promise.all([...acquiring.values()]);
+            if (releaseFailures.size || releasing.size)
+                throw new Error("Control release is not confirmed; retry release before moving controls.");
+            return held.has(id);
+        },
+        async recoverHandoff(id) {
+            if (!held.has(id)) return;
+            try {
+                acknowledge(id, await action("robot.renew", {id}), true);
+            } catch {
+                await release(id);
+            }
+        },
+        finishHandoff(id, transferred) {
+            if (transferred) held.delete(id);
+            handingOff = null;
+            switching = false;
+        },
+        acceptHandoff(id, feedback) {
+            held.add(id);
+            acknowledge(id, feedback, true);
+        },
+        hasControl: () => !!(held.size || acquiring.size || releasing.size || releaseFailures.size),
+        switching(on) {
+            switching = on;
+            if (on) pauseAll("Robot selection changed");
+        },
         update(next, data) {
             state = next;
             visible = data.robots || [];
@@ -812,6 +893,7 @@ export function robotControls(refresh, openMetrics) {
                     r.connection_enabled,
                 ]),
                 state.role,
+                state.patient,
                 state.session?.robot,
             ]);
             if (key !== signature) {
@@ -841,7 +923,7 @@ export function robotControls(refresh, openMetrics) {
                 const mine =
                     state.role === "surgeon" &&
                     !!state.session?.id &&
-                    robot.owner_id === state.session.id;
+                    (robot.owner_id === state.session.id || releaseFailures.has(robot.id));
                 card.status.textContent = robotStatus(robot);
                 card.status.className = `status ${deviceStatus(robot, true)[1]}`;
                 card.detail.textContent = robot.simulation
@@ -891,8 +973,8 @@ export function robotControls(refresh, openMetrics) {
                             robot.error ? "Retry hold" : "Force release robot control");
                 }
                 if (card.acquire) {
-                    card.acquire.hidden = !!robot.owner || held.has(robot.id);
-                    card.acquire.disabled = !eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id);
+                    card.acquire.hidden = !!robot.owner || held.has(robot.id) || releaseFailures.has(robot.id);
+                    card.acquire.disabled = switching || releaseFailures.size > 0 || !eligible(robot) || acquiring.has(robot.id) || releasing.has(robot.id);
                 }
                 const allowed = permitted(robot);
                 if (card.stop) card.stop.disabled = !allowed;
@@ -952,6 +1034,7 @@ export function robotControls(refresh, openMetrics) {
                     card.gamepad?.bindings(),
                 );
                 card.grippers?.feedback(robot.stale || robot.status !== "online" ? null : robot.state);
+                card.haply?.feedback(robot.stale || robot.status !== "online" ? null : robot.state);
                 card.gamepad?.update(
                     !["keyboard", "haply"].includes(card.mode?.value),
                     inputAllowed,
@@ -967,7 +1050,7 @@ export function robotControls(refresh, openMetrics) {
                     card.pose.hidden = true;
                 }
                 if (
-                    !eligible(robot) &&
+                    !eligible(robot) && handingOff !== robot.id &&
                     (held.has(robot.id) || current?.id === robot.id)
                 )
                     release(robot.id);

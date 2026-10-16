@@ -118,6 +118,7 @@ def configure_task_physics(stage):
     import re
 
     from pxr import PhysxSchema, Usd, UsdPhysics, UsdShade
+    from telesurgery_robots.mira.velocity import SIMULATION
     from telesurgery_sim.environments.needle import configure_needle_contacts
 
     configure_needle_contacts(
@@ -136,7 +137,7 @@ def configure_task_physics(stage):
         drive.CreateDampingAttr(160 if index < 5 else 34.9)
         drive.CreateMaxForceAttr(10_000_000 if index < 4 else 30_000 if index == 4 else 3000)
         PhysxSchema.PhysxJointAPI.Apply(prim).CreateMaxJointVelocityAttr(
-            30 if index < 4 else 100 if index == 4 else 20
+            SIMULATION["arm_deg_s"] if index < 4 else SIMULATION["roll_deg_s"] if index == 4 else 20
         )
         if match[1] == "L" and index == 5:
             UsdPhysics.RevoluteJoint(prim).CreateLowerLimitAttr(0)

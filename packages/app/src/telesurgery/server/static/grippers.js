@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { element } from "./ui.js";
-import { icon } from "./icons.js";
+import { setControllerKey } from "./icons.js";
 import { inputBlocked, keyboardHolds } from "./robot-input.js";
 
 const editing = () => document.activeElement?.closest(
@@ -28,6 +28,7 @@ export function gripperControls(robot, send, stop, speed) {
     const bindings = new Map(), pressed = new Set(), buttons = new Map(), readings = new Map();
     const physicalKeys = keyboardHolds(release);
     let gamepadVelocity = {};
+    let replayInput = null;
     let allowed = false, keyboard = false, busy = false, active = false,
         stopping = false, previous = performance.now();
     function halt() {
@@ -66,7 +67,7 @@ export function gripperControls(robot, send, stop, speed) {
         for (const [index, label, sign] of [[0, "Close", -1], [1, "Open", 1]]) {
             const key = keys[index], control = element("button", undefined, "secondary small");
             control.type = "button";
-            control.append(element("kbd", key.toUpperCase()), document.createTextNode(` ${label}`));
+            control.append(element("kbd", key.toUpperCase()), element("span", label));
             control.setAttribute("aria-label", `${label} ${arm} gripper`);
             control.title = `Hold ${key.toUpperCase()} or this button to ${label.toLowerCase()}`;
             bindings.set(key, { arm, sign });
@@ -141,13 +142,20 @@ export function gripperControls(robot, send, stop, speed) {
         for (const [key, control] of buttons) {
             const {arm, sign} = bindings.get(key);
             control.disabled = !allowed;
-            control.dataset.pressed = String(pressed.has(key) ||
+            const [close, open] = arm === "left" ? [14, 15] : [2, 1];
+            const replayPressed = replayInput?.grip ? Math.sign(replayInput.grip[arm] || 0) === sign
+                : replayInput?.device === "keyboard" ? replayInput.keys.includes(key)
+                : replayInput?.device === "gamepad" && replayInput.buttons.includes(sign < 0 ? close : open)
+                    && !replayInput.buttons.includes(sign < 0 ? open : close);
+            control.dataset.pressed = String(replayInput ? replayPressed : pressed.has(key) ||
                 (allowed && !keyboard && Math.sign(gamepadVelocity[arm] || 0) === sign));
         }
+        toggleKey.dataset.active = String(replayInput?.device === "gamepad" && replayInput.buttons.includes(2));
     }, 50);
     return {
         element: panel,
         feedback,
+        replay(input) { replayInput = input; panel.dataset.replay = String(Boolean(input)); },
         gamepad(velocity) { gamepadVelocity = velocity; },
         update(enabled, keyboardEnabled, gamepad) {
             enabled = enabled && !gamepad?.haply;
@@ -162,7 +170,7 @@ export function gripperControls(robot, send, stop, speed) {
             const toggleGrip = single && !keyboard && (gamepad?.toggleGrip ?? !holdGrip);
             toggle.hidden = !toggleGrip;
             if (single) {
-                toggleKey.textContent = gamepad?.n || "□";
+                setControllerKey(toggleKey, gamepad?.n || "□");
                 toggle.title = `Press ${gamepad?.n || "□"} to toggle the gripper · Stop / Esc interrupts motion`;
             }
             for (const [key, control] of buttons) {
@@ -172,12 +180,7 @@ export function gripperControls(robot, send, stop, speed) {
                 cap.hidden = toggleGrip || gamepad?.haply;
                 const binding = single ? (key === "z" ? "n" : "m") : key;
                 const label = keyboard ? key.toUpperCase() : gamepad?.[binding] || "";
-                if (cap.dataset.binding !== label) {
-                    cap.dataset.binding = label;
-                    const symbol = {"←": "left", "→": "right", "□": "square", "○": "circle"}[label];
-                    if (symbol) cap.replaceChildren(icon(symbol), element("span", label, "sr-only"));
-                    else cap.textContent = label;
-                }
+                setControllerKey(cap, label);
                 control.title = keyboard
                     ? `Hold ${key.toUpperCase()} or this button to ${bindings.get(key).sign < 0 ? "close" : "open"}`
                     : toggleGrip || gamepad?.haply ? "Hold this button · Release to stop"

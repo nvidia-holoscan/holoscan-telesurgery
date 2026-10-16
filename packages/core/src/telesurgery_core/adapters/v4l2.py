@@ -13,6 +13,7 @@ from fractions import Fraction
 from functools import lru_cache
 from pathlib import Path
 
+from telesurgery_core.adapters import camera_zoom
 from telesurgery_core.video.config import Config
 
 # Formats that the OpenCV capture adapter converts to 8-bit BGR.
@@ -182,6 +183,7 @@ def camera_devices():
                     "id": "usb-" + hashlib.sha256(path.encode()).hexdigest()[:12],
                     "source": f"v4l2:{path}",
                     "kind": "USB",
+                    "camera_zoom": camera_zoom.read(path),
                 }
             )
         except (OSError, ValueError):

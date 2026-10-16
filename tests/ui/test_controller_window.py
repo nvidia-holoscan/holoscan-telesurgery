@@ -33,6 +33,123 @@ window.RTCPeerConnection=class {
 
 
 @pytest.mark.asyncio
+async def test_robot_switch_cancels_and_waits_for_successful_release():
+    robots = [
+        {
+            "id": str(i),
+            "name": f"Arm {i}",
+            "kind": "franka",
+            "status": "online",
+            "controls": {"groups": {"joints": 7}, "step_deg": 0.4},
+            "state": {"sequence": 1},
+        }
+        for i in [1, 2]
+    ]
+    state = {
+        "role": "surgeon",
+        "sdk": "5",
+        "selected": [],
+        "native_views": {},
+        "session": {
+            "id": "operator",
+            "status": "approved",
+            "robot": True,
+            "robots": robots,
+            "cameras": [],
+        },
+    }
+    calls = []
+    release_started, release_reply = asyncio.Event(), asyncio.Event()
+    fail_release = True
+
+    async def route(request):
+        path = urlsplit(request.request.url).path
+        if path == "/api/status":
+            await request.fulfill(json=state)
+        elif path == "/api/action":
+            body = request.request.post_data_json
+            calls.append(body)
+            robot = next(r for r in robots if r["id"] == body["params"]["id"])
+            if body["action"] == "robot.acquire":
+                robot.update(owner="Operator", owner_id="operator")
+            elif body["action"] == "robot.release":
+                release_started.set()
+                await release_reply.wait()
+                robot.update(owner=None, owner_id=None)
+                if fail_release:
+                    await request.fulfill(status=409, json={"error": "Stop not confirmed"})
+                    return
+            robot["state"]["sequence"] += 1
+            await request.fulfill(json={"result": robot["state"]})
+        else:
+            await request.fulfill(
+                path=STATIC / (path.removeprefix("/static/") if path != "/" else "index.html")
+            )
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.route("http://localhost:8777/**", route)
+            await page.goto("http://localhost:8777/")
+            await expect(page.locator("#robot-selector")).to_have_value("1")
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == "1"
+            await page.get_by_role("button", name="Acquire control", exact=True).click()
+            picker = page.locator("#robot-selector")
+            dialog = page.locator("#switch-robot-dialog")
+            await picker.select_option("2")
+            await dialog.get_by_role("button", name="Cancel", exact=True).click()
+            await expect(picker).to_have_value("1")
+            assert not any(c["action"] == "robot.release" for c in calls)
+            await picker.select_option("2")
+            await dialog.get_by_role(
+                "button", name="Release control and switch", exact=True
+            ).click()
+            await asyncio.wait_for(release_started.wait(), 2)
+            await expect(picker).to_be_disabled()
+            await expect(picker).to_have_value("1")
+            release_reply.set()
+            await expect(page.locator("#notice")).to_contain_text("release was not confirmed")
+            await expect(picker).to_be_enabled()
+            await expect(picker).to_have_value("1")
+            fail_release = False
+            await picker.select_option("2")
+            await dialog.get_by_role(
+                "button", name="Release control and switch", exact=True
+            ).click()
+            await expect(picker).to_have_value("2")
+            await expect(
+                page.get_by_role("button", name="Acquire control", exact=True)
+            ).to_be_visible()
+            assert not any(
+                c["action"] == "robot.acquire" and c["params"]["id"] == "2" for c in calls
+            )
+            # An old native window must not replace a newer browser selection on reload.
+            state["native_controller"] = {
+                "status": "closed",
+                "generation": "old-window",
+                "robot": "1",
+                "input": None,
+            }
+            await page.reload()
+            await expect(picker).to_have_value("2")
+            await expect(page.get_by_label("Arm 2 input", exact=True)).to_be_visible()
+            assert not any(
+                c["action"] == "robot.acquire" and c["params"]["id"] == "2" for c in calls
+            )
+            # A restarting node does not overwrite the remembered robot with the first one.
+            robots[1]["status"] = "starting"
+            await page.reload()
+            await expect(picker).to_have_value("")
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == "2"
+            robots[1]["status"] = "online"
+            await expect(picker).to_have_value("2")
+        finally:
+            release_reply.set()
+            await browser.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["franka", "mira"])
 @pytest.mark.parametrize("selected", ["keyboard", "0", "1"])
 async def test_native_controls_handoff_docking_and_startup_failure(kind, selected):
@@ -99,10 +216,10 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
                     "preferences": params["preferences"],
                     "input": params["input"],
                     "generation": str(len(calls)),
+                    "acquired": robot["id"] if params.get("retain_control") else None,
                 }
             elif method == "controller.close":
                 state["native_controller"]["status"] = "closed"
-                robot.update(owner=None, owner_id=None)
                 robot["state"]["control_active"] = False
             elif method == "robot.move":
                 robot.update(owner="Operator", owner_id="operator")
@@ -116,7 +233,16 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
             elif method in {"view.browser", "view.close"}:
                 state["native_views"].pop(params["camera"], None)
             robot["state"]["sequence"] += 1
-            await request.fulfill(json={"result": robot["state"]})
+            await request.fulfill(
+                json={
+                    "result": {
+                        "robot": state["native_controller"].get("acquired"),
+                        "state": robot["state"],
+                    }
+                    if method == "controller.close" and params.get("retain_control")
+                    else robot["state"]
+                }
+            )
         elif path == "/api/offer":
             await request.fulfill(json={"sdp": "test", "type": "answer"})
         else:
@@ -151,8 +277,10 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
             await expect(page.locator("#native-controller-away")).to_be_visible()
             assert len(context.pages) == 1
             methods = [c["action"] for c in calls]
-            assert methods.index("robot.release") < methods.index("controller.open")
+            assert "robot.release" not in methods
+            assert methods.index("robot.hold") < methods.index("controller.open")
             opened = next(c for c in calls if c["action"] == "controller.open")
+            assert opened["params"]["retain_control"] is True
             assert opened["params"]["preferences"][f"{kind}:arm-speed"] == 30
             assert opened["params"]["input"] == (
                 None
@@ -173,9 +301,13 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
                 )
             moves = len([c for c in calls if c["action"] == "robot.move"])
             await page.get_by_role("button", name="Dock robot controls", exact=True).click()
+            assert await page.evaluate("localStorage.getItem('telesurgery-robot:local')") == kind
             await expect(speed).to_have_value("55")
             await expect(page.locator("#robots")).to_be_visible()
             await expect(selector).to_have_value(selected)
+            await expect(
+                page.get_by_role("button", name="Acquire control", exact=True)
+            ).to_be_hidden()
             await context.clock.run_for(250)
             assert len([c for c in calls if c["action"] == "robot.move"]) == moves
             await page.evaluate(
@@ -206,6 +338,7 @@ async def test_native_controls_handoff_docking_and_startup_failure(kind, selecte
             await expect(page.locator("#notice")).to_contain_text("No desktop display")
             await expect(page.locator("#robots")).to_be_visible()
             assert len(context.pages) == 1 and not errors
+            assert not any(c["action"] == "robot.release" for c in calls)
         finally:
             await browser.close()
 

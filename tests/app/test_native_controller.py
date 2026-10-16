@@ -3,9 +3,12 @@
 
 """Native input shares browser mappings, release normalization and bounded requests."""
 
+import asyncio
 import json
 import threading
 import time
+from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -20,6 +23,48 @@ from telesurgery_robots.adapters.simulation import (
     MiraSimulation,
     VersiusSimulation,
 )
+
+
+@pytest.mark.asyncio
+async def test_native_controller_launches_with_desktop_python(
+    tmp_path, monkeypatch, virtual_display
+):
+    from aiohttp import web
+    from telesurgery.controller.process import NativeController
+
+    monkeypatch.setenv("DISPLAY", virtual_display)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    requests = []
+
+    async def status(request):
+        requests.append(request.path)
+        return web.json_response(
+            {"role": "surgeon", "session": {"status": "disconnected"}, "replays": []}
+        )
+
+    app = web.Application()
+    app.router.add_get("/api/status", status)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = runner.addresses[0][1]
+    controller = NativeController(tmp_path / "controller")
+    try:
+        await controller.open(f"http://127.0.0.1:{port}")
+        assert (
+            Path(f"/proc/{controller.process.pid}/exe").resolve()
+            == Path("/usr/bin/python3").resolve()
+        )
+        async with asyncio.timeout(5):
+            while not requests:
+                await asyncio.sleep(0.02)
+        assert controller.status()["status"] == "running"
+    finally:
+        await controller.close()
+        await runner.cleanup()
+    assert controller.status()["status"] == "closed"
 
 
 def robot(kind):
@@ -41,7 +86,17 @@ def robot(kind):
 
 @pytest.mark.parametrize("scale", [1, 1.5, 2])
 @pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
-@pytest.mark.parametrize("gamepad", [None, "DualSense", "Xbox", "Nintendo Switch Pro Controller"])
+@pytest.mark.parametrize(
+    "gamepad",
+    [
+        None,
+        "DualSense",
+        "Xbox",
+        "Nintendo Switch Pro Controller",
+        "Generic USB gamepad",
+        "Microsoft Controller",
+    ],
+)
 def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, kind, gamepad):
     import tkinter as tk
 
@@ -102,6 +157,8 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
                 "DualSense": ("□", "○"),
                 "Xbox": ("X", "B"),
                 "Nintendo Switch Pro Controller": ("Y", "A"),
+                "Generic USB gamepad": ("West", "East"),
+                "Microsoft Controller": ("X", "B"),
             }
             assert (window.keys["z"].shortcut, window.keys["x"].shortcut) == expected[gamepad]
         client.action.assert_not_called()
@@ -256,16 +313,21 @@ def test_keyboard_repeat_pairs_and_stopped_hold(kind, interrupted):
 
 
 @pytest.mark.parametrize("kind", ["mira", "franka", "versius"])
-def test_joint_tap_then_continuous_hold_and_real_release(kind):
+def test_joint_press_then_continuous_hold_and_real_release(kind):
     inputs = Inputs(robot(kind))
     inputs.mode = "joints"
     key = inputs.keyboard
     key.press("q", 0)
-    assert inputs.from_keyboard(0)[0] == "step"
-    assert inputs.from_keyboard(0.1) is None
-    assert inputs.from_keyboard(0.44) is None
-    assert inputs.from_keyboard(0.46)[0] == "jog"
-    assert inputs.from_keyboard(0.51)[0] == "jog"
+    if kind == "mira":
+        # MIRA starts a locally paced velocity immediately, with no tap delay.
+        for now in (0, 0.1, 0.44, 0.51):
+            assert inputs.from_keyboard(now)[0] == "velocity"
+    else:
+        assert inputs.from_keyboard(0)[0] == "step"
+        assert inputs.from_keyboard(0.1) is None
+        assert inputs.from_keyboard(0.44) is None
+        assert inputs.from_keyboard(0.46)[0] == "jog"
+        assert inputs.from_keyboard(0.51)[0] == "jog"
     key.release("q", 0.52)
     assert inputs.from_keyboard(0.54) == ("release", {})
     assert inputs.from_keyboard(0.8) is None
@@ -306,7 +368,9 @@ def test_gamepad_rearm_home_hold_and_grip(kind):
     neutral = [0] * 4
     assert inputs.from_gamepad(neutral, set(), state, 0) is None
     buttons = {4} if kind == "mira" else set()
-    assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.1)[0] == "jog"
+    assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.1)[0] == (
+        "velocity" if kind == "mira" else "jog"
+    )
     inputs.halt()
     assert inputs.from_gamepad([0, -1, 0, 0], buttons, state, 0.2) is None
     assert inputs.from_gamepad(neutral, set(), state, 0.3) is None
@@ -469,6 +533,133 @@ def test_native_does_not_claim_observed_same_session_ownership():
         assert not calls
     finally:
         control.close()
+
+
+def test_failed_native_release_blocks_acquisition_until_explicit_retry():
+    control = Control(Mock())
+    failed, released = Future(), Future()
+    failed.set_exception(RuntimeError("Stop was not confirmed"))
+    released.set_result({"sequence": 2})
+    control.worker.shutdown()
+    control.worker = Mock()
+    control.worker.submit.side_effect = [failed, released]
+    control.owned = "first"
+    control.release()
+    control.poll(1)
+    control.poll(1.01)
+    assert control.release_failed == "first"
+    assert not control.owned and not control.ready
+    assert not control.acquire("second")
+    assert not control.move("first", "jog", {"joints": [1]}, 10)
+    control.poll(5)
+    assert control.worker.submit.call_count == 1  # No automatic retry or renewal.
+    control.release()
+    control.poll(5.01)
+    control.poll(5.02)
+    assert control.release_failed is None and control.ready
+    assert not control.error
+
+
+def test_native_handoff_validates_existing_lease_without_acquiring():
+    control = Control(Mock())
+    reply = Future()
+    reply.set_result({"sequence": 2})
+    control.worker.shutdown()
+    control.worker = Mock()
+    control.worker.submit.return_value = reply
+    assert control.adopt("robot")
+    assert not control.ready
+    control.worker.submit.assert_called_once_with(
+        control.client.action, "robot.renew", {"id": "robot"}
+    )
+    control.poll(1)
+    assert control.ready and control.owned == "robot"
+    assert not control.adopt("different")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_fails", [False, True])
+async def test_controller_handoff_requires_confirmed_hold_and_existing_lease(stop_fails):
+    service = SimpleNamespace(
+        role="surgeon",
+        remote_status={"status": "approved", "robot": True, "robots": [{"id": "robot"}]},
+        controller=SimpleNamespace(
+            open=AsyncMock(), close=AsyncMock(return_value={"handoff": "robot"})
+        ),
+        controller_server="http://localhost:8002",
+        controller_certificate=None,
+        tokens={"robot": "existing"},
+    )
+    calls = []
+
+    async def action(method, params):
+        calls.append(method)
+        if stop_fails and method == "robot.hold":
+            raise RuntimeError("Hold failed")
+        return {"sequence": 3}
+
+    service.action = action
+    if stop_fails:
+        with pytest.raises(RuntimeError, match="Hold failed"):
+            await Application.action(
+                service, "controller.open", {"id": "robot", "retain_control": True}
+            )
+        service.controller.open.assert_not_awaited()
+        return
+    await Application.action(service, "controller.open", {"id": "robot", "retain_control": True})
+    assert calls == ["replay.cancel", "robot.hold"]
+    service.controller.open.assert_awaited_once_with(
+        "http://localhost:8002", "robot", None, None, None, retain_control=True
+    )
+    returned = await Application.action(service, "controller.close", {"retain_control": True})
+    assert returned == {
+        "robot": "robot",
+        "state": {"sequence": 3},
+        "controller": {"handoff": None},
+    }
+    assert calls == ["replay.cancel", "robot.hold", "robot.renew"]
+    service.tokens.clear()
+    with pytest.raises(RuntimeError, match="no longer acquired"):
+        await Application.action(
+            service, "controller.open", {"id": "robot", "retain_control": True}
+        )
+
+
+@pytest.mark.parametrize("confirm,fail", [(False, False), (True, False), (True, True)])
+def test_native_switch_waits_for_confirmed_release(confirm, fail):
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.selected = "first"
+    window.robot_ids = ["first", "second"]
+    window.switching_robot = window.closing = False
+    window.pending_robot = None
+    window.root = Mock()
+    window.robot_choice = Mock()
+    window.robot_choice.current.return_value = 1
+    window.stop = Mock()
+    window.confirm_robot_switch = Mock(return_value=confirm)
+    window.apply_robot_selection = Mock()
+    window.control = Mock(owned="first", release_failed=None, releasing=False, pending=None)
+    window.select_robot()
+    window.confirm_robot_switch.assert_called_once_with("second")
+    window.apply_robot_selection.assert_not_called()
+    if not confirm:
+        window.control.release.assert_not_called()
+        assert not window.switching_robot
+        return
+    window.control.release.assert_called_once_with()
+    window.control.pending = object()
+    window.finish_robot_switch()
+    window.apply_robot_selection.assert_not_called()
+    window.control.pending = window.control.owned = None
+    window.control.release_failed = "first" if fail else None
+    window.finish_robot_switch()
+    assert not window.switching_robot and window.pending_robot is None
+    if fail:
+        window.apply_robot_selection.assert_not_called()
+    else:
+        window.apply_robot_selection.assert_called_once_with("second")
 
 
 def test_native_null_feedback_and_newer_command_reply():

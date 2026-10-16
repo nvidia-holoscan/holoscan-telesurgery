@@ -45,7 +45,7 @@ export function nativeDepthControls(camera, tile, display = {}) {
 // Present matching color/depth pairs together; late depth must not flash blank
 // or be drawn over a newer color frame. Retain compressed depth across video jitter;
 // decompress only matched pairs and keep at most three pending color snapshots.
-export function depthView(peer, video, stage, caption, camera) {
+export function depthView(peer, video, stage, caption, camera, display = {}) {
     if (!camera.depth) return { stop() {} };
     const channel = peer.createDataChannel("depth", {
         ordered: false,
@@ -79,14 +79,15 @@ export function depthView(peer, video, stage, caption, camera) {
         "Depth range",
         [0.5, 2, 5].map((v) => [v, `0–${v} m`]),
     );
-    range.value = camera.name.includes("405") ? "0.5" : "2";
+    mode.value = display.mode || "color";
+    range.value = display.distance || (camera.name.includes("405") ? "0.5" : "2");
     const opacity = document.createElement("input");
     Object.assign(opacity, {
         type: "range",
         min: "0.1",
         max: "0.8",
         step: "0.05",
-        value: "0.4",
+        value: String(display.opacity ?? 0.4),
     });
     opacity.setAttribute("aria-label", "Depth overlay opacity");
     const reading = element("output", "", "depth-reading");
@@ -346,8 +347,13 @@ export function depthView(peer, video, stage, caption, camera) {
         }
         send();
     }
-    mode.onchange = update;
-    range.onchange = opacity.oninput = paint;
+    const saveDisplay = () => action("view.depth", {
+        camera: camera.id, mode: mode.value, distance: Number(range.value), opacity: Number(opacity.value),
+    }).catch(notice);
+    mode.onchange = () => { update(); saveDisplay(); };
+    range.onchange = () => { paint(); saveDisplay(); };
+    opacity.oninput = paint;
+    opacity.onchange = saveDisplay;
     canvas.onclick = (event) => {
         const box = canvas.getBoundingClientRect();
         point = {

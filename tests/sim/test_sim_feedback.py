@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from telesurgery_robots.simulation.state import SimRobot
+from telesurgery_robots.workspace import Workspace
 from telesurgery_sim.runtime.feedback import JointFeedback
 from telesurgery_sim.runtime.franka import FrankaFeedback, rotation_matrix
 
@@ -88,6 +89,7 @@ def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, 
     feedback.joint_paths = [f"/J{i}" for i in range(7)]
     feedback.finger_paths = []
     feedback.kinematics = None
+    feedback.workspace = Workspace()
     # The USD articulation's order differs from the controller's joint order.
     paths = list(reversed(feedback.joint_paths))
     jacobian = np.arange(42).reshape(6, 7)
@@ -100,6 +102,10 @@ def test_franka_tool_jacobian_uses_joint_identity_and_rotated_base(monkeypatch, 
         num_dofs=7,
         get_jacobian_matrices=lambda: SimpleNamespace(numpy=lambda: tensors),
         get_dof_positions=lambda: SimpleNamespace(numpy=lambda: np.zeros((1, 7))),
+        get_dof_velocities=lambda: SimpleNamespace(numpy=lambda: np.zeros((1, 7))),
+        get_dof_limits=lambda: tuple(
+            SimpleNamespace(numpy=lambda s=sign: np.full((1, 7), s * 3)) for sign in (-1, 1)
+        ),
     )
     # CMR's opposing bases must each retain their own axes. Rotating the tool
     # must not rotate the jog reference with it.

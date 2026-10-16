@@ -7,9 +7,12 @@ import asyncio
 import json
 import math
 import os
+import signal
 import sys
 import tempfile
 from pathlib import Path
+
+from telesurgery_core import configuration
 
 
 class NativeController:
@@ -27,7 +30,16 @@ class NativeController:
             state["status"] = "closed"
         return state
 
-    async def open(self, server, robot=None, certificate=None, preferences=None, input_device=None):
+    async def open(
+        self,
+        server,
+        robot=None,
+        certificate=None,
+        preferences=None,
+        input_device=None,
+        *,
+        retain_control=False,
+    ):
         preferences = preferences or {}
         if (
             not isinstance(preferences, dict)
@@ -70,6 +82,7 @@ class NativeController:
                         "status_path": str(self.path),
                         "generation": self.temporary.name,
                         "input": input_device,
+                        "retain_control": retain_control,
                         "preferences": {**self.finished.get("preferences", {}), **preferences},
                     }
                 )
@@ -85,7 +98,12 @@ class NativeController:
                 environment["PYTHONPATH"] = os.pathsep.join(
                     filter(
                         None,
-                        (str(Path(__file__).resolve().parents[2]), environment.get("PYTHONPATH")),
+                        (
+                            str(Path(__file__).resolve().parents[2]),
+                            # Desktop Python needs the shared calibration configuration too.
+                            str(Path(configuration.__file__).resolve().parents[1]),
+                            environment.get("PYTHONPATH"),
+                        ),
                     )
                 )
                 with (self.directory / "controller.log").open("w") as log:
@@ -101,7 +119,9 @@ class NativeController:
                 async with asyncio.timeout(10):
                     while True:
                         state = self.status()
-                        if state["status"] == "running":
+                        if state["status"] == "running" and (
+                            not retain_control or state.get("acquired") == robot
+                        ):
                             return True
                         if state["status"] in {"error", "closed"}:
                             raise RuntimeError(
@@ -112,9 +132,12 @@ class NativeController:
                 await self._close()
                 raise
 
-    async def _close(self):
+    async def _close(self, retain_control=False):
         if self.process and self.process.returncode is None:
-            self.process.terminate()
+            if retain_control:
+                self.process.send_signal(signal.SIGUSR1)
+            else:
+                self.process.terminate()
             try:
                 await asyncio.wait_for(self.process.wait(), 10)
             except TimeoutError:
@@ -126,6 +149,11 @@ class NativeController:
             self.temporary.cleanup()
         self.temporary = self.path = None
 
-    async def close(self):
+    async def close(self, *, retain_control=False, generation=None):
         async with self.lock:
-            await self._close()
+            if generation is not None:
+                state = self.status()
+                if state.get("generation") != generation or state["status"] != "closed":
+                    return None
+            await self._close(retain_control)
+            return self.finished

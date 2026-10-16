@@ -63,8 +63,13 @@ def virtual_display(tmp_path_factory):
 
 
 @pytest_asyncio.fixture
-async def enrolled_node():
+async def enrolled_node(monkeypatch):
     from telesurgery.nodes.client import NodeClient
+
+    # Admission/integration fixtures use devices.yaml, never cameras attached
+    # to the developer's host (nodes now start discovered streams automatically).
+    monkeypatch.setattr("telesurgery.nodes.local.camera_devices", lambda: [])
+    monkeypatch.setattr("telesurgery.nodes.local.discover_hsb", lambda: {})
 
     tasks = []
 

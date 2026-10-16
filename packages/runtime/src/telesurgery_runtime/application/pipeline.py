@@ -16,17 +16,24 @@ class Calls:
         self.pending = Queue(maxsize=64)
         self.active = None
         self.idle, self.interval, self.next_idle = idle, interval, 0.0
+        self.was_idle = False
 
     def compute(self):
         # One outstanding call prevents latest-frame SDK channels dropping requests.
         if self.active is not None and not self.active.done():
             return None
-        if self.idle is not None and monotonic() >= self.next_idle:
+        if (
+            self.idle is not None
+            and monotonic() >= self.next_idle
+            and (not self.was_idle or self.pending.empty())
+        ):
             self.next_idle = monotonic() + self.interval
             item = (Future(), float("inf"), self.idle, ())
+            self.was_idle = True
         else:
             try:
                 item = self.pending.get_nowait()
+                self.was_idle = False
             except Empty:
                 return None
         self.active = item[0]
@@ -71,9 +78,9 @@ class Complete:
 class Executor:
     """Request -> invocation -> result graph shared by patient and surgeon endpoints."""
 
-    def __init__(self, name, *, idle=None):
+    def __init__(self, name, *, idle=None, interval=0.1):
         self.name = name
-        self.source = Calls(idle)
+        self.source = Calls(idle, interval)
         self.session = None
 
     def start(self):

@@ -138,10 +138,13 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             await page.goto("http://localhost:8777/")
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             await page.clock.run_for(100)
-            await expect(page.get_by_label("MIRA arm speed", exact=True)).to_have_value("20")
+            await expect(page.get_by_label("MIRA arm speed", exact=True)).to_have_value(
+                "20" if simulation else "70"
+            )
             await expect(page.get_by_role("button", name="Home", exact=True)).to_be_enabled()
             speed = page.get_by_label("MIRA grip speed", exact=True)
-            await expect(speed).to_have_value("40")
+            await expect(speed).to_have_value("40" if simulation else "90")
+            default_rate = 0.2 if simulation else 0.9
             for arm in ("left", "right"):
                 for label, sign in (("Open", 1), ("Close", -1)):
                     control = page.get_by_role("button", name=f"{label} {arm} gripper")
@@ -159,8 +162,8 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
                             "mode": "grip",
                             "command": {
                                 "velocity": {
-                                    "left": sign * 0.2 if arm == "left" else 0,
-                                    "right": sign * 0.2 if arm == "right" else 0,
+                                    "left": sign * default_rate if arm == "left" else 0,
+                                    "right": sign * default_rate if arm == "right" else 0,
                                 }
                             },
                         }
@@ -170,18 +173,19 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
                     assert not [c for c in calls[count:] if c["action"] == "robot.move"]
             await speed.focus()
             await speed.evaluate("s => {s.value='20';s.dispatchEvent(new Event('input'))}")
+            slow_rate = 0.1 if simulation else 0.2
             await speed.press("Enter")
             await page.locator(".gripper-controls").focus()
             await page.keyboard.down("x")
             await page.keyboard.down("n")
             await page.clock.run_for(300)
             assert [c for c in calls if c["action"] == "robot.move"][-1]["params"]["command"] == {
-                "velocity": {"left": 0.1, "right": -0.1}
+                "velocity": {"left": slow_rate, "right": -slow_rate}
             }
             await page.keyboard.up("x")
             await page.clock.run_for(100)
             assert [c for c in calls if c["action"] == "robot.move"][-1]["params"]["command"] == {
-                "velocity": {"left": 0, "right": -0.1}
+                "velocity": {"left": 0, "right": -slow_rate}
             }
             await page.keyboard.up("n")
             await page.clock.run_for(100)

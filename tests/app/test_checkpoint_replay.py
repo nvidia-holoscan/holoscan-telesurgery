@@ -324,6 +324,81 @@ def test_cartesian_arrival_waits_for_braking_and_corrects_stop_drift():
     assert playback.index == 0
 
 
+@pytest.mark.parametrize("environment", ["franka", "versius"])
+@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
+def test_tool_checkpoint_waits_for_physics_and_braking_before_correcting(environment, device):
+    now = [0.0]
+    goal = tool_state([0.01, 0, 0])["tool_pose"]
+    playback = CheckpointPlayback(
+        cartesian_robot(environment),
+        {"device": device},
+        "arm",
+        [row(tool_pose=goal), row(grip={"hand": 0})],
+        "run",
+        lambda: now[0],
+    )
+    fresh = {"cartesian_feedback": {"ready": True, "age_ms": 10}}
+    result = playback.read(0, {**tool_state([0, 0, 0]), **fresh})
+    playback.display_input(result)
+    playback.acknowledge({})
+    # A cached endpoint must not advance to the grasp, even with a new RPC sequence.
+    now[0] = 0.1
+    delayed = {
+        **tool_state([0.01, 0, 0]),
+        "sequence": 42,
+        "cartesian_feedback": {"ready": False, "age_ms": 350},
+    }
+    result = playback.read(now[0], delayed)
+    assert result["waiting_reason"] == "Waiting for simulator physics…"
+    assert result["request"] is None and not result["done"]
+    assert playback.index == 0 and playback.display_input(result) is None
+    # A new sample is insufficient while the stale-feedback stop is still braking.
+    now[0] = 0.2
+    braking = {
+        **tool_state([0.012, 0, 0], velocity=1),
+        **fresh,
+        "stopping": True,
+        "stop_reason": "physics feedback stale",
+    }
+    assert playback.read(now[0], braking)["request"] is None
+    # Resume with a newly computed correction after drift, not the earlier positive jog.
+    now[0] = 0.3
+    result = playback.read(now[0], {**tool_state([0.012, 0, 0]), **fresh})
+    assert result["request"][1]["translation"][0] < 0
+    assert playback.index == 0 and playback.physics_wait_since is None
+
+
+@pytest.mark.parametrize("failure", ["stale", "missing", "tracking"])
+def test_tool_physics_wait_is_bounded_and_does_not_hide_controller_faults(failure):
+    now = [0.0]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "keyboard"},
+        "left",
+        [row(tool_pose=tool_state([0.01, 0, 0])["tool_pose"])],
+        "run",
+        lambda: now[0],
+    )
+    measured = {
+        **tool_state([0, 0, 0]),
+        "cartesian_feedback": {"ready": False, "age_ms": None if failure == "missing" else 400},
+    }
+    if failure == "tracking":
+        measured.update(stopping=True, stop_reason="joint tracking error")
+        with pytest.raises(RuntimeError, match="joint tracking error"):
+            playback.read(0, measured)
+        return
+    for tick in range(5):
+        now[0] = tick * 0.2
+        result = playback.read(now[0], measured)
+        assert result["waiting_feedback"] and result["request"] is None
+        assert playback.pending["deadline"] == 8
+    now[0] = 1
+    with pytest.raises(TimeoutError, match="physics feedback did not recover"):
+        playback.read(now[0], measured)
+    assert playback.index == 0
+
+
 def test_stalled_tool_checkpoint_times_out_and_invalid_feedback_is_rejected():
     now = [0.0]
     playback = CheckpointPlayback(
@@ -504,6 +579,45 @@ def test_joint_preparation_uses_advertised_step_bound_and_waits_for_completion(m
         assert result["waiting_feedback"]
 
 
+def test_joint_preparation_overlaps_only_available_bounded_travel():
+    now = [0.0]
+    goal = [0, -40, 10, 100, -20, 20, -20, 110]
+    playback = CheckpointPlayback(
+        cartesian_robot("versius"),
+        {"device": "keyboard"},
+        "left",
+        [row(joint_pose=goal)],
+        "run",
+        lambda: now[0],
+    )
+    measured = [v - 10 for v in goal]
+    feedback = {
+        "joints_deg": {"joints": measured},
+        "targets_deg": {"joints": measured},
+        "joint_goal_deg": {"joints": [v + 5 for v in measured]},
+        "control_active": True,
+    }
+    assert playback.read(0, feedback)["request"] is None
+    now[0] = 0.1
+    feedback["targets_deg"]["joints"] = [v + 1.5 for v in measured]
+    result = playback.read(0.1, feedback)
+    assert result["request"] == ("step", {"joints": [1.5] * 8})
+    assert playback.index == 0  # It is still moving, without waiting for a full stop.
+    playback.acknowledge({})
+    now[0] = 0.2
+    feedback["joint_goal_deg"]["joints"] = goal
+    feedback["targets_deg"]["joints"] = [v - 2 for v in goal]
+    assert playback.read(0.2, feedback)["request"] is None
+    assert not playback.finished  # A queued endpoint is not measured arrival.
+    now[0] = 0.3
+    feedback["joints_deg"]["joints"] = [v - 0.05 for v in goal]
+    assert playback.read(0.3, feedback)["request"] is None
+    assert not playback.finished  # Let the bounded trajectory finish braking.
+    now[0] = 0.4
+    feedback["control_active"] = False
+    assert playback.read(0.4, feedback)["done"]
+
+
 @pytest.mark.parametrize("target", [[0] * 7, [0] * 9, [0, -40, 10, 100, -20, 30, -20, 110]])
 def test_joint_preparation_rejects_incomplete_or_out_of_bounds_targets(target):
     with pytest.raises(ValueError):
@@ -567,7 +681,9 @@ def test_bundled_cmr_actions_do_not_wait_for_other_replay_or_withdraw_left():
             read_rows(path.parent / manifest["streams"][role]["file"]) for role in ("left", "right")
         )
         assert all("barrier" not in row for row in left + right)
-        assert left[-1]["hold_s"] == 0.5
+        assert 0 < left[-1]["hold_s"] <= 0.5
+        assert "tool_pose" in left[0] and "tool_pose" in right[0]
+        assert manifest["requires_presented_needle"] is True
         assert [row["grip"]["hand"] for row in left if "grip" in row][-1] == 0
         assert sum("handoff" in row for row in right) == 1
         take = next(i for i, row in enumerate(right) if "handoff" in row)
@@ -577,20 +693,12 @@ def test_bundled_cmr_actions_do_not_wait_for_other_replay_or_withdraw_left():
 
 
 @pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
-def test_shadow_pickup_offsets_only_task_poses_once_and_keeps_joint_preparation(device):
+def test_transfer_keeps_measured_contact_geometry_and_requires_patient_support(device):
     from telesurgery.controller.replay import Catalog, read_rows
 
     path, manifest = Catalog().recordings[f"versius/{device}"]
     rows = read_rows(path.parent / manifest["streams"]["right"]["file"])
     original = copy.deepcopy(rows)
     playback = CheckpointPlayback(cartesian_robot("versius"), manifest, "right", rows, "run")
-    playback.select_pickup(True)
-    playback.select_pickup(True)
-    prepared = False
-    for row, expected in zip(rows, original, strict=True):
-        prepared |= "joint_pose" in row
-        if prepared and "tool_pose" in expected:
-            expected["tool_pose"]["position_m"][1] -= 0.03
-        assert row == expected
-    with pytest.raises(RuntimeError, match="mode changed"):
-        playback.select_pickup(False)
+    assert playback.requires_presented_needle
+    assert rows == original

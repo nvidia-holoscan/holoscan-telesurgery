@@ -399,6 +399,7 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
                     break
                 await page.wait_for_timeout(50)
             await page.locator("#robot-selector").select_option("Second")
+            await page.get_by_role("button", name="Release control and switch", exact=True).click()
             await expect(page.get_by_label("Second input", exact=True)).to_have_value("0")
             assert actions[-1]["action"] == "robot.release"
             count = len([a for a in actions if a["action"] == "robot.move"])
@@ -427,6 +428,7 @@ async def test_gamepad_controls_only_one_robot_at_a_time():
             assert actions[-1]["action"] == "robot.hold"
             await page.get_by_label("Second input", exact=True).select_option("keyboard")
             await page.locator("#robot-selector").select_option("First")
+            await page.get_by_role("button", name="Release control and switch", exact=True).click()
             await expect(page.get_by_label("First input", exact=True)).to_have_value("keyboard")
         finally:
             await browser.close()
