@@ -33,6 +33,8 @@ def handoff():
         }
 
     async def call(key, method, params):
+        if key not in {"node:left", "node:right"}:
+            raise RuntimeError("Robot is unavailable")
         role = key.split(":")[-1]
         calls.append((role, method))
         if method == "handoff.acquire":
@@ -81,7 +83,7 @@ async def test_completed_left_waits_without_replay_heartbeat_then_releases_after
         "other_task",
     ],
 )
-async def test_right_start_requires_a_completed_owned_left_presentation(handoff, condition):
+async def test_right_start_rejects_invalid_donor_presentation(handoff, condition):
     helper, contexts, states, calls, now = handoff
     if condition == "empty_left":
         states["left"]["grippers"]["hand"] = 0
@@ -100,7 +102,10 @@ async def test_right_start_requires_a_completed_owned_left_presentation(handoff,
         contexts["right"]["key"] = "another-node:right"
     elif condition == "other_task":
         contexts["right"]["group"] = "different-task"
-    with pytest.raises(RuntimeError, match="Left arm must hold the needle"):
+    reason = (
+        "Robot is unavailable" if condition == "other_node" else "Left arm must hold the needle"
+    )
+    with pytest.raises(RuntimeError, match=reason):
         await helper.prepare(contexts["right"])
     assert not any(method == "robot.replay_release" for _, method in calls)
 

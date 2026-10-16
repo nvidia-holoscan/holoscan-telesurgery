@@ -130,7 +130,11 @@ async def test_haply_physical_and_new_adapters_share_ui_and_require_acquisition(
             ) as sent:
                 result.update(request=motion, paused=False)
             command = (await sent.value).post_data_json["params"]
-            assert command["mode"] == motion[0] and command["command"] == motion[1]
+            expected = {
+                **motion[1],
+                **({"rotation_speed_deg_s": 15} if kind != "mira" else {}),
+            }
+            assert command["mode"] == motion[0] and command["command"] == expected
             assert next(a for a in actions if a["action"] == "haply.read")["params"]["speeds"][
                 "arm"
             ] == robot["controls"].get("default_arm_speed_percent", 20)

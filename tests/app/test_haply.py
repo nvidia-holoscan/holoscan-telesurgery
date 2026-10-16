@@ -147,7 +147,7 @@ def test_motion_waits_for_start_button_and_follows_latest_target(robot):
     assert values["right"] == [0] * 5
     assert values["left"][0] > 0 and values["left"][1] < 0 and values["left"][2] > 0
     assert math.hypot(*values["left"][:3]) == pytest.approx(0.1)
-    assert values["left"][4] == 0.5
+    assert values["left"][4] == 1.0  # 50% of the configured 2-degree roll step.
     # A stationary but live pen retains its desired position while the robot catches up.
     assert driver.tick()[0] == "cartesian"
     driver.state["cartesian_mm_deg"]["left"][:3] = [101.4, 200 - 350 * 0.001 / 0.3, 302.1]
@@ -346,7 +346,7 @@ def test_stale_tracking_stops_pending_target_and_handles_wrapped_angles(robot):
     driver = Driver(robot)
     driver.tick(angles=(0, 179))
     driver.resume()
-    assert driver.tick(angles=(0, -179))[1]["left"][4] == 0.5
+    assert driver.tick(angles=(0, -179))[1]["left"][4] == 1.0
     assert driver.mapper.update(driver.sample, driver.state, driver.inputs, driver.now + 0.3) == (
         "release",
         {},

@@ -226,6 +226,12 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
     original = copy.deepcopy(measured)
     observed = []
     homed = True
+    # Workspace IK probing has its own tests; this fake vendor implements only
+    # the pose, home and tool commands under test.
+    monkeypatch.setattr(
+        "telesurgery_robots.mira.adapter.vendor_bounds",
+        lambda *args: {"min": [-0.1] * 3, "max": [0.1] * 3},
+    )
 
     def handle(socket):
         for text in socket:
@@ -233,6 +239,16 @@ def test_physical_mira_home_grippers_and_stop_use_vendor_commands(monkeypatch):
             observed.append(request)
             if request["method"] == "get_mira_pose":
                 socket.send(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": measured}))
+            elif request["method"] == "get_mira_fkine_cartesian":
+                socket.send(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "result": {arm: [0.0] * 4 for arm in measured},
+                        }
+                    )
+                )
             elif request["method"] in {"set_left_gripper", "set_right_gripper"}:
                 if not homed:
                     socket.send(
