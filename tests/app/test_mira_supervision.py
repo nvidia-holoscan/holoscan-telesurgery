@@ -41,6 +41,41 @@ async def test_old_node_session_cannot_be_adopted_or_stopped(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_stop_ends_lease_but_retains_owned_cleanup_for_retry(tmp_path):
+    controller = MiraController({"id": "mira", "controller": {}}, tmp_path)
+    info = {
+        "Id": "owned-container",
+        "State": {"Running": True},
+        "Config": {
+            "Labels": {
+                controller.label: controller.identity,
+                controller.label + ".session": controller.session,
+            }
+        },
+    }
+    controller.lease_path.parent.mkdir(parents=True)
+    controller.lease_task = asyncio.create_task(controller._heartbeat())
+    await asyncio.sleep(0)
+    controller.owned = True
+    controller._docker = AsyncMock(side_effect=[json.dumps([info]), RuntimeError("Docker busy")])
+    with pytest.raises(RuntimeError, match="Docker busy"):
+        await controller.stop()
+    assert controller.owned and controller.stop_pending
+    assert controller.lease_task is None
+    assert not controller.lease_path.exists()
+    controller._docker = AsyncMock(return_value=json.dumps([info]))
+    assert (await controller.status())["status"] == "error"
+    controller._docker = AsyncMock(side_effect=[json.dumps([info]), RuntimeError("Docker busy")])
+    with pytest.raises(RuntimeError, match="Docker busy"):
+        await controller.start()  # Never reuse the process before failed cleanup is retried.
+    controller._docker.assert_awaited_with("stop", "--time", "5", "owned-container")
+    controller._docker = AsyncMock(side_effect=[json.dumps([info]), ""])
+    await controller.stop()
+    controller._docker.assert_awaited_with("stop", "--time", "5", "owned-container")
+    assert not controller.owned and not controller.stop_pending
+
+
+@pytest.mark.asyncio
 async def test_supervisor_terminates_vendor_fixture_when_node_lease_expires(tmp_path):
     lease = tmp_path / "lease"
     child_pid = tmp_path / "child.pid"

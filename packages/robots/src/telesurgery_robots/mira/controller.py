@@ -33,6 +33,7 @@ class MiraController:
         self.name = f"telesurgery-mira-{self.identity}"
         self.session = secrets.token_hex(16)
         self.owned = False
+        self.stop_pending = False
         self.lease_task = None
         self.lease_path = self.directory / f"controller-{self.identity}" / f"lease-{self.session}"
 
@@ -83,6 +84,11 @@ class MiraController:
             state = info["State"] if info else {}
             running = state.get("Running", False)
             error = state.get("Error", "")
+            if self.stop_pending:
+                return {
+                    "status": "error",
+                    "error": "MIRA API stop is unconfirmed; retry cleanup before startup.",
+                }
             if running and not self._ours(info):
                 return {
                     "status": "error",
@@ -156,6 +162,8 @@ class MiraController:
         ]
 
     async def start(self):
+        if self.stop_pending:
+            await self.stop()
         info = await self._inspect()
         if info and info["State"].get("Running"):
             if not self._ours(info) or not self.owned:
@@ -203,13 +211,17 @@ class MiraController:
     async def stop(self):
         try:
             if self.owned:
+                self.stop_pending = True
                 info = await self._inspect()
                 if info and info["State"].get("Running"):
                     if not self._ours(info):
                         raise RuntimeError("Controller belongs to another node session")
                     await self._docker("stop", "--time", "5", info["Id"])
-        finally:
             self.owned = False
+            self.stop_pending = False
+        finally:
+            # A failed Docker operation must still end the supervisor lease.
+            # Keep ownership until cleanup succeeds so the next call can retry.
             if self.lease_task:
                 self.lease_task.cancel()
                 await asyncio.gather(self.lease_task, return_exceptions=True)

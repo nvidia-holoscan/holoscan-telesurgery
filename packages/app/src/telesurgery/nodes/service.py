@@ -278,10 +278,11 @@ class NodeService:
     async def stop_controllers(self, keys):
         errors = []
         for key in keys:
-            controller = self.controllers.pop(key)
-            self.controller_errors.pop(key, None)
+            controller = self.controllers[key]
             try:
                 await controller.stop()
+                self.controllers.pop(key, None)
+                self.controller_errors.pop(key, None)
             except Exception as exc:
                 errors.append(str(exc) or type(exc).__name__)
         if errors:

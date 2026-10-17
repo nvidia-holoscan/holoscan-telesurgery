@@ -304,5 +304,10 @@ async def test_close_stops_cached_controllers_after_inventory_disappears(node):
         await service.close()
     first.stop.assert_awaited_once()
     second.stop.assert_awaited_once()
+    assert service.controllers == {"first": first}
+    first.stop.side_effect = None
+    await service.close()
+    assert first.stop.await_count == 2
+    second.stop.assert_awaited_once()
     assert not service.controllers
     service.controller.assert_not_called()
