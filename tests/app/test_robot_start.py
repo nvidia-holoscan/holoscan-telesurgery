@@ -125,7 +125,13 @@ async def test_controller_observation_never_starts_or_restarts_vendor(
             return json.dumps([container]) if container else None
         if args[0] == "run":
             container = {
-                "Config": {"Labels": {controller.label: controller.identity}},
+                "Id": "owned-id",
+                "Config": {
+                    "Labels": {
+                        controller.label: controller.identity,
+                        controller.label + ".session": controller.session,
+                    }
+                },
                 "State": {"Running": True},
             }
         return ""
@@ -138,7 +144,8 @@ async def test_controller_observation_never_starts_or_restarts_vendor(
     runs = [c for c in calls if c[0] == "run"]
     assert len(runs) == 1
     command = runs[0]
-    assert command[-1] == image
+    assert image in command
+    assert "telesurgery_robots.mira.supervisor" in command
     assert ("image", "inspect", image) in calls
     assert "127.0.0.1:8081:8081" in command
     assert "192.168.0.1:10000:10000/udp" in command
@@ -150,6 +157,8 @@ async def test_controller_observation_never_starts_or_restarts_vendor(
     with pytest.raises(RuntimeError, match="another installation"):
         await controller.start()
     assert len([c for c in calls if c[0] == "run"]) == 1
+    container["Config"]["Labels"][controller.label] = controller.identity
+    await controller.stop()
 
 
 def test_managed_controller_rejects_public_api_binding(tmp_path):
@@ -172,18 +181,26 @@ async def test_controller_stop_verifies_ownership_and_uses_container_id(tmp_path
     controller = MiraController({"id": "mira", "controller": {}}, tmp_path)
     info = {
         "Id": "owned-container-id",
-        "Config": {"Labels": {controller.label: controller.identity}},
+        "Config": {
+            "Labels": {
+                controller.label: controller.identity,
+                controller.label + ".session": controller.session,
+            }
+        },
         "State": {"Running": True},
     }
     controller._docker = AsyncMock(side_effect=[json.dumps([info]), ""])
+    controller.owned = True
     await controller.stop()
     controller._docker.assert_awaited_with("stop", "--time", "5", "owned-container-id")
     info["Config"]["Labels"][controller.label] = "another-installation"
     controller._docker = AsyncMock(return_value=json.dumps([info]))
+    controller.owned = True
     with pytest.raises(RuntimeError, match="another installation"):
         await controller.stop()
     controller._docker.assert_awaited_once_with("inspect", controller.name)
     controller._docker = AsyncMock(return_value=None)
+    controller.owned = True
     await controller.stop()
     controller._docker.assert_awaited_once_with("inspect", controller.name)
 

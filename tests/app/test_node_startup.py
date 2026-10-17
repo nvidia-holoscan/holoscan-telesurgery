@@ -136,8 +136,17 @@ async def test_explicit_startup_opt_out_still_allows_manual_start(node):
 
     service.local.refresh = opted_out
     controller = SimpleNamespace(
-        start=AsyncMock(), stop=AsyncMock(), status=AsyncMock(return_value={"status": "stopped"})
+        owned=False,
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        status=AsyncMock(return_value={"status": "stopped"}),
     )
+
+    async def started():
+        controller.owned = True
+        controller.status.return_value = {"status": "running"}
+
+    controller.start.side_effect = started
     service.controller = lambda key: controller
     await service.start()
     service.local.start_camera.assert_not_called()
@@ -157,11 +166,23 @@ async def test_managed_controller_starts_after_admission_and_failures_require_ma
 ):
     service, _ = node
     controller = SimpleNamespace(
+        owned=False,
         start=AsyncMock(side_effect=RuntimeError("Missing controller image") if failure else None),
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped", "error": ""}),
     )
     service.controller = lambda key: controller
+    connections = []
+    service.robots.sync.side_effect = lambda: connections.append(
+        service.local.robots["arm"].get("connection_enabled", False)
+    )
+
+    async def started():
+        controller.owned = True
+        controller.status.return_value = {"status": "running", "error": ""}
+
+    if not failure:
+        controller.start.side_effect = started
     await service.call("inventory")
     controller.start.assert_not_called()
     await service.start()
@@ -169,11 +190,13 @@ async def test_managed_controller_starts_after_admission_and_failures_require_ma
     inventory = await service.call("inventory")
     controller.start.assert_awaited_once()
     if failure:
+        assert not any(connections)  # Never attach to a pre-existing vendor API.
         assert inventory["robots"][0]["controller"]["error"] == "Missing controller image"
-        controller.start.side_effect = None
+        controller.start.side_effect = started
         await service.call("robot.start", {"id": "arm"})
         assert controller.start.await_count == 2
         assert not service.controller_errors
+    assert service.local.robots["arm"]["connection_enabled"]
     await service.close()
 
 
@@ -187,6 +210,7 @@ async def test_cancel_during_controller_creation_finishes_before_shutdown(node):
         await finish.wait()
 
     controller = SimpleNamespace(
+        owned=False,
         start=AsyncMock(side_effect=start),
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped"}),

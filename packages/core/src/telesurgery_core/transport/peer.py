@@ -6,6 +6,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 import struct
 import time
@@ -14,6 +15,7 @@ from itertools import count
 
 from telesurgery_core.diagnostics.clock import Clock, PeerClock
 from telesurgery_core.diagnostics.trace import mark, wire
+from telesurgery_core.transport.json import loads
 
 MAX_HEADER = 64 * 1024
 MAX_PAYLOAD = 64 * 1024 * 1024
@@ -127,9 +129,33 @@ class Peer:
                         trace = mark(params.get("trace"), self.video_stage, stamp["mono_ns"])
                         params.update(timing=stamp, trace=wire(trace))
                         header = {**header, "params": params}
-                    raw = json.dumps(header, allow_nan=False, separators=(",", ":")).encode()
-                    if len(raw) > MAX_HEADER or len(payload) > MAX_PAYLOAD:
-                        raise ValueError("Application message exceeds size limit")
+                    try:
+                        raw = json.dumps(header, allow_nan=False, separators=(",", ":")).encode()
+                        if len(raw) > MAX_HEADER or len(payload) > MAX_PAYLOAD:
+                            raise ValueError("Application message exceeds size limit")
+                    except (TypeError, ValueError, RecursionError) as exc:
+                        # Invalid local data must not tear down unrelated video,
+                        # control leases, or requests on this connection.
+                        error = ValueError(f"Invalid application message: {exc}")
+                        if header["type"] == "request":
+                            future = self.pending.get(header["id"])
+                            if future is not None and not future.done():
+                                future.set_exception(error)
+                        elif (
+                            header["type"] == "response"
+                            and isinstance(header.get("id"), str)
+                            and len(header["id"]) <= 128
+                        ):
+                            self._queue(
+                                {
+                                    "type": "response",
+                                    "id": header["id"],
+                                    "error": "Invalid response data",
+                                }
+                            )
+                        else:
+                            logging.getLogger(__name__).warning("%s", error)
+                        continue
                     self.writer.write(PREFIX.pack(len(raw), len(payload)))
                     self.writer.write(raw)
                     self.writer.write(payload)
@@ -152,7 +178,7 @@ class Peer:
                     hsize, psize = PREFIX.unpack(await self.reader.readexactly(PREFIX.size))
                     if not 0 < hsize <= MAX_HEADER or psize > self.max_payload:
                         raise ValueError("Invalid application message size")
-                    header = json.loads(await self.reader.readexactly(hsize))
+                    header = loads(await self.reader.readexactly(hsize))
                     payload = await self.reader.readexactly(psize)
                 if not isinstance(header, dict):
                     raise ValueError("Expected a message object")

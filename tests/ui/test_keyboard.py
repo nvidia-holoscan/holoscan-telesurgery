@@ -73,6 +73,8 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             await page.get_by_label("Robot input", exact=True).select_option("keyboard")
             await expect(page.locator(".keyboard-controls")).to_be_visible()
+            await expect(page.locator('.key-cap[data-key="q"]')).to_be_enabled()
+            await page.locator(".keyboard-controls").focus()
             await expect(page.locator(".robot-state")).to_be_hidden()
             if kind.startswith("franka"):
                 await expect(page.locator(".keyboard-columns")).to_contain_text("Measured (°)")

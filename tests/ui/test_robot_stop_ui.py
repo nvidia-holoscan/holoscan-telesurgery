@@ -73,8 +73,10 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
             acquire = page.get_by_role("button", name="Acquire control", exact=True)
             await acquire.click()
             key = page.locator('.key-cap[data-key="g"]')
+            await expect(page.locator(".keyboard-controls")).to_be_visible()
             await expect(key).to_be_enabled()
             await page.locator(".keyboard-controls").focus()
+            await expect(page.locator(".keyboard-controls")).to_be_focused()
             await page.keyboard.down("g")
             async with asyncio.timeout(3):
                 while "robot.move" not in calls:
@@ -231,8 +233,8 @@ async def test_stop_acknowledgement_blocks_repress_with_stale_inventory():
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             key = page.locator('.key-cap[data-key="g"]')
             await expect(key).to_be_enabled()
-            position = await key.bounding_box()
             await page.locator(".keyboard-controls").focus()
+            position = await key.bounding_box()
             await page.keyboard.down("g")
             async with asyncio.timeout(3):
                 while len(moves) < 3:
@@ -348,12 +350,12 @@ async def test_stop_completion_refreshes_controls_without_replaying_held_input()
                 await page.keyboard.up("w")
                 await page.clock.run_for(20)
             await page.clock.run_for(50)
-            await expect(status).to_have_text("Active · Operator")
+            await expect(status).to_contain_text("Stopping")
             await expect(key).to_be_disabled()
             await page.keyboard.down("w")
             await page.clock.run_for(100)
             await expect(key).to_be_disabled()
-            await expect(status).to_have_text("Active · Operator")
+            await expect(status).to_contain_text("Stopping")
             await page.evaluate(
                 "robot.state={sequence:4,stopping:false,grippers:{hand:0.5}};"
                 "robot.owner=robot.owner_id=null"

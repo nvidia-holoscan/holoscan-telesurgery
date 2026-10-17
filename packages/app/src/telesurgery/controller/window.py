@@ -1579,7 +1579,7 @@ def run(config):
         root = tk.Tk()
         window = Window(
             root,
-            Client(config["server"], config.get("certificate")),
+            Client(config["server"], config.get("certificate"), config.get("token")),
             config.get("robot"),
             config.get("preferences"),
             report,

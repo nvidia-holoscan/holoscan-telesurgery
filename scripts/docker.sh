@@ -131,6 +131,18 @@ fi
 if docker info --format '{{range $name, $_ := .Runtimes}}{{println $name}}{{end}}' | grep -qx nvidia; then
     args+=(--runtime=nvidia)
 fi
+# Docker's legacy --gpus hook can inject the driver libraries without either
+# discovery manifest (observed on Spark). Vulkan also needs GLVND to find the
+# matching NVIDIA EGL driver; mounting only the Vulkan manifest is insufficient.
+for manifest in /usr/share/vulkan/icd.d/nvidia_icd.json /etc/vulkan/icd.d/nvidia_icd.json; do
+    if [[ -f "$manifest" ]]; then
+        args+=(--volume "$manifest:/etc/vulkan/icd.d/nvidia_icd.json:ro")
+        break
+    fi
+done
+if [[ -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]]; then
+    args+=(--volume /usr/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro)
+fi
 # run.sh tees stdout to a log, so preserve its original terminal detection.
 if [[ -t 0 && ( -t 1 || "${TELESURGERY_TTY:-}" == 1 ) ]]; then args+=(-it); fi
 if [[ "${1:-}" == node ]] && ! $simulation; then

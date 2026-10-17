@@ -167,6 +167,11 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             # completion. Escape stops it while retaining ownership.
             await page.clock.run_for(2000)  # Let the Stop indicator finish before Home.
             await page.get_by_role("button", name="Home", exact=True).click()
+            await expect(page.get_by_role("dialog")).to_be_visible()
+            await page.get_by_role("button", name="Cancel", exact=True).click()
+            assert len(moves()) == count
+            await page.get_by_role("button", name="Home", exact=True).click()
+            await page.get_by_role("button", name="Move Home", exact=True).click()
             await expect(page.get_by_role("button", name="Going home…")).to_be_disabled()
             await page.clock.run_for(50)
             assert moves()[-1]["params"] == {

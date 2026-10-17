@@ -29,6 +29,7 @@ from telesurgery.nodes.registry import NodeRegistry
 from telesurgery.server.media import Media
 from telesurgery.server.streams import DirectStreams
 from telesurgery.server.viewers import NativeViews
+from telesurgery_core.configuration import load, save
 from telesurgery_core.control.access import Access, Ownership
 from telesurgery_core.diagnostics.benchmark import Samples
 from telesurgery_core.diagnostics.clock import Clock
@@ -41,9 +42,10 @@ LOG = logging.getLogger(__name__)
 
 
 class Application:
-    def __init__(self, role, directory, endpoint_port=7447):
+    def __init__(self, role, directory, endpoint_port=7447, *, endpoint_host="0.0.0.0"):  # nosec B104
         self.role, self.directory = role, Path(directory)
         self.endpoint_port = endpoint_port
+        self.endpoint_host = endpoint_host
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.engine = Executor(role)
         self.media = Media(self._media_changed)
@@ -56,6 +58,7 @@ class Application:
         self.replays = {}
         self.controller_server = None
         self.controller_certificate = None
+        self.controller_token = None
         self.peers, self.peer_nodes, self.nodes, self.owners = {}, {}, {}, {}
         self.replay_handoff = ReplayHandoff(self.owners, self._handoff_call)
         self.tokens, self.sequences, self.selected = {}, {}, set()
@@ -66,6 +69,11 @@ class Application:
         self.remote_status = {"status": "disconnected"}
         self.robot_state, self.faults = {}, {}
         self.address = ""
+        self.join_request = load(self.directory / "last-patient.yaml") if role == "surgeon" else {}
+        self.reconnect_enabled = False
+        self.reconnect_task = None
+        self.connection_notice = ""
+        self.subscribed = None
         self.timings = {}
         self.robot_timings = {}
         self.clock = Clock()
@@ -79,7 +87,11 @@ class Application:
         return task
 
     async def run(self, function, *args, timeout=2):
-        return await asyncio.wrap_future(self.engine.submit(function, *args, timeout=timeout))
+        # Cancellation prevents a queued call from executing later. A running
+        # call retains the executor's single-flight slot until it really ends.
+        return await asyncio.wait_for(
+            asyncio.wrap_future(self.engine.submit(function, *args, timeout=timeout)), timeout
+        )
 
     async def start(self):
         self.task(self.clock.watch())
@@ -87,7 +99,7 @@ class Application:
         if self.role == "patient":
             self.server = await asyncio.start_server(
                 self._accept,
-                "0.0.0.0",  # TLS and patient-approved peers. # nosec B104
+                self.endpoint_host,
                 self.endpoint_port,
                 ssl=server_context(self.directory),
                 ssl_handshake_timeout=10,
@@ -169,8 +181,10 @@ class Application:
         if method == "node.register":
             node = self.node_registry.configs.get(params.get("id"))
             token = params.get("token")
+            pending = self.node_registry.pending.get(params.get("id"))
             if (
                 not node
+                or (pending and pending["status"] != "approved")
                 or not node.get("token")
                 or not isinstance(token, str)
                 or not secrets.compare_digest(node.get("token", ""), token)
@@ -221,7 +235,10 @@ class Application:
             own = await self.run(self.access.status, peer.id)
             if own["status"] != "approved":
                 return own
-            return {**own, **self.inventory(), "server_time": time.time()}
+            inventory = self.inventory()
+            if not own.get("robot"):
+                inventory = {**inventory, "robots": [], "nodes": []}
+            return {**own, **inventory, "server_time": time.time()}
         await self.run(self.access.require, peer.id)
         if method == "viewer.ticket":
             camera = params["camera"]
@@ -399,17 +416,17 @@ class Application:
         if self.role != "surgeon":
             return
         available = {camera["id"] for camera in self.remote_status.get("cameras", [])}
-        removed = self.selected - available
-        if removed:
-            self.selected.difference_update(removed)
-            await self.remote.call("subscribe", {"cameras": sorted(self.selected)})
-            for camera in removed:
+        selected = self.selected & available
+        if self.subscribed != selected:
+            await self.remote.call("subscribe", {"cameras": sorted(selected)})
+            for camera in (self.subscribed or set()) - selected:
                 await self.native.close(camera)
+            self.subscribed = selected
         native = self.native.status()
         await self.streams.select(
             {
                 camera
-                for camera in self.selected
+                for camera in selected
                 if camera not in self.native.opening
                 and native.get(camera, {}).get("status") not in {"starting", "running"}
             }
@@ -757,7 +774,11 @@ class Application:
                 continue
             await self._stop_reserved(key)
 
-    async def connect(self, address, name, robot):
+    async def connect(self, address, name, robot, *, reconnecting=False):
+        if not reconnecting:
+            await self._cancel_reconnect()
+            self.join_request = {"address": address, "name": name, "robot": robot}
+            save(self.directory / "last-patient.yaml", self.join_request)
         if self.remote and self.remote_status.get("status") == "revoked":
             await self.remote.close()
         if self.remote and not self.remote.closed.is_set():
@@ -784,14 +805,30 @@ class Application:
 
         async def event(peer, event_name, params, payload):
             if event_name == "revoked":
+                self.reconnect_enabled = False
+                self.connection_notice = (
+                    "The patient ended your access. Request approval again to rejoin."
+                )
                 self.remote_status = {"status": "revoked"}
                 self.tokens.clear()
                 await self.streams.close()
                 await self.media.clear()
                 await self.native.close()
                 await self.controller.close()
+            elif event_name == "control.released":
+                key = params.get("id")
+                self.tokens.pop(key, None)
+                self.replays.pop(key, None)
+                self.connection_notice = (
+                    "The patient released your robot control. Acquire again before moving."
+                )
 
-        self.selected.clear()
+        if not reconnecting:
+            saved = load(self.directory / "selected-views.yaml")
+            self.selected = (
+                set(saved.get("cameras", [])) if saved.get("patient") == address else set()
+            )
+        self.subscribed = None
         self.tokens.clear()
         self.sequences.clear()
         self.replays.clear()
@@ -808,10 +845,38 @@ class Application:
             self.sequences.update(self.remote_status.pop("control_sequences", {}))
             for key in self.tokens:
                 self.sequences.setdefault(key, 0)
+            self.reconnect_enabled = self.remote_status.get("status") != "revoked"
+            self.connection_notice = (
+                "Patient connection restored. Selected views will return when available; "
+                "use fresh input to move."
+                if reconnecting
+                else ""
+            )
         except BaseException:
             await self.remote.close()
             raise
         return self.remote_status
+
+    async def _cancel_reconnect(self):
+        self.reconnect_enabled = False
+        task, self.reconnect_task = self.reconnect_task, None
+        if task and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _reconnect(self):
+        while self.reconnect_enabled:
+            await asyncio.sleep(2)
+            try:
+                await self.connect(**self.join_request, reconnecting=True)
+                return
+            except PermissionError as exc:
+                self.reconnect_enabled = False
+                self.remote_status = {"status": "disconnected"}
+                self.connection_notice = f"Reconnect stopped: {exc}"
+                return
+            except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+                self.connection_notice = f"Patient connection lost. Reconnecting… {exc}"
 
     def _identity(self):
         from telesurgery_core.configuration import load, save
@@ -874,6 +939,8 @@ class Application:
             "role": self.role,
             "sdk": require_sdk().__version__,
             "patient": self.address,
+            "last_patient": self.join_request,
+            "connection_notice": self.connection_notice,
             "controlled_robots": list(self.tokens),
             "session": {
                 **self.remote_status,
@@ -984,6 +1051,7 @@ class Application:
                 self.controller_certificate,
                 params.get("preferences"),
                 params.get("input"),
+                **({"token": self.controller_token} if self.controller_token else {}),
                 **({"retain_control": True} if retain else {}),
             )
         if method == "view.depth":
@@ -1039,17 +1107,23 @@ class Application:
             await self.native.reset_metrics()
             return True
         if self.role == "surgeon":
+            if method == "connection.dismiss":
+                self.connection_notice = ""
+                return True
             if method == "connect":
                 return await self.connect(
                     params["address"], params["name"], params.get("robot", False)
                 )
             if method == "disconnect":
+                await self._cancel_reconnect()
                 for key in list(self.tokens):
                     with contextlib.suppress(Exception):
                         await self.action("robot.release", {"id": key})
                 if self.remote:
                     await self.remote.close()
+                self.remote = None
                 self.remote_status = {"status": "disconnected"}
+                self.connection_notice = "You left the patient room."
                 self.selected.clear()
                 self.tokens.clear()
                 await self.streams.close()
@@ -1063,10 +1137,16 @@ class Application:
                 selected = set(params["cameras"])
                 if method == "view.hide":
                     selected = self.selected - selected
-                await self.remote.call("subscribe", {"cameras": sorted(selected)})
+                available = {camera["id"] for camera in self.remote_status.get("cameras", [])}
+                if len(selected) > 32 or not selected <= available | self.selected:
+                    raise ValueError("Unknown camera selection")
                 for camera in self.selected - selected:
                     await self.native.close(camera)
                 self.selected = selected
+                save(
+                    self.directory / "selected-views.yaml",
+                    {"patient": self.address, "cameras": sorted(selected)},
+                )
                 await self._sync_streams()
                 return True
             if method in {
@@ -1246,7 +1326,10 @@ class Application:
         if method == "robot.revoke":
             async with self.control_lock:
                 if params["id"] in self.owners:
+                    owner = self.owners[params["id"]].owner
                     await self._release(params["id"])
+                    if owner in self.peers:
+                        self.peers[owner]["peer"].event("control.released", {"id": params["id"]})
             return True
         if method in {"robot.connect", "robot.disconnect"}:
             async with self.control_lock:
@@ -1282,7 +1365,11 @@ class Application:
                 return next(c["camera_zoom"] for c in result["cameras"] if c["id"] == device)
             return True
         if method in {"node.approve", "node.reject"}:
-            return await self.node_registry.decide(params["id"], method == "node.approve")
+            return await self.node_registry.decide(
+                params["id"],
+                method == "node.approve",
+                confirm_physical=params.get("confirm_physical") is True,
+            )
         if method == "node.remove":
             return await self.node_registry.remove(params["id"])
         raise ValueError("Unsupported patient action")
@@ -1489,6 +1576,11 @@ class Application:
                         await self.native.close()
                         await self.controller.close()
                     self.remote_status = state
+                    if state.get("status") == "revoked":
+                        self.reconnect_enabled = False
+                        self.connection_notice = (
+                            "The patient ended your access. Request approval again to rejoin."
+                        )
                     if state.get("status") == "approved":
                         owned = {
                             robot["id"]
@@ -1500,19 +1592,35 @@ class Application:
                                 self.tokens.pop(key, None)
                         await self._sync_streams()
                 elif self.role == "surgeon" and self.remote and self.remote.closed.is_set():
-                    if self.remote_status.get("status") != "disconnected":
-                        self.remote_status = {"status": "disconnected"}
+                    if self.remote_status.get("status") not in {
+                        "disconnected",
+                        "reconnecting",
+                        "revoked",
+                    }:
+                        self.remote_status = {
+                            "status": "reconnecting" if self.reconnect_enabled else "disconnected"
+                        }
+                        self.connection_notice = (
+                            "Patient connection lost. Reconnecting…"
+                            if self.reconnect_enabled
+                            else "Patient connection lost."
+                        )
                         self.tokens.clear()
                         await self.streams.close()
                         await self.media.clear()
                         await self.native.close()
                         await self.controller.close()
+                    if self.reconnect_enabled and (
+                        self.reconnect_task is None or self.reconnect_task.done()
+                    ):
+                        self.reconnect_task = self.task(self._reconnect())
             except Exception as exc:
                 LOG.warning("Session update: %s", exc)
             tick += 1
             await asyncio.sleep(0.1)
 
     async def close(self):
+        await self._cancel_reconnect()
         await asyncio.to_thread(self.haply.close)
         await self.native.close()
         await self.controller.close()

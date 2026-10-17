@@ -59,6 +59,36 @@ export function dismissOnBackdrop(dialog) {
         pressedOutside = false;
     });
 }
+let confirmation;
+export function confirmAction(title, detail, label = "Continue") {
+    if (confirmation) return Promise.resolve(false);
+    const previous = document.activeElement;
+    const dialog = element("dialog", undefined, "confirm-action");
+    confirmation = dialog;
+    const heading = element("h2", title);
+    heading.id = "confirm-action-title";
+    dialog.setAttribute("aria-labelledby", heading.id);
+    const description = element("p", detail);
+    description.id = "confirm-action-detail";
+    dialog.setAttribute("aria-describedby", description.id);
+    const cancel = button("Cancel", () => dialog.close("cancel"));
+    const accept = button(label, () => dialog.close("confirm"), "danger");
+    const actions = element("div", undefined, "actions");
+    actions.append(cancel, accept);
+    dialog.append(heading, description, actions);
+    document.body.append(dialog);
+    return new Promise(resolve => {
+        dialog.addEventListener("close", () => {
+            confirmation = null;
+            const accepted = dialog.returnValue === "confirm";
+            dialog.remove();
+            previous?.focus();
+            resolve(accepted);
+        }, {once: true});
+        dialog.showModal();
+        cancel.focus();
+    });
+}
 export function notice(error) {
     $("#notice").textContent = error.message || String(error);
     $("#notice").hidden = false;
@@ -78,6 +108,10 @@ export async function api(path, body) {
                   body: JSON.stringify(body),
               },
     );
+    if (response.status === 401) {
+        location.reload();
+        throw new Error("Dashboard access code required");
+    }
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.statusText);
     return data;

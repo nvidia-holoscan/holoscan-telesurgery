@@ -35,6 +35,22 @@ class NodeRegistry:
             raise ValueError("Node name must be between 1 and 80 characters")
         if params.get("environment") not in {None, "mira", "franka", "versius"}:
             raise ValueError("Unknown node environment")
+        devices = params.get("devices", [])
+        if (
+            not isinstance(devices, list)
+            or len(devices) > 32
+            or any(
+                not isinstance(device, dict)
+                or set(device) != {"name", "kind", "powers_motors"}
+                or any(
+                    not isinstance(device.get(field), str) or not 1 <= len(device[field]) <= 80
+                    for field in ("name", "kind")
+                )
+                or type(device.get("powers_motors")) is not bool
+                for device in devices
+            )
+        ):
+            raise ValueError("Invalid node device summary")
         key = next(
             (
                 key
@@ -49,12 +65,15 @@ class NodeRegistry:
         if known:
             if not secrets.compare_digest(known.get("token", ""), token):
                 raise PermissionError("Node identity does not match its approval")
-            return {"id": key, "status": "approved"}
+            if known.get("devices", []) == devices:
+                return {"id": key, "status": "approved"}
         if any(item["peer"] == peer.id and other != key for other, item in self.pending.items()):
             raise PermissionError("A connection can request access for only one node")
         existing = self.pending.get(key)
         if existing and existing["peer"] != peer.id:
             raise PermissionError("This node already has an active request")
+        if existing and existing.get("devices", []) != devices:
+            raise PermissionError("Device summary changed; reconnect to request approval")
         if not existing:
             if len(self.pending) >= 32:
                 raise RuntimeError("Too many pending node requests")
@@ -63,6 +82,7 @@ class NodeRegistry:
                 "name": name.strip(),
                 "ip": peer.writer.get_extra_info("peername")[0],
                 "environment": params.get("environment"),
+                "devices": devices,
                 "token": token,
                 "status": "pending",
             }
@@ -70,18 +90,27 @@ class NodeRegistry:
 
     def requests(self):
         return [
-            {"id": key, **{field: item[field] for field in ("name", "ip", "environment")}}
+            {
+                "id": key,
+                **{field: item[field] for field in ("name", "ip", "environment")},
+                "devices": item.get("devices", []),
+            }
             for key, item in self.pending.items()
             if item["status"] == "pending"
         ]
 
-    async def decide(self, key, approve):
+    async def decide(self, key, approve, *, confirm_physical=False):
         async with self.lock:
             request = self.pending.get(key)
             if not request or request["status"] != "pending":
                 raise ValueError("This node request is no longer pending")
             if approve:
+                if request.get("devices") and confirm_physical is not True:
+                    raise PermissionError(
+                        "Confirm physical device startup before approving this node"
+                    )
                 config = {field: request[field] for field in ("name", "ip", "token")}
+                config["devices"] = request.get("devices", [])
                 save(self.path, {**self.configs, key: config})
                 self.configs[key] = config
                 self.app.nodes[key] = {"name": request["name"], "status": "starting"}

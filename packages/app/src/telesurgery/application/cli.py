@@ -44,6 +44,11 @@ def main(argv=None):
             "--host", default="127.0.0.1", help="dashboard bind address (default: 127.0.0.1)"
         )
         command.add_argument("--ssl", action="store_true", help="serve the dashboard over HTTPS")
+        command.add_argument(
+            "--insecure",
+            action="store_true",
+            help="explicitly allow a network dashboard over unencrypted HTTP",
+        )
         command.add_argument("--ssl-cert", type=Path, help="PEM certificate for --ssl")
         command.add_argument("--ssl-key", type=Path, help="PEM private key for --ssl")
         command.add_argument(
@@ -59,6 +64,11 @@ def main(argv=None):
             help="workspace directory (default: ./workspace)",
         )
         if role == "patient":
+            command.add_argument(
+                "--endpoint-host",
+                default="0.0.0.0",  # nosec B104
+                help="TLS node/surgeon bind address (default: all IPv4 interfaces)",
+            )
             command.add_argument(
                 "--endpoint-port",
                 type=port,
@@ -116,8 +126,15 @@ def main(argv=None):
         controller.add_argument(
             "--certificate", type=Path, help="trusted certificate for an HTTPS dashboard"
         )
+        controller.add_argument(
+            "--access-file", type=Path, help="dashboard-access.yaml for a network dashboard"
+        )
     args = parser.parse_args(argv)
     if args.role in {"patient", "surgeon"}:
+        from telesurgery.server.security import local_dashboard
+
+        if not local_dashboard(args.host) and not args.ssl and not args.insecure:
+            parser.error("Network dashboards require --ssl or explicit --insecure")
         if bool(args.ssl_cert) != bool(args.ssl_key):
             parser.error("--ssl-cert and --ssl-key must be supplied together")
         if args.ssl_cert and not args.ssl:
@@ -138,8 +155,12 @@ def main(argv=None):
     try:
         if args.role == "controller":
             from telesurgery.controller.client import Client
+            from telesurgery_core.configuration import load
 
-            Client(args.server, args.certificate).action("controller.open", {"id": args.robot})
+            token = load(args.access_file).get("token") if args.access_file else None
+            Client(args.server, args.certificate, token).action(
+                "controller.open", {"id": args.robot}
+            )
         elif args.role == "doctor":
             from telesurgery_core.video.codecs import probe
             from telesurgery_core.video.config import Config
@@ -207,6 +228,8 @@ def main(argv=None):
                 ssl=args.ssl,
                 ssl_cert=args.ssl_cert,
                 ssl_key=args.ssl_key,
+                insecure=args.insecure,
+                endpoint_host=getattr(args, "endpoint_host", "127.0.0.1"),
             )
         return 0
     except KeyboardInterrupt:

@@ -28,6 +28,7 @@ class NodeService:
         self.camera_starts = {}
         self.start_errors = {}
         self.controller_errors = {}
+        self.controllers = {}
 
     async def start(self, environment=None, sim_gui=False):
         self.started = True
@@ -35,7 +36,7 @@ class NodeService:
             self.room.start(environment, sim_gui)
         await self.call("inventory")
         for key, spec in self.local.robots.items():
-            if not spec.get("connection_enabled", True):
+            if not self.connection_choices.get(key, spec.get("connection_enabled", True)):
                 continue
             try:
                 controller = self.controller(key)
@@ -54,6 +55,7 @@ class NodeService:
                 logging.warning(
                     "Controller %s could not start: %s", key, self.controller_errors[key]
                 )
+        await self.call("inventory")
 
     async def call(self, action, params=None):
         params = params or {}
@@ -74,7 +76,11 @@ class NodeService:
                         enabled = self.connection_choices.setdefault(
                             key, spec.get("auto_connect", True)
                         )
-                        spec["connection_enabled"] = enabled
+                        controller = self.controller(key)
+                        running = controller is None or (
+                            controller.owned and (await controller.status())["status"] == "running"
+                        )
+                        spec["connection_enabled"] = enabled and running
                 await asyncio.to_thread(self.robots.sync)
             self.start_cameras(room)
             feedback = self.robots.report()
@@ -165,7 +171,10 @@ class NodeService:
                 "replay_release",
             }:
                 raise ValueError("Unsupported robot operation")
-            return await asyncio.wrap_future(self.robots.submit(method, **params))
+            return await asyncio.wait_for(
+                asyncio.wrap_future(self.robots.submit(method, **params)),
+                5 if method in {"hold", "release"} else 2,
+            )
         else:
             raise ValueError("Unsupported node operation")
         # Camera operations must not replace published controller state with local launch settings.
@@ -175,6 +184,13 @@ class NodeService:
         if hasattr(self, "connection_choices"):
             self.connection_choices[key] = enabled
         spec = self.local.robots[key]
+        controller = self.controller(key)
+        if (
+            enabled
+            and controller is not None
+            and (not controller.owned or (await controller.status())["status"] != "running")
+        ):
+            await controller.start()
         if self.local.simulation or spec.get("profile"):
             path = self.local.directory / "connections.yaml"
             data = load(path)
@@ -193,7 +209,11 @@ class NodeService:
         if not spec.get("controller"):
             return None
         factory = getattr(adapter_type(spec["kind"]), "controller", None)
-        return factory(spec, self.local.directory) if factory else None
+        if not factory:
+            return None
+        if key not in self.controllers:
+            self.controllers[key] = factory(spec, self.local.directory)
+        return self.controllers[key]
 
     def start_cameras(self, room):
         if not self.started or (room.get("simulation") or {}).get("status") not in (None, "ready"):

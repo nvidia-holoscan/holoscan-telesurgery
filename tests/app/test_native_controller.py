@@ -636,6 +636,7 @@ async def test_controller_handoff_requires_confirmed_hold_and_existing_lease(sto
         ),
         controller_server="http://localhost:8002",
         controller_certificate=None,
+        controller_token=None,
         tokens={"robot": "existing"},
     )
     calls = []
@@ -743,6 +744,7 @@ async def test_native_launch_requires_approved_robot_access():
         controller=SimpleNamespace(open=AsyncMock()),
         controller_server="http://127.0.0.1:8002",
         controller_certificate=None,
+        controller_token=None,
     )
     with pytest.raises(PermissionError):
         await Application.action(service, "controller.open", {})

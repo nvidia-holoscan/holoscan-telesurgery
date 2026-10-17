@@ -113,6 +113,14 @@ class Controller {
     start(state, goal, true, true, speed);
   }
 
+  void request_stop() {
+    // Publish the latch first: start() must never observe a new generation
+    // while still seeing input enabled from before this Stop.
+    needs_release_ = true;
+    ++stop_generation_;
+    stopped_ = true;
+  }
+
   void hold() {
     stopped_ = true;
     if (worker_.joinable()) worker_.join();
@@ -140,6 +148,8 @@ class Controller {
  private:
   void start(const franka::RobotState& state, const telesurgery::Joints& goal, bool step, bool home,
              double speed, std::optional<telesurgery::Twist> twist = std::nullopt) {
+    const auto generation = stop_generation_.load();
+    if (needs_release_) throw std::runtime_error("Release input after Stop before moving");
     if (state.robot_mode != franka::RobotMode::kIdle || state.current_errors) {
       throw std::runtime_error("Franka is not idle (mode " +
                                std::to_string(static_cast<int>(state.robot_mode)) + ", faults " +
@@ -161,7 +171,11 @@ class Controller {
     }
     running_ = true;
     try {
-      worker_ = std::thread([this] { control(); });
+      worker_ = std::thread([this, generation] {
+        if (stop_generation_.load() != generation) stopped_ = true;
+        control();
+      });
+      if (stop_generation_.load() != generation) stopped_ = true;
     } catch (...) {
       running_ = false;
       throw;
@@ -282,6 +296,7 @@ class Controller {
   bool finishing_{false};
   double speed_{telesurgery::default_speed};
   std::atomic<bool> running_{false}, stopped_{true}, needs_release_{false};
+  std::atomic<unsigned long> stop_generation_{0};
   std::string error_;
 };
 
@@ -295,6 +310,7 @@ NB_MODULE(_franka, m) {
       .def("home", &Controller::home, nb::arg("goal"),
            nb::arg("speed") = telesurgery::default_speed, nb::call_guard<nb::gil_scoped_release>())
       .def("hold", &Controller::hold, nb::call_guard<nb::gil_scoped_release>())
+      .def("request_stop", &Controller::request_stop)
       .def("close", &Controller::close, nb::call_guard<nb::gil_scoped_release>())
       .def("kinematics", &Controller::kinematics, nb::call_guard<nb::gil_scoped_release>())
       .def("read", [](Controller& controller) {

@@ -265,6 +265,45 @@ def test_hold_retains_exclusive_lease_and_watchdog_still_releases():
     robot.close()
 
 
+def test_feedback_backoff_cannot_delay_first_expired_lease_hold():
+    adapter = Gantry({})
+    robot = Controller(adapter, lambda: {}, lambda: 0)
+    robot.prepare("owner")
+    robot.expires = 0
+    robot.next_poll = time.monotonic() + 2
+    robot.tick()
+    assert adapter.holds == 1
+    assert robot.token is None and not robot.active
+
+
+def test_stop_signal_bypasses_queue_and_cancels_older_movement():
+    from types import SimpleNamespace
+
+    from telesurgery_runtime.application.robots import Robots
+
+    adapter = Gantry({})
+    signals = []
+    adapter.request_stop = lambda: signals.append("stop")
+    device = Controller(adapter, lambda: {}, lambda: 0)
+    device.prepare("owner")
+    queued = []
+    robots = Robots(lambda: {})
+    robots.devices["arm"] = device
+    robots.graphs["arm"] = SimpleNamespace(submit=lambda fn, **kw: queued.append(fn))
+    robots.submit(
+        "move", "arm", token="owner", sequence=1, command={"axis": [0.1, 0]}, sent_at=time.time()
+    )
+    with pytest.raises(PermissionError):
+        robots.submit("hold", "arm", token="another")
+    assert not signals
+    robots.submit("hold", "arm", token="owner")
+    assert signals == ["stop"] and adapter.holds == 0
+    with pytest.raises(RuntimeError, match="cancelled by Stop"):
+        queued[0]()
+    queued[1]()
+    assert adapter.holds == 1 and device.token == "owner"
+
+
 def test_closed_controller_does_not_reopen_feedback_connection():
     class Reconnecting(Gantry):
         def read(self):
@@ -335,7 +374,7 @@ async def test_independent_graphs_publish_idle_feedback_and_close_removed_robot(
 
 @pytest.mark.sdk
 @pytest.mark.asyncio
-async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypatch, enrolled_node):
+async def test_robot_feedback_requires_robot_access(tmp_path, monkeypatch, enrolled_node):
     pytest.importorskip("holoscan")
     from telesurgery.server.application import Application
 
@@ -373,15 +412,13 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
         node.node.robots.devices["gantry"].adapter.position[1] = 23
         key = f"{node_id}:gantry"
         async with asyncio.timeout(10):
-            while True:
-                robot = next(
-                    (r for r in surgeon.remote_status.get("robots", []) if r["id"] == key), None
-                )
-                if robot and robot.get("state", {}).get("joints_deg", {}).get("axis") == [0, 23]:
-                    break
+            while (
+                surgeon.remote_status.get("status") != "approved"
+                or "robots" not in surgeon.remote_status
+            ):
                 await asyncio.sleep(0.05)
-        assert robot["controls"]["groups"] == {"axis": 2}
-        assert not robot["stale"]
+        assert surgeon.remote_status["robots"] == []
+        assert surgeon.remote_status["nodes"] == []
         with pytest.raises(RuntimeError, match="robot|Robot"):
             await surgeon.action("robot.move", {"id": key, "command": {"axis": [0.1, 0]}})
         await surgeon.action("disconnect", {})
@@ -390,6 +427,9 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
         async with asyncio.timeout(5):
             while not surgeon.remote_status.get("robot"):
                 await asyncio.sleep(0.05)
+        robot = next(r for r in surgeon.remote_status["robots"] if r["id"] == key)
+        assert robot["controls"]["groups"] == {"axis": 2}
+        assert not robot["stale"]
         with pytest.raises(RuntimeError, match="Acquire robot control first"):
             await surgeon.action("robot.move", {"id": key, "command": {"axis": [0.1, 0]}})
         assert key not in surgeon.tokens
@@ -438,7 +478,7 @@ async def test_node_robot_feedback_reaches_view_only_surgeon(tmp_path, monkeypat
             "robot.move", {"id": key, "command": {"axis": [0.1, 0]}, "mode": "step"}
         )
         await patient.action("robot.revoke", {"id": key})
-        with pytest.raises(RuntimeError, match="expired|belongs"):
+        with pytest.raises(RuntimeError, match="expired|belongs|Acquire robot control first"):
             await surgeon.action(
                 "robot.move", {"id": key, "command": {"axis": [0.1, 0]}, "mode": "step"}
             )
