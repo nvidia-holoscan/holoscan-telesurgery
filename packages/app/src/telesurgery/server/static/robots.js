@@ -450,7 +450,8 @@ export function robotControls(refresh, openMetrics) {
     window.addEventListener("blur", () => pauseAll("dashboard lost focus", true));
     window.addEventListener("keydown", (event) => {
         if (event.key === "Escape") pauseAll("Escape pressed");
-        if (event.code === "Space" && !event.target.closest("input, textarea, select, button, [contenteditable='true']")) {
+        if (event.code === "Space" && (held.size || current) &&
+            !event.target.closest("input, textarea, select, button, a, summary, [role='button'], [contenteditable='true']")) {
             event.preventDefault();
             pauseAll("Space pressed");
         }

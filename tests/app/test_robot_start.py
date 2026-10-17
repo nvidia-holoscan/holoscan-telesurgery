@@ -227,7 +227,8 @@ async def test_node_shutdown_closes_connections_before_owned_controllers_even_on
     node.robots = SimpleNamespace(devices={"mira": {}}, close=Mock(side_effect=disconnect))
     node.local = SimpleNamespace(robots={"mira": {}, "external": {}}, close=cameras)
     managed = SimpleNamespace(stop=controller)
-    node.controller = lambda key: managed if key == "mira" else None
+    node.controllers = {"mira": managed}
+    node.controller_errors = {}
     node.room = SimpleNamespace(task=None, close=simulation)
     with pytest.raises(RuntimeError, match="camera failed"):
         await node.close()

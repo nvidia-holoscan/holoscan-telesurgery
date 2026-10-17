@@ -38,6 +38,32 @@ def node(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_unsupported_robot_does_not_abort_other_device_startup(node):
+    service, _ = node
+    original_refresh = service.local.refresh
+
+    async def refresh():
+        await original_refresh()
+        service.local.robots["invalid"] = {
+            "id": "invalid",
+            "kind": "unknown-robot-kind",
+            "controller": {"executable": "/not-installed"},
+        }
+
+    service.local.refresh = refresh
+    await service.start()
+    await asyncio.gather(*service.camera_starts.values())
+    inventory = await service.call("inventory")
+    invalid = next(robot for robot in inventory["robots"] if robot["id"] == "invalid")
+    assert invalid["controller"]["status"] == "unavailable"
+    assert "unknown-robot-kind" in invalid["controller"]["error"]
+    assert service.controller_errors["invalid"]
+    assert not invalid["connection_enabled"]
+    assert service.local.robots["arm"]["connection_enabled"]
+    service.local.start_camera.assert_awaited_once_with("camera")
+
+
+@pytest.mark.asyncio
 async def test_start_connects_robot_and_streams_once_and_respects_manual_stop(node):
     service, _ = node
     await service.call("inventory")

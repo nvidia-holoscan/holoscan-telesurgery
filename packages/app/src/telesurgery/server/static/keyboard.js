@@ -382,6 +382,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
         const key = event.key.toLowerCase();
         const fresh = bindings.has(key) ? physicalKeys.press(key, event.repeat) : !event.repeat;
         if (enabled && bindings.has(key) && fresh && !editing() && !inputBlocked()
+            && !event.isComposing && !event.ctrlKey && !event.altKey && !event.metaKey
             && (stopping || feedback.stopping || feedback.home_active)) {
             event.preventDefault();
             showInputStatus(true);

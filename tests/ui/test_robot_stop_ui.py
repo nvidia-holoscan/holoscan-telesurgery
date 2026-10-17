@@ -71,10 +71,20 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
             page = await context.new_page()
             await page.goto("http://localhost:8777/")
             acquire = page.get_by_role("button", name="Acquire control", exact=True)
+            await expect(acquire).to_be_visible()
+            space = """() => {
+                const event = new KeyboardEvent('keydown', {
+                    key:' ', code:'Space', bubbles:true, cancelable:true
+                });
+                document.body.dispatchEvent(event);
+                return event.defaultPrevented;
+            }"""
+            assert not await page.evaluate(space)  # Normal page scrolling before acquisition.
             await acquire.click()
             key = page.locator('.key-cap[data-key="g"]')
             await expect(page.locator(".keyboard-controls")).to_be_visible()
             await expect(key).to_be_enabled()
+            assert await page.evaluate(space)  # Stop takes precedence while control is held.
             await page.locator(".keyboard-controls").focus()
             await expect(page.locator(".keyboard-controls")).to_be_focused()
             await page.keyboard.down("g")
@@ -250,6 +260,7 @@ async def test_stop_acknowledgement_blocks_repress_with_stale_inventory():
             await page.wait_for_timeout(1100)
             assert len(moves) == count
             await expect(key).to_be_disabled()
+            assert await key.bounding_box() == position
             robot["state"] = {"sequence": 101, "control_active": False, "stopping": False}
             await expect(key).to_be_enabled()
             await page.wait_for_timeout(600)
@@ -448,7 +459,10 @@ async def test_observing_same_session_ownership_does_not_release_another_tabs_in
 
 
 @pytest.mark.asyncio
-async def test_explicit_ownership_idle_renewal_release_and_patient_force_release(tmp_path):
+@pytest.mark.parametrize("stop_key", ["Escape", "Space"])
+async def test_explicit_ownership_idle_renewal_release_and_patient_force_release(
+    tmp_path, stop_key
+):
     calls = []
     robot = {
         "id": "node:franka",
@@ -523,9 +537,16 @@ async def test_explicit_ownership_idle_renewal_release_and_patient_force_release
             await expect(release.locator("svg")).to_be_visible()
             await expect(release.locator("span")).to_have_class("sr-only")
             await expect(page.locator('.key-cap[data-key="q"]')).to_be_enabled()
+            await page.locator(".keyboard-controls").focus()
             await page.keyboard.down("q")
             await page.wait_for_timeout(650)
-            await page.keyboard.press("Escape")
+            async with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST"
+                    and response.request.post_data_json.get("action") == "robot.hold"
+                )
+            ):
+                await page.keyboard.press(stop_key)
             await page.keyboard.up("q")
             await page.evaluate("window.dispatchEvent(new Event('blur'))")
             await page.wait_for_timeout(1200)

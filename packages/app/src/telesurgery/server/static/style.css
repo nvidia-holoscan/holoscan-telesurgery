@@ -2889,4 +2889,4 @@ body[data-role="surgeon"] .robot-panel {
 .physical-start-warning { font-weight: 600; }
 #connection-notice { padding: 12px 24px; background: var(--panel, #fff); border-bottom: 2px solid var(--accent, #76b900); }
 #connection-notice:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.robot-input-status { min-height: 3em; margin: 8px 0; font-weight: 600; }
+.robot-input-status { min-height: 3lh; margin: 8px 0; font-weight: 600; }

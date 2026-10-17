@@ -32,6 +32,27 @@ async def keyboard_page(kind="franka-sim"):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["stopping", "home_active"])
+@pytest.mark.parametrize("modifier", ["ctrlKey", "altKey", "metaKey", "isComposing"])
+async def test_braking_preserves_browser_shortcuts_and_composition(state, modifier):
+    async with keyboard_page() as page:
+        prevented = await page.evaluate(
+            """({state, modifier}) => {
+            input.feedback({[state]:true});
+            const event = new KeyboardEvent('keydown', {
+                key:'r', bubbles:true, cancelable:true, [modifier]:true
+            });
+            document.body.dispatchEvent(event);
+            return event.defaultPrevented;
+        }""",
+            {"state": state, "modifier": modifier},
+        )
+        assert not prevented
+        assert await page.evaluate("moves.length") == 0
+        await expect(page.get_by_role("status")).not_to_contain_text("Input ignored")
+
+
+@pytest.mark.asyncio
 async def test_real_clock_blocked_tap_is_visible_and_never_replayed():
     async with keyboard_page() as page:
         await page.clock.resume()

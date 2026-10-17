@@ -76,11 +76,16 @@ class NodeService:
                         enabled = self.connection_choices.setdefault(
                             key, spec.get("auto_connect", True)
                         )
-                        controller = self.controller(key)
-                        running = controller is None or (
-                            controller.owned and (await controller.status())["status"] == "running"
-                        )
-                        spec["connection_enabled"] = enabled and running
+                        try:
+                            controller = self.controller(key)
+                            running = controller is None or (
+                                controller.owned
+                                and (await controller.status())["status"] == "running"
+                            )
+                            spec["connection_enabled"] = enabled and running
+                        except (KeyError, ValueError) as exc:
+                            spec["connection_enabled"] = False
+                            self.controller_errors[key] = str(exc)
                 try:
                     await asyncio.to_thread(self.robots.sync)
                 finally:
