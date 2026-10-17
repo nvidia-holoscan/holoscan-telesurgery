@@ -38,6 +38,32 @@ def node(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_unsupported_robot_does_not_abort_other_device_startup(node):
+    service, _ = node
+    original_refresh = service.local.refresh
+
+    async def refresh():
+        await original_refresh()
+        service.local.robots["invalid"] = {
+            "id": "invalid",
+            "kind": "unknown-robot-kind",
+            "controller": {"executable": "/not-installed"},
+        }
+
+    service.local.refresh = refresh
+    await service.start()
+    await asyncio.gather(*service.camera_starts.values())
+    inventory = await service.call("inventory")
+    invalid = next(robot for robot in inventory["robots"] if robot["id"] == "invalid")
+    assert invalid["controller"]["status"] == "unavailable"
+    assert "unknown-robot-kind" in invalid["controller"]["error"]
+    assert service.controller_errors["invalid"]
+    assert not invalid["connection_enabled"]
+    assert service.local.robots["arm"]["connection_enabled"]
+    service.local.start_camera.assert_awaited_once_with("camera")
+
+
+@pytest.mark.asyncio
 async def test_start_connects_robot_and_streams_once_and_respects_manual_stop(node):
     service, _ = node
     await service.call("inventory")
@@ -136,8 +162,18 @@ async def test_explicit_startup_opt_out_still_allows_manual_start(node):
 
     service.local.refresh = opted_out
     controller = SimpleNamespace(
-        start=AsyncMock(), stop=AsyncMock(), status=AsyncMock(return_value={"status": "stopped"})
+        owned=False,
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        status=AsyncMock(return_value={"status": "stopped"}),
     )
+
+    async def started():
+        controller.owned = True
+        controller.status.return_value = {"status": "running"}
+
+    controller.start.side_effect = started
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
     await service.start()
     service.local.start_camera.assert_not_called()
@@ -157,11 +193,24 @@ async def test_managed_controller_starts_after_admission_and_failures_require_ma
 ):
     service, _ = node
     controller = SimpleNamespace(
+        owned=False,
         start=AsyncMock(side_effect=RuntimeError("Missing controller image") if failure else None),
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped", "error": ""}),
     )
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
+    connections = []
+    service.robots.sync.side_effect = lambda: connections.append(
+        service.local.robots["arm"].get("connection_enabled", False)
+    )
+
+    async def started():
+        controller.owned = True
+        controller.status.return_value = {"status": "running", "error": ""}
+
+    if not failure:
+        controller.start.side_effect = started
     await service.call("inventory")
     controller.start.assert_not_called()
     await service.start()
@@ -169,11 +218,13 @@ async def test_managed_controller_starts_after_admission_and_failures_require_ma
     inventory = await service.call("inventory")
     controller.start.assert_awaited_once()
     if failure:
+        assert not any(connections)  # Never attach to a pre-existing vendor API.
         assert inventory["robots"][0]["controller"]["error"] == "Missing controller image"
-        controller.start.side_effect = None
+        controller.start.side_effect = started
         await service.call("robot.start", {"id": "arm"})
         assert controller.start.await_count == 2
         assert not service.controller_errors
+    assert service.local.robots["arm"]["connection_enabled"]
     await service.close()
 
 
@@ -187,10 +238,12 @@ async def test_cancel_during_controller_creation_finishes_before_shutdown(node):
         await finish.wait()
 
     controller = SimpleNamespace(
+        owned=False,
         start=AsyncMock(side_effect=start),
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped"}),
     )
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
     startup = asyncio.create_task(service.start())
     await entered.wait()
@@ -202,3 +255,59 @@ async def test_cancel_during_controller_creation_finishes_before_shutdown(node):
         await startup
     await service.close()
     controller.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter_fails", [False, True])
+async def test_inventory_removal_closes_adapter_before_ending_vendor_lease(node, adapter_fails):
+    service, _ = node
+    events = []
+
+    async def refresh():
+        service.local.robots = {}
+
+    def sync():
+        events.append("adapter")
+        if adapter_fails:
+            raise RuntimeError("Adapter shutdown unconfirmed")
+
+    async def stop():
+        events.append("vendor")
+
+    service.local.refresh = refresh
+    service.robots.sync.side_effect = sync
+    controller = SimpleNamespace(stop=AsyncMock(side_effect=stop))
+    service.controllers["removed"] = controller
+    service.controller_errors["removed"] = "Old startup error"
+    if adapter_fails:
+        with pytest.raises(RuntimeError, match="Adapter shutdown unconfirmed"):
+            await service.call("inventory")
+    else:
+        await service.call("inventory")
+    assert events == ["adapter", "vendor"]
+    assert not service.controllers
+    assert not service.controller_errors
+    await service.close()
+    controller.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_stops_cached_controllers_after_inventory_disappears(node):
+    service, _ = node
+    first = SimpleNamespace(stop=AsyncMock(side_effect=RuntimeError("Docker unavailable")))
+    second = SimpleNamespace(stop=AsyncMock())
+    service.controllers.update(first=first, second=second)
+    service.local.robots = {}
+    # Shutdown must use owned instances, not reconstruct controllers from inventory.
+    service.controller = Mock(side_effect=AssertionError("Unexpected controller creation"))
+    with pytest.raises(RuntimeError, match="Docker unavailable"):
+        await service.close()
+    first.stop.assert_awaited_once()
+    second.stop.assert_awaited_once()
+    assert service.controllers == {"first": first}
+    first.stop.side_effect = None
+    await service.close()
+    assert first.stop.await_count == 2
+    second.stop.assert_awaited_once()
+    assert not service.controllers
+    service.controller.assert_not_called()

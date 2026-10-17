@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 
 class Client:
-    def __init__(self, server, certificate=None):
+    def __init__(self, server, certificate=None, token=None):
         url = urlsplit(server)
         if (
             url.scheme not in {"http", "https"}
@@ -27,12 +27,17 @@ class Client:
             raise ValueError("Use a surgeon dashboard URL, such as http://127.0.0.1:8002")
         self.server = server.rstrip("/")
         self.context = ssl.create_default_context(cafile=certificate) if certificate else None
+        self.token = token
 
     def request(self, path, body=None):
         request = Request(
             self.server + path,
             data=json.dumps(body).encode() if body is not None else None,
-            headers={"Content-Type": "application/json", "Origin": self.server},
+            headers={
+                "Content-Type": "application/json",
+                "Origin": self.server,
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
+            },
         )
         try:
             with urlopen(request, timeout=8, context=self.context) as response:  # nosec B310

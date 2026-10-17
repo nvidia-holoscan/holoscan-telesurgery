@@ -12,20 +12,27 @@ from aiohttp import web
 from telesurgery.application.lifecycle import register
 from telesurgery.server.application import Application
 from telesurgery.server.security import (
+    DashboardAccess,
     dashboard_client_host,
     dashboard_requests,
     dashboard_tls,
+    local_dashboard,
     security_headers,
 )
+from telesurgery_core.transport.json import loads
 
 
-def create_app(service, host="127.0.0.1"):
-    app = web.Application(middlewares=[dashboard_requests(host)], client_max_size=128 * 1024)
+def create_app(service, host="127.0.0.1", *, token=None):
+    access = DashboardAccess(host, token)
+    app = web.Application(
+        middlewares=[dashboard_requests(host, access)], client_max_size=128 * 1024
+    )
     app.on_response_prepare.append(security_headers)
     static = Path(__file__).with_name("static")
 
     async def index(request):
-        return web.FileResponse(static / "index.html", headers={"Cache-Control": "no-store"})
+        page = "index.html" if access.authorized(request) else "login.html"
+        return web.FileResponse(static / page, headers={"Cache-Control": "no-store"})
 
     async def status(request):
         return web.json_response(
@@ -49,7 +56,7 @@ def create_app(service, host="127.0.0.1"):
         )
 
     async def action(request):
-        body = await request.json()
+        body = await request.json(loads=loads)
         if (
             not isinstance(body, dict)
             or not isinstance(body.get("action"), str)
@@ -96,7 +103,7 @@ def create_app(service, host="127.0.0.1"):
         )
 
     async def offer(request):
-        body = await request.json()
+        body = await request.json(loads=loads)
         if not isinstance(body, dict) or any(
             not isinstance(body.get(key), str) for key in ("camera", "sdp", "type")
         ):
@@ -134,6 +141,7 @@ def create_app(service, host="127.0.0.1"):
 
     app.cleanup_ctx.append(lifecycle)
     app.router.add_get("/", index)
+    app.router.add_post("/api/login", access.login)
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/nodes/{node}/log", node_log)
     app.router.add_get("/api/cameras/{camera}/log", camera_log)
@@ -154,8 +162,15 @@ def serve(
     ssl=False,
     ssl_cert=None,
     ssl_key=None,
+    insecure=False,
+    endpoint_host="0.0.0.0",  # TLS and patient approval remain required. # nosec B104
 ):
     import fcntl
+
+    from telesurgery_core.configuration import save
+
+    if not local_dashboard(host) and not ssl and not insecure:
+        raise ValueError("Network dashboards require --ssl or explicit --insecure")
 
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / "service.lock").open("w") as lock:
@@ -164,7 +179,19 @@ def serve(
         except BlockingIOError as exc:
             raise RuntimeError("Another service is using this state directory") from exc
         context = dashboard_tls(directory, host, ssl_cert, ssl_key) if ssl else None
-        service = Application(role, directory, endpoint_port)
+        access = DashboardAccess(host)
+        if access.token:
+            token_path = directory / "dashboard-access.yaml"
+            save(token_path, {"token": access.token})
+            print(
+                f"Dashboard access code: read {token_path}. It changes on every launch.", flush=True
+            )
+            if not ssl:
+                logging.warning(
+                    "--insecure: dashboard credentials and actions use unencrypted HTTP"
+                )
+        service = Application(role, directory, endpoint_port, endpoint_host=endpoint_host)
+        service.controller_token = access.token
         controller_host = dashboard_client_host(host, ssl_cert if ssl else None)
         if ":" in controller_host:
             controller_host = f"[{controller_host}]"
@@ -173,7 +200,7 @@ def serve(
             service.controller_certificate = str(ssl_cert or directory / "https" / "endpoint.pem")
         with register(directory, role, port):
             web.run_app(
-                create_app(service, host),
+                create_app(service, host, token=access.token),
                 host=host,
                 port=port,
                 ssl_context=context,

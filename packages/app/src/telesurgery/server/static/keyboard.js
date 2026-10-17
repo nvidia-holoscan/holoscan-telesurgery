@@ -25,6 +25,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     };
     const bindings = new Map();
     const container = element("div", undefined, "keyboard-controls");
+    const inputStatus = element("p", "", "robot-input-status");
+    inputStatus.setAttribute("role", "status");
+    container.append(inputStatus);
     container.tabIndex = 0;
     container.setAttribute("aria-label", `${robot.name} keyboard controls`);
     const group = document.createElement("select");
@@ -106,9 +109,18 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
         if (!active) return;
         active = false;
         stopping = true;
+        showInputStatus();
         Promise.resolve(stop()).finally(() => {
             stopping = false;
+            showInputStatus();
         });
+    }
+    function showInputStatus(ignored = false) {
+        const reason = stopping || feedback.stopping ? "Stopping…" : feedback.home_active ? "Going Home…" : "";
+        inputStatus.textContent = reason
+            ? `${reason} ${ignored ? "Input ignored. " : ""}Release and press again when ready.`
+            : "";
+        inputStatus.style.visibility = reason ? "visible" : "hidden";
     }
     function halt() {
         lastJogAt = 0;
@@ -237,6 +249,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
         const label = element("span", undefined, "keyboard-binding");
         const cap = element("button", symbol, "key-cap");
         cap.type = "button";
+        cap.disabled = true;
         cap.dataset.key = key;
         cap.setAttribute("aria-label", description);
         cap.title = description;
@@ -309,9 +322,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
         return miraCartesian() ? miraToolJog(robot, value) : value;
     }
     function press(key) {
+        if (stopping || feedback.stopping || feedback.home_active) {
+            showInputStatus(true);
+            return;
+        }
         if (!enabled || !allowed || inputBlocked() || keys.has(key)) return;
-        keys.add(key);
         if (stopping || (heldKeys.size && !dual && !continuousTool())) return;
+        keys.add(key);
         // Track both hands while held; never queue a released tap behind a request.
         if (busy && !continuousTool() && !(dual && heldKeys.size)) return;
         if (!heldKeys.size) {
@@ -364,6 +381,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     function keydown(event) {
         const key = event.key.toLowerCase();
         const fresh = bindings.has(key) ? physicalKeys.press(key, event.repeat) : !event.repeat;
+        if (enabled && bindings.has(key) && fresh && !editing() && !inputBlocked()
+            && !event.isComposing && !event.ctrlKey && !event.altKey && !event.metaKey
+            && (stopping || feedback.stopping || feedback.home_active)) {
+            event.preventDefault();
+            showInputStatus(true);
+            return;
+        }
         if (
             !enabled ||
             !allowed ||
@@ -461,10 +485,13 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
             allowed = available;
             container.hidden = !on;
             group.disabled = !available;
+            for (const cap of mapping.querySelectorAll(".key-cap"))
+                cap.disabled = !on || !available;
         },
         feedback(state) {
             feedback = state || {};
             showFeedback();
+            showInputStatus();
         },
         stop: halt,
         destroy() {

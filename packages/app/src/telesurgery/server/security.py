@@ -5,6 +5,7 @@
 
 import ipaddress
 import logging
+import secrets
 import socket
 import ssl
 from pathlib import Path
@@ -54,11 +55,58 @@ def dashboard_client_host(host, certificate=None):
     return loopback
 
 
-def dashboard_requests(host):
+def local_dashboard(host):
     try:
-        local_only = ipaddress.ip_address(host).is_loopback
+        return ipaddress.ip_address(host).is_loopback
     except ValueError:
-        local_only = host.lower() == "localhost"
+        return host.lower() == "localhost"
+
+
+class DashboardAccess:
+    def __init__(self, host, token=None):
+        self.token = token or (secrets.token_urlsafe(32) if not local_dashboard(host) else None)
+
+    @staticmethod
+    def cookie_name(request):
+        # Cookies are shared across ports; patient and surgeon need independent logins.
+        return f"telesurgery_access_{request.url.port}"
+
+    def authorized(self, request):
+        if self.token is None:
+            return True
+        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        return any(
+            secrets.compare_digest(value.encode(), self.token.encode())
+            for value in (bearer, request.cookies.get(self.cookie_name(request), ""))
+        )
+
+    async def login(self, request):
+        from telesurgery_core.transport.json import loads
+
+        body = await request.json(loads=loads)
+        value = body.get("token") if isinstance(body, dict) else None
+        if (
+            not isinstance(value, str)
+            or not self.token
+            or not secrets.compare_digest(value.encode(), self.token.encode())
+        ):
+            return web.json_response(
+                {"error": "Access code is incorrect or has expired"}, status=401
+            )
+        response = web.json_response({"result": True})
+        response.set_cookie(
+            self.cookie_name(request),
+            self.token,
+            httponly=True,
+            secure=request.secure,
+            samesite="Strict",
+            path="/",
+        )
+        return response
+
+
+def dashboard_requests(host, access=None):
+    local_only = local_dashboard(host)
 
     @web.middleware
     async def check(request, handler):
@@ -72,6 +120,13 @@ def dashboard_requests(host):
                 raise web.HTTPForbidden(text="Cross-origin dashboard access is disabled")
             if request.method == "POST" and request.content_type != "application/json":
                 raise web.HTTPUnsupportedMediaType(text="Expected application/json")
+            if (
+                access is not None
+                and request.path.startswith("/api/")
+                and request.path != "/api/login"
+                and not access.authorized(request)
+            ):
+                return web.json_response({"error": "Dashboard access code required"}, status=401)
             return await handler(request)
         except (ValueError, KeyError, TypeError) as exc:
             return web.json_response({"error": str(exc)}, status=400)

@@ -23,7 +23,8 @@ from telesurgery_core.video.depth import render
 from telesurgery_core.video.view import crop
 from telesurgery_core.video.view import settings as zoom_settings
 from telesurgery_runtime.application.pipeline import Frames
-from telesurgery_runtime.backends.sdk import backend
+from telesurgery_runtime.application.vulkan import check as check_vulkan
+from telesurgery_runtime.backends.sdk import backend, require_sdk
 
 
 class ReceiveDecode:
@@ -94,6 +95,7 @@ class ReceiveDecode:
 
 
 async def run(config, report):
+    check_vulkan(maintenance=require_sdk().__version__.split(".")[0] == "5")
     stopped = asyncio.Event()
     source = ReceiveDecode(config.get("depth", False))
     source.zoom = zoom_settings(**config.get("zoom", {}))

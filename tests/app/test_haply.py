@@ -740,8 +740,9 @@ def test_native_haply_layout_and_selection_stop(
         assert set(window.grippers) == {"left", "right"}
         assert window.reset_button.winfo_ismapped()
         assert window.home.winfo_x() < window.reset_button.winfo_x() < window.stop_button.winfo_x()
-        assert window.stop_button.icon == "stop"
+        assert window.stop_button.text == "Stop" and window.stop_button.danger
         window.control.owned = window.selected  # Preview an explicitly acquired controller.
+        monkeypatch.setattr(window, "confirm_action", Mock(return_value=True))
         window.reset_scene()
         assert window.pending_reset and window.haply_input.paused
         window.stop()

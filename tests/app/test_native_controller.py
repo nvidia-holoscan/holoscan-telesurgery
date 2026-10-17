@@ -185,6 +185,12 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
         assert "Tool movement" in " ".join(window.mode_choice.cget("values"))
         assert window.body.winfo_width() >= window.body.winfo_reqwidth()
         assert window.stop_button.winfo_width() >= window.stop_button.winfo_reqwidth()
+        assert window.stop_button.winfo_height() >= window.px(44)
+        assert any(
+            window.stop_button.itemcget(item, "text") == "Stop"
+            for item in window.stop_button.find_all()
+            if window.stop_button.type(item) == "text"
+        )
         assert window.reset_button.winfo_ismapped()
         assert window.home.winfo_x() < window.reset_button.winfo_x() < window.stop_button.winfo_x()
         for canvas in [window.home, window.stop_button, *window.keys.values(), *window.sliders]:
@@ -636,6 +642,7 @@ async def test_controller_handoff_requires_confirmed_hold_and_existing_lease(sto
         ),
         controller_server="http://localhost:8002",
         controller_certificate=None,
+        controller_token=None,
         tokens={"robot": "existing"},
     )
     calls = []
@@ -743,6 +750,7 @@ async def test_native_launch_requires_approved_robot_access():
         controller=SimpleNamespace(open=AsyncMock()),
         controller_server="http://127.0.0.1:8002",
         controller_certificate=None,
+        controller_token=None,
     )
     with pytest.raises(PermissionError):
         await Application.action(service, "controller.open", {})
@@ -897,6 +905,7 @@ def test_native_reset_stays_enabled_during_heartbeat_and_waits_for_reply(
         fixture["reset_scene_blocked"] = ""
         window.feedback()
 
+        monkeypatch.setattr(window, "confirm_action", Mock(return_value=True))
         window.reset_button.press(None)
         window.reset_button.release(None)
         assert window.pending_reset
@@ -931,3 +940,121 @@ def test_native_reset_stays_enabled_during_heartbeat_and_waits_for_reply(
             window.control.pending = window.control.owned = None
             window.shutdown()
         root.destroy()
+
+
+@pytest.mark.parametrize("operation", ["home", "reset"])
+@pytest.mark.parametrize("decision", ["cancel", "accept", "revoke", "escape"])
+def test_native_motion_confirmation_rechecks_access_and_blocks_input(
+    monkeypatch, virtual_display, operation, decision
+):
+    import tkinter as tk
+    from tkinter import ttk
+
+    from telesurgery.controller.window import Window
+
+    root = tk.Tk(screenName=virtual_display)
+    window = None
+    try:
+        monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+        monkeypatch.setattr(Window, "tick", lambda self: None)
+        client = SimpleNamespace(action=Mock(side_effect=AssertionError("No robot commands")))
+        window = Window(root, client)
+        fixture = robot("franka")
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "me",
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [fixture],
+                },
+            },
+            time.monotonic(),
+        )
+        window.control.owned = fixture["id"]
+        root.update()
+        observed = {}
+        stop = Mock(wraps=window.stop)
+        monkeypatch.setattr(window, "stop", stop)
+
+        def respond():
+            dialog = next(
+                child for child in root.winfo_children() if isinstance(child, tk.Toplevel)
+            )
+            try:
+                observed["title"] = dialog.title()
+                observed["blocked"] = not window.available()
+                if decision == "escape":
+                    dialog.focus_force()
+                    dialog.update()
+                    dialog.event_generate("<Escape>")
+                else:
+                    if decision == "revoke":
+                        window.session["status"] = "revoked"
+                    buttons = [
+                        button
+                        for frame in dialog.winfo_children()
+                        for button in frame.winfo_children()
+                        if isinstance(button, ttk.Button)
+                    ]
+                    label = (
+                        "Cancel"
+                        if decision == "cancel"
+                        else "Move to Home"
+                        if operation == "home"
+                        else "Reset scene"
+                    )
+                    next(button for button in buttons if button.cget("text") == label).invoke()
+            finally:
+                if dialog.winfo_exists():
+                    dialog.destroy()
+
+        root.after(40, respond)
+        if operation == "home":
+            window.go_home()
+        else:
+            window.reset_scene()
+        assert observed == {
+            "title": "Move to Home?" if operation == "home" else "Reset simulation scene?",
+            "blocked": True,
+        }
+        assert not window.confirming
+        assert (window.pending_home if operation == "home" else window.pending_reset) == (
+            decision == "accept"
+        )
+        if decision == "escape":
+            assert stop.call_count == 2
+        client.action.assert_not_called()
+    finally:
+        if window:
+            window.control.owned = None
+            window.shutdown()
+        root.destroy()
+
+
+def test_native_deliberate_gamepad_home_does_not_ask_twice():
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.selected = "franka"
+    window.robots = {"franka": robot("franka")}
+    window.available = Mock(return_value=True)
+    window.control = SimpleNamespace(feedback=lambda _: {})
+    window.confirm_action = Mock(side_effect=AssertionError("Already confirmed by the hold"))
+    window.stop, window.root = Mock(), Mock()
+    window.go_home(confirmed=True)
+    assert window.pending_home
+    window.confirm_action.assert_not_called()
+    window.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("key", ["Escape", "space"])
+def test_native_global_stop_does_not_wait_for_confirmation(key):
+    from telesurgery.controller.window import Window
+
+    window = Window.__new__(Window)
+    window.stop, window.root = Mock(), Mock()
+    window.editing = Mock(return_value=False)
+    assert window.key_down(SimpleNamespace(keysym=key)) == "break"
+    window.stop.assert_called_once_with()

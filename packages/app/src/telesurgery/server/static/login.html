@@ -1,0 +1,28 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard access · Holoscan Telesurgery</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/theme.css">
+    <script type="module" src="/static/login.js"></script>
+</head>
+<body>
+    <main class="access-page">
+        <h1>Open this dashboard</h1>
+        <p>Enter the access code provided by the person running this service.</p>
+        <form id="access-form">
+            <label for="access-code">Access code</label>
+            <input id="access-code" type="password" autocomplete="current-password" required autofocus>
+            <button type="submit">Open dashboard</button>
+            <p id="access-error" role="alert" hidden></p>
+        </form>
+        <p>A new code is required after the service restarts.</p>
+    </main>
+</body>
+</html>

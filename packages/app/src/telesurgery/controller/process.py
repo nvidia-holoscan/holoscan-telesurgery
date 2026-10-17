@@ -39,6 +39,7 @@ class NativeController:
         input_device=None,
         *,
         retain_control=False,
+        token=None,
     ):
         preferences = preferences or {}
         if (
@@ -79,6 +80,7 @@ class NativeController:
                         "server": server,
                         "robot": robot,
                         "certificate": certificate,
+                        "token": token,
                         "status_path": str(self.path),
                         "generation": self.temporary.name,
                         "input": input_device,

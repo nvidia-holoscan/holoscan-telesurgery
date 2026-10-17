@@ -12,6 +12,7 @@ import {
     codecName,
     browserCamera,
     dismissOnBackdrop,
+    confirmAction,
 } from "./ui.js";
 import { patientPages } from "./patient.js";
 import { robotControls, robotLabel } from "./robots.js";
@@ -43,7 +44,8 @@ let state,
     robotId = null,
     preferredRobot = null,
     robotPreferenceKey,
-    roleInitialized;
+    roleInitialized,
+    joinRestored = false;
 const roomActions = new Set();
 for (const [selector, method, done] of [
     ["#stop-all-streams", "camera.stop_all", "Streams stopped"],
@@ -55,6 +57,8 @@ for (const [selector, method, done] of [
 ]) {
     $(selector).onclick = async () => {
         if (roomActions.size) return;
+        if (method === "camera.stop_all" && !await confirmAction("Stop all video streams?",
+            "Every viewer will lose these camera feeds until the streams are started again.", "Stop streams")) return;
         roomActions.add(method);
         const output = $("#room-action-status");
         output.hidden = false;
@@ -838,6 +842,16 @@ function renderCurrent() {
     $("#session").hidden = isPatient || state.session?.status !== "pending";
     $("#session-status").textContent =
         "Your request has been sent. Cameras and controls become available after approval.";
+    $("#connection-notice").hidden = isPatient || !state.connection_notice;
+    $("#connection-notice-text").textContent = state.connection_notice || "";
+    if (!isPatient && !joinRestored) {
+        joinRestored = true;
+        const previous = state.last_patient || {};
+        const form = $("#join-form");
+        if (previous.address) form.elements.address.value = previous.address;
+        if (previous.name) form.elements.name.value = previous.name;
+        if (previous.robot !== undefined) form.elements.robot.checked = previous.robot;
+    }
     if (roleInitialized !== state.role) {
         roleInitialized = state.role;
         document.title = `Holoscan Telesurgery - ${isPatient ? "Patient" : "Surgeon"}`;
@@ -1061,6 +1075,10 @@ $("#join-form").addEventListener("submit", async (event) => {
         notice(error);
     }
 });
+$("#connection-notice-dismiss").onclick = async () => {
+    await action("connection.dismiss");
+    await refresh();
+};
 $("#disconnect").addEventListener("click", async () => {
     await robots.releaseAll();
     await action("disconnect");

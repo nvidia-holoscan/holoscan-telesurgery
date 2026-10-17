@@ -2880,3 +2880,13 @@ body[data-role="surgeon"] .robot-panel {
 #room-action-status button {
     margin-left: 16px;
 }
+/* Network dashboard access is a single, labelled form at every viewport. */
+.access-page { max-width: 440px; margin: 12vh auto; padding: 24px; }
+.access-page form { display: grid; gap: 12px; }
+.access-page input, .access-page button { min-height: 44px; }
+.confirm-action { max-width: min(440px, calc(100vw - 32px)); }
+.robot-toolbar .robot-stop { min-width: 88px; min-height: 44px; height: 44px; font-weight: 700; margin-left: 12px; }
+.physical-start-warning { font-weight: 600; }
+#connection-notice { padding: 12px 24px; background: var(--panel, #fff); border-bottom: 2px solid var(--accent, #76b900); }
+#connection-notice:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.robot-input-status { min-height: 3lh; margin: 8px 0; font-weight: 600; }

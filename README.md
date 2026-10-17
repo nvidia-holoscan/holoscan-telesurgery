@@ -147,8 +147,8 @@ See [Versius controls](docs/robot-controls.md#versius-simulation) for the two-su
 
 ### Network
 
-- Dashboard ports are **8000** and **8002** (`--port`). The patient endpoint is **7447** (`--endpoint-port`).
-- Dashboards bind to `127.0.0.1`. Add `--host 0.0.0.0 --ssl` for HTTPS from another machine. There is no login.
+- Dashboard ports are **8000** and **8002** (`--port`). The TLS patient endpoint is **7447** (`--endpoint-port`), bound to all IPv4 interfaces unless `--endpoint-host` is set.
+- Dashboards bind to `127.0.0.1`. For network access, use `--host 0.0.0.0 --ssl` and the access code from `dashboard-access.yaml` (path printed at startup). Network HTTP requires explicit `--insecure`. See [Security](SECURITY.md).
 - Custom HTTPS certificates must cover a local hostname or IP address for native controls.
 
 ### Workspace

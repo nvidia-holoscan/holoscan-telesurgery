@@ -3,7 +3,7 @@
 
 """Bounded application calls executed by real Holoscan graphs."""
 
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from queue import Empty, Full, Queue
 from threading import Lock
 from time import monotonic
@@ -19,6 +19,24 @@ class Calls:
         self.was_idle = False
 
     def compute(self):
+        # Expire queued work even while another invocation is stalled. Never
+        # finish the active future early: its function may still be running.
+        expired = []
+        with self.pending.mutex:
+            for _ in range(len(self.pending.queue)):
+                item = self.pending.queue.popleft()
+                if item[0].done() or monotonic() > item[1]:
+                    expired.append(item[0])
+                else:
+                    self.pending.queue.append(item)
+            if expired:
+                self.pending.not_full.notify_all()
+        for future in expired:
+            if not future.done():
+                try:
+                    future.set_exception(TimeoutError("Request expired before execution"))
+                except InvalidStateError:
+                    pass  # Its caller cancelled it while we expired the queue.
         # One outstanding call prevents latest-frame SDK channels dropping requests.
         if self.active is not None and not self.active.done():
             return None

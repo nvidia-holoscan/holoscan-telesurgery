@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { $, element, button, action, notice, hasSelection } from "./ui.js";
+import { $, element, button, action, notice, hasSelection, confirmAction } from "./ui.js";
 import { gamepadInput } from "./gamepad.js";
 import { haplyInput, supportsHaply } from "./haply.js";
 import { replayControls } from "./replay.js";
@@ -20,6 +20,8 @@ export function robotLabel(robot) {
 export function robotStatus(robot) {
     const [label, status] = deviceStatus(robot, true);
     if (status !== "online") return label;
+    if (robot.state?.stopping) return "Stopping… · Wait for fresh input";
+    if (robot.state?.home_active) return "Going Home… · Stop interrupts motion";
     if (robot.owner) return `Active · ${robot.owner}`;
     if (robot.controls?.read_only) return "State only";
     if (!jogGroups(robot).length) return "Motion disabled";
@@ -448,6 +450,11 @@ export function robotControls(refresh, openMetrics) {
     window.addEventListener("blur", () => pauseAll("dashboard lost focus", true));
     window.addEventListener("keydown", (event) => {
         if (event.key === "Escape") pauseAll("Escape pressed");
+        if (event.code === "Space" && (held.size || current) &&
+            !event.target.closest("input, textarea, select, button, a, summary, [role='button'], [contenteditable='true']")) {
+            event.preventDefault();
+            pauseAll("Space pressed");
+        }
     });
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) pauseAll("dashboard hidden");
@@ -574,8 +581,11 @@ export function robotControls(refresh, openMetrics) {
                     card.armSpeed ? (pairedArms(robot) && index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).increment(seconds)
                         : card.step.value();
                 const jointRate = (group, index) => (index === 4 && card.rollSpeed ? card.rollSpeed : card.armSpeed).value();
-                const goHome = async () => {
+                const goHome = async (confirmed = false) => {
                     if (!card.home || card.home.disabled) return;
+                    if (confirmed !== true && !await confirmAction("Move to Home?",
+                        `${card.robot.name} will move to its starting pose. Ensure the path is clear.`, "Move Home")) return;
+                    if (!permitted(card.robot) || card.home.disabled) return;
                     card.home.disabled = true;
                     card.home.blur();
                     stopInputs(card);
@@ -593,7 +603,7 @@ export function robotControls(refresh, openMetrics) {
                     {
                         home: robot.controls.home_deg ? {
                             available: () => card.home && !card.home.disabled,
-                            run: () => goHome().catch(notice),
+                            run: () => goHome(true).catch(notice),
                         } : null,
                         gripFeedback: velocity => card.grippers?.gamepad(velocity),
                         haplyAvailable: () => state.haply_available === true,
@@ -616,10 +626,9 @@ export function robotControls(refresh, openMetrics) {
                         await endInput(robot.id);
                         await refresh();
                     },
-                    "secondary icon-button",
-                    "stop",
+                    "danger robot-stop",
                 );
-                card.stop.title = "Stop motion · Esc";
+                card.stop.title = "Stop motion · Esc or Space";
                 card.acquire = button("Acquire", () => acquire(card.robot), "secondary small acquire-control");
                 card.acquire.setAttribute("aria-label", "Acquire control");
                 card.acquire.title = "Acquire control";
@@ -649,6 +658,8 @@ export function robotControls(refresh, openMetrics) {
                 if (robot.simulation && robot.controls.reset_scene) {
                     card.reset = button("Reset scene", async () => {
                         if (card.reset.disabled) return;
+                        if (!await confirmAction("Reset the simulation?", "Reset the scene and return its robots and objects to their starting positions.", "Reset scene")) return;
+                        if (!permitted(card.robot) || card.reset.disabled) return;
                         card.reset.disabled = true;
                         card.reset.blur();
                         stopInputs(card);

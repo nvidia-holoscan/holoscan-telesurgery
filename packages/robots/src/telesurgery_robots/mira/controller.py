@@ -8,6 +8,8 @@ import hashlib
 import ipaddress
 import json
 import os
+import secrets
+import time
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -29,6 +31,21 @@ class MiraController:
         )
         self.identity = hashlib.sha256(f"{self.directory}:{spec['id']}".encode()).hexdigest()[:12]
         self.name = f"telesurgery-mira-{self.identity}"
+        self.session = secrets.token_hex(16)
+        self.owned = False
+        self.stop_pending = False
+        self.lease_task = None
+        self.lease_path = self.directory / f"controller-{self.identity}" / f"lease-{self.session}"
+
+    async def _heartbeat(self):
+        while True:
+            temporary = self.lease_path.with_suffix(".tmp")
+            temporary.write_text(str(time.monotonic()))
+            temporary.replace(self.lease_path)
+            await asyncio.sleep(0.5)
+
+    def _ours(self, info):
+        return info["Config"].get("Labels", {}).get(self.label + ".session") == self.session
 
     async def _docker(self, *args):
         process = await asyncio.create_subprocess_exec(
@@ -67,6 +84,19 @@ class MiraController:
             state = info["State"] if info else {}
             running = state.get("Running", False)
             error = state.get("Error", "")
+            if self.stop_pending:
+                return {
+                    "status": "error",
+                    "error": "MIRA API stop is unconfirmed; retry cleanup before startup.",
+                }
+            if running and not self._ours(info):
+                return {
+                    "status": "error",
+                    "error": (
+                        "MIRA API is already running from another node session. "
+                        "Stop its owner before connecting this node."
+                    ),
+                }
             if not running and state.get("ExitCode"):
                 error = error or f"Controller exited ({state['ExitCode']}); open Logs"
             return {
@@ -102,6 +132,8 @@ class MiraController:
             "no",
             "--label",
             f"{self.label}={self.identity}",
+            "--label",
+            f"{self.label}.session={self.session}",
             "--log-driver",
             "local",
             "--log-opt",
@@ -121,20 +153,44 @@ class MiraController:
             "--workdir",
             "/work",
             "--entrypoint",
-            "/opt/mira-api",
+            "python",
             self.image,
+            "-m",
+            "telesurgery_robots.mira.supervisor",
+            f"/work/{self.lease_path.name}",
+            "/opt/mira-api",
         ]
 
     async def start(self):
+        if self.stop_pending:
+            await self.stop()
         info = await self._inspect()
         if info and info["State"].get("Running"):
+            if not self._ours(info) or not self.owned:
+                raise RuntimeError(
+                    "MIRA API is already running from another node session. "
+                    "Stop its owner before connecting this node."
+                )
             return  # Repeated clicks or a node reconnect never restart an active controller.
         command = self.command()
         # Only an existing local image is used; do not download during robot startup.
         await self._docker("image", "inspect", self.image)
         if info:
             await self._docker("rm", self.name)
-        await self._docker(*command)
+        if self.lease_task:
+            self.lease_task.cancel()
+            await asyncio.gather(self.lease_task, return_exceptions=True)
+        self.lease_task = asyncio.create_task(self._heartbeat())
+        await asyncio.sleep(0)  # Publish the lease before starting the supervisor.
+        try:
+            await self._docker(*command)
+            self.owned = True
+        except BaseException:
+            self.lease_task.cancel()
+            await asyncio.gather(self.lease_task, return_exceptions=True)
+            self.lease_task = None
+            self.lease_path.unlink(missing_ok=True)
+            raise
 
     async def log(self):
         if not await self._inspect():
@@ -153,7 +209,21 @@ class MiraController:
         return {"text": output, "updated_seconds_ago": age}
 
     async def stop(self):
-        info = await self._inspect()
-        if info and info["State"].get("Running"):
-            # Use the verified container ID so a replacement with the same name is untouched.
-            await self._docker("stop", "--time", "5", info["Id"])
+        try:
+            if self.owned:
+                self.stop_pending = True
+                info = await self._inspect()
+                if info and info["State"].get("Running"):
+                    if not self._ours(info):
+                        raise RuntimeError("Controller belongs to another node session")
+                    await self._docker("stop", "--time", "5", info["Id"])
+            self.owned = False
+            self.stop_pending = False
+        finally:
+            # A failed Docker operation must still end the supervisor lease.
+            # Keep ownership until cleanup succeeds so the next call can retry.
+            if self.lease_task:
+                self.lease_task.cancel()
+                await asyncio.gather(self.lease_task, return_exceptions=True)
+                self.lease_task = None
+            self.lease_path.unlink(missing_ok=True)

@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 
 from telesurgery.nodes.address import endpoint
+from telesurgery.nodes.profiles import devices as profile_devices
+from telesurgery.nodes.profiles import manual_devices
 from telesurgery.nodes.service import NodeService
 from telesurgery.nodes.video import VideoEndpoint
 from telesurgery_core.configuration import load, save
@@ -88,6 +90,22 @@ class NodeClient:
                 writer.transport.abort()
             raise
         self.peer = Peer(reader, writer, self.request, clock=self.clock, max_payload=0).start()
+        devices = (
+            []
+            if self.environment
+            else [
+                {
+                    "name": str(spec.get("name", spec["id"])),
+                    "kind": spec["kind"],
+                    "powers_motors": spec["kind"] == "mira" and bool(spec.get("controller")),
+                }
+                for spec in [
+                    *manual_devices(self.directory).get("robots", []),
+                    *profile_devices(self.directory),
+                ]
+                if not spec["kind"].endswith("-sim")
+            ]
+        )
         while True:
             reply = await self.peer.call(
                 "node.request",
@@ -95,6 +113,7 @@ class NodeClient:
                     "name": config["name"],
                     "token": config["token"],
                     "environment": self.environment,
+                    "devices": devices,
                 },
             )
             status = reply["status"]

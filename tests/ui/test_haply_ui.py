@@ -421,8 +421,15 @@ async def test_haply_browser_selection_focus_stop_and_delayed_reply(kind):
                 )
             ):
                 await reset.click()
+                await (
+                    page.get_by_role("dialog")
+                    .get_by_role("button", name="Reset scene", exact=True)
+                    .click()
+                )
             stop_button = page.get_by_role("button", name="Stop", exact=True)
-            assert await stop_button.locator("svg").count() == 1
+            await expect(stop_button).to_have_text("Stop")
+            box = await stop_button.bounding_box()
+            assert box["width"] >= 44 and box["height"] >= 44
             assert await stop_button.locator("kbd").count() == 0
             state["haply_available"] = False
             await expect(selector.locator('option[value="haply"]')).to_have_count(0)

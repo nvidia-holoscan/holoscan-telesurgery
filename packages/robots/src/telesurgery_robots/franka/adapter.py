@@ -29,7 +29,7 @@ class Franka:
                 f"Franka dependency unavailable ({exc}); "
                 "run ./setup.sh --profile franka on this node"
             ) from exc
-        if not hasattr(Controller, "kinematics"):
+        if not hasattr(Controller, "kinematics") or not hasattr(Controller, "request_stop"):
             raise RuntimeError(
                 "Rebuild the Franka adapter: run ./scripts/build_franka.sh on this node"
             )
@@ -132,6 +132,12 @@ class Franka:
         if self.reader is not None:
             self.reader.hold()
         return self.read()
+
+    def request_stop(self):
+        # The native method only sets atomics; it neither waits nor performs FCI I/O.
+        reader = self.reader
+        if reader is not None:
+            reader.request_stop()
 
     def close(self):
         if hasattr(self, "workspace"):

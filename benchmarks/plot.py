@@ -132,6 +132,16 @@ def plot_stream(rows, sdk, source, camera, receiver):
         fontsize=11,
         color="#526171",
     )
+    if source == "imx274-thor" and (compare or sdk == "5"):
+        fig.text(
+            0.975,
+            0.963,
+            "HSB capture: SDK 4.6.0; refreshed receiver: SDK 5 EA3",
+            ha="right",
+            va="top",
+            fontsize=9,
+            color="#526171",
+        )
 
     for column, (group, title) in enumerate(resolutions if native else (("h264", "H.264"),)):
         if native:
@@ -325,7 +335,7 @@ def plot_comparison(rows):
         0,
         0.025,
         "Change = (SDK 5 EA3 / SDK 4 − 1) × 100. Gray = not tested. "
-        "Separate runs and application revisions.",
+        "Separate runs/revisions; HSB capture uses SDK 4.6.0.",
         fontsize=9,
         color="#526171",
     )

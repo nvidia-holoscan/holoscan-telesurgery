@@ -66,3 +66,32 @@ async def test_shared_clock_idle_peers_keep_alive_and_still_answer_rpc(monkeypat
         finally:
             await local.close()
             await remote.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), object()])
+async def test_invalid_local_message_does_not_disconnect_other_requests(value):
+    connected = asyncio.Future()
+
+    async def handler(peer, method, params):
+        return {"bad": value} if method == "bad_response" else {"ok": True}
+
+    async def accept(reader, writer):
+        connected.set_result(Peer(reader, writer, handler).start())
+
+    async with await asyncio.start_server(accept, "127.0.0.1", 0) as server:
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", server.sockets[0].getsockname()[1]
+        )
+        local = Peer(reader, writer, handler).start()
+        remote = await connected
+        try:
+            with pytest.raises(ValueError, match="Invalid application message"):
+                await local.call("robot.move", {"command": {"joints": [value]}})
+            with pytest.raises(RuntimeError, match="Invalid response data"):
+                await local.call("bad_response")
+            assert await local.call("status") == {"ok": True}
+            assert not local.closed.is_set() and not remote.closed.is_set()
+        finally:
+            await local.close()
+            await remote.close()

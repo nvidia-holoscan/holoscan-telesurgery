@@ -34,6 +34,20 @@ class Controller:
         self.connection_deadline = time.monotonic() + 60
         self.observed = self.next_poll = 0.0
         self.sample = 0
+        self.stop_generation = 0
+
+    def request_stop(self, token=None):
+        """Latch only adapters with an explicitly thread-safe stop signal.
+
+        The ordinary graph still confirms hold and changes ownership. This
+        signal never calls vendor I/O concurrently with an existing operation.
+        """
+        if token is not None and self.token is not None and token != self.token:
+            raise PermissionError("Control token is no longer valid")
+        self.stop_generation += 1
+        signal = getattr(self.adapter, "request_stop", None)
+        if signal is not None:
+            signal()
 
     def permitted(self):
         return self.adapter.simulation or self.specification().get("motion_enabled") is True
@@ -254,8 +268,6 @@ class Controller:
             return
         try:
             if self.active and (time.monotonic() >= self.expires or not self.permitted()):
-                if time.monotonic() < self.next_poll:
-                    return
                 self.release()
             period = getattr(self.adapter, "poll_interval", 0.1)
             if time.monotonic() >= self.next_poll and time.monotonic() - self.observed >= period:
@@ -354,8 +366,22 @@ class Robots:
             )
             return future
         function = getattr(device, method)
+        if method in {"hold", "release", "close"}:
+            device.request_stop(params.get("token"))
+        generation = device.stop_generation
+
+        def invoke():
+            if method in {"move", "replay_release"} and generation != device.stop_generation:
+                raise RuntimeError("Robot input cancelled by Stop")
+            return function(**params)
+
         return graph.submit(
-            lambda: function(**params), timeout=0.2 if method in {"move", "replay_release"} else 2
+            invoke,
+            timeout=0.2
+            if method in {"move", "replay_release"}
+            else 5
+            if method in {"hold", "release", "close"}
+            else 2,
         )
 
     def _close(self, key):

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { $, action, element, button, device } from "./ui.js";
+import { $, action, element, button, device, confirmAction } from "./ui.js";
 import { openLog } from "./logs.js";
 import { icon } from "./icons.js";
 import { deviceStatus } from "./device-status.js";
@@ -212,6 +212,11 @@ export function patientPages(changed, removeNode, refresh) {
                             `${request.ip} · ${request.environment ? `${request.environment.toUpperCase()} simulation` : "Physical devices"} · ${request.id}`,
                         ),
                     );
+                    if (request.devices?.length) {
+                        identity.append(element("p", `Configured robots: ${request.devices.map(d => `${d.name} (${d.kind})`).join(", ")}`));
+                        if (request.devices.some(d => d.powers_motors))
+                            identity.append(element("p", "Approval starts the MIRA vendor API and may enable motor power.", "physical-start-warning"));
+                    }
                     const actions = element("div", undefined, "actions");
                     for (const [label, method] of [
                         ["Approve", "node.approve"],
@@ -220,10 +225,14 @@ export function patientPages(changed, removeNode, refresh) {
                         const control = button(
                             label,
                             async () => {
+                                const physical = method === "node.approve" && request.devices?.length > 0;
+                                if (physical && !await confirmAction("Start physical devices?",
+                                    `${request.devices.map(d => d.name).join(", ")}. ${request.devices.some(d => d.powers_motors)
+                                        ? "The MIRA vendor API may enable motor power. " : ""}Confirm the equipment is ready for startup.`, "Approve and start")) return;
                                 for (const button of actions.children)
                                     button.disabled = true;
                                 try {
-                                    await action(method, { id: request.id });
+                                    await action(method, { id: request.id, ...(physical ? {confirm_physical: true} : {}) });
                                     await refresh();
                                 } finally {
                                     for (const button of actions.children)

@@ -18,6 +18,12 @@ The browser and native controller also show **Replay inputs** when you own a sim
 
 In joint mode, tap a key or click its on-screen button for a short move. Hold it to move continuously after 450 ms; the target advances without waiting for the previous move to finish. Tool mode starts continuous motion immediately. Releasing held input requests a smooth stop.
 
+The labelled **Stop** button and **Esc** request a stop immediately. **Space** also stops when focus is outside a form control or button. Stop, patient force-release, revoke and robot disconnect do not wait for confirmation. **Home**, **Reset scene** and **Stop all streams** ask for confirmation; gamepad Home uses its existing deliberate hold. A patient force-release displays a persistent notice to the surgeon.
+
+During braking or Home, keyboard input is ignored with a visible status message. Release and press again when ready; blocked taps are never replayed later.
+
+Surgeon reconnect preserves the last patient address, name and selected cameras. Lost connections show a persistent message and retry using the saved identity; selected feeds return when their node returns. Motion requires fresh input. Revocation and **Leave** stop automatic rejoin.
+
 **Arm speed**, **Rotation speed**, and **Grip speed** are percentages of the selected robot's configured operating rates. At 50%, the requested rate is half its 100% rate; the same free travel takes approximately twice as long after acceleration. Physical and simulated robots may use different maxima. Contact, joint limits, acceleration and short travel can reduce measured speed. Changing a speed stops active input and requires fresh input. Controls appear only for supported motions and installed grippers.
 
 Physical MIRA defaults to **70% arm, 90% rotation, 90% grip**. MIRA simulation defaults to **20%, 50%, 40%**. Physical Franka defaults to **75% arm**; Franka/CMR simulation defaults to **20% arm**. Their tool rotation defaults to **50%**, and available grippers to **40%**. Saved user choices take precedence. The browser and native controller use the same rates for keyboard, gamepad and Haply.
@@ -132,7 +138,9 @@ robots:
     motion_enabled: true
 ```
 
-The node connects automatically after admission. Use **Connect** to retry a failed connection. Physical tool jogging uses the configured end-effector Jacobian from libfranka in the native 1 kHz loop. Damped inverse kinematics feeds synchronized Ruckig joint velocity trajectories, with the same tool mapping and speed scale as simulation. The planner slows before joint limits and limits acceleration to 1 rad/s² and jerk to 10 rad/s³. Home and advanced joint moves keep their existing position trajectories. The native loop stops on missing input after 200 ms; release/Stop requests braking immediately. Desk collision thresholds, motor enable and fault recovery remain under the operator’s control. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
+The node connects automatically after admission. Use **Connect** to retry a failed connection. Physical tool jogging uses the configured end-effector Jacobian from libfranka in the native 1 kHz loop. Damped inverse kinematics feeds synchronized Ruckig joint velocity trajectories, with the same tool mapping and speed scale as simulation. The planner slows before joint limits and limits acceleration to 1 rad/s² and jerk to 10 rad/s³. Home and advanced joint moves keep their existing position trajectories. The native loop stops on missing input after 200 ms; release/Stop sends a nonblocking atomic braking request before waiting for queued work. Rebuild the native adapter after updating (`./scripts/build_franka.sh`). Desk collision thresholds, motor enable and fault recovery remain under the operator’s control. Feedback shows measured joints separately from targets. Choose **Disconnect** before using Desk tasks.
+
+Software Stop is a smooth braking request, not an emergency stop. At a steady 20°/s with zero starting acceleration, the joint/Home planner's 0.2 rad/s² acceleration and 2 rad/s³ jerk limits imply about **1.85 s and 18.5°** of joint travel after braking begins. The Cartesian planner's 1 rad/s² and 10 rad/s³ limits imply about **0.45 s and 4.5°** at the same joint speed. These planner estimates exclude command transit, starting acceleration, hardware tracking and geometry; they are not a measured tool stopping distance or a safety guarantee. Use the physical emergency stop for an emergency.
 
 **Home** uses the shared fixed reset pose for physical and simulated Franka: `[-24.475, -18.378, 13.651, -106.151, 9.422, 90.758, -21.335]°`. Simulated grippers, when advertised, return to their open starting position; Home waits for measured gripper completion. Physical Franka gripper control is not exposed. Verify the path with an operator present; **Stop / Esc** interrupts it. Physical sustained control, Home and soft Stop were operator-verified on the tested setup; per-installation home calibration remains on the [TODO list](TODO.md). Motor enable and fault recovery are not exposed.
 
@@ -140,7 +148,7 @@ The node connects automatically after admission. Use **Connect** to retry a fail
 
 The simulation starts with both tool tips approximately 5 cm above the suture pad and 10 cm apart. **Home** returns to this simulation pose. The mounted endoscope aims at the pad center, framing the needle and both tools. The needle rests on a raised support above the pad for left-arm pickup and lift practice; physical MIRA retains its vendor home pose.
 
-Use **Reset scene** when the needle falls off the pad. The square **Stop** icon stops motion; **Esc** does the same.
+Use **Reset scene** when the needle falls off the pad. The labelled **Stop** button stops motion; **Esc** does the same.
 
 **Home** on physical MIRA returns both arms to `[15.7, 80.6, 45, 98.9]°`, resets tool roll to 0°, and closes both grippers. Both physical and simulated Home block manual input until arms and tools reach their targets; **Stop** cancels Home and holds measured positions. Physical Home also requests a hold after a timeout or failed tool command.
 
@@ -185,7 +193,9 @@ Later starts reuse the saved executable without prompting:
 
 The node's POD-facing address defaults to `192.168.0.1`. Set `--mira-pod-interface IP` to save a different address; this does not configure the host's network interface or change the POD address embedded in the vendor API. The supplied July build targets `192.168.0.10:10000` (UDP). Configure the node interface as `192.168.0.1/24` for that package.
 
-After patient admission, the node starts the supplied controller in Docker and connects to its loopback WebSocket API automatically. Vendor startup can enable motor power, so launching this physical node is an intentional robot bring-up action. There is no additional dashboard confirmation. If startup fails, use **Start controller** to retry. The July 2025 API generates its lookup table on first controller startup; allow extra time and about 503 MB of disk space. Generated data and logs persist in the node's controller directory.
+After patient admission, the node starts the supplied controller in Docker and connects to its loopback WebSocket API automatically. The approval card lists physical robots and requires explicit confirmation; it warns that MIRA vendor startup can enable motor power. A changed device list requires approval again. If startup fails, use **Start controller** to retry. The July 2025 API generates its lookup table on first controller startup; allow extra time and about 503 MB of disk space. Generated data and logs persist in the node's controller directory.
+
+Managed MIRA uses a node-session lease refreshed every 0.5 s. Its supervisor terminates the vendor process when the lease is more than 3 s old, with a 1 s termination grace period. A new node refuses to adopt a controller from an older session. Containers started by older versions must be stopped by their operator before bringing up the new node; they do not gain supervision retroactively. Vendor-process termination does not confirm a physical hold or power-off. The host watchdog attempts hold at lease expiry even during feedback retry backoff; MIRA still requires an attended physical stop procedure.
 
 Native node execution supports the same profile options, but the managed MIRA controller still requires Docker and the matching image locally: `holoscan-telesurgery:0.1.0` for SDK 5 or `holoscan-telesurgery:0.1.0-sdk4` for SDK 4.
 

@@ -45,10 +45,66 @@ async def test_removed_camera_does_not_block_selecting_replacement(
         await until(lambda: surgeon.remote_status.get("status") == "approved")
         await surgeon.action("view", {"cameras": [f"{key}:old", f"{key}:retained"]})
         cameras[0] = {"id": "new", "name": "new", "kind": "fixture", "auto_start": False}
-        await until(lambda: surgeon.selected == {f"{key}:retained"})
+        await until(lambda: surgeon.subscribed == {f"{key}:retained"})
+        assert surgeon.selected == {f"{key}:old", f"{key}:retained"}
         await surgeon.action("view", {"cameras": [f"{key}:new", f"{key}:retained"]})
         assert surgeon.selected == {f"{key}:new", f"{key}:retained"}
         assert patient.peers[grant["id"]]["selected"] == surgeon.selected
+    finally:
+        await surgeon.close()
+        await patient.close()
+
+
+async def test_patient_restart_restores_selection_but_revocation_stops_rejoin(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    patient = Application(
+        "patient", tmp_path / "patient", endpoint_port=0, endpoint_host="127.0.0.1"
+    )
+    surgeon = Application("surgeon", tmp_path / "surgeon")
+    inventory = {"cameras": [{"id": "node:camera", "name": "Camera"}], "robots": [], "nodes": []}
+    monkeypatch.setattr(patient, "inventory", lambda: inventory)
+    monkeypatch.setattr(surgeon.streams, "select", AsyncMock())
+    try:
+        await patient.start()
+        await surgeon.start()
+        address = f"127.0.0.1:{patient.endpoint_port}"
+        grant = await surgeon.connect(address, "Observer", False)
+        await patient.action("access.approve", {"id": grant["id"]})
+        await until(lambda: surgeon.remote_status.get("status") == "approved")
+        await surgeon.action("view", {"cameras": ["node:camera"]})
+        port = patient.endpoint_port
+        await patient.close()
+        await until(lambda: surgeon.remote_status.get("status") == "reconnecting")
+        assert "lost" in surgeon.connection_notice
+        assert surgeon.join_request == {"address": address, "name": "Observer", "robot": False}
+        assert not surgeon.tokens
+        patient = Application(
+            "patient", tmp_path / "patient", endpoint_port=port, endpoint_host="127.0.0.1"
+        )
+        monkeypatch.setattr(patient, "inventory", lambda: inventory)
+        await patient.start()
+        await until(
+            lambda: (
+                surgeon.remote_status.get("status") == "approved"
+                and surgeon.subscribed == {"node:camera"}
+            )
+        )
+        assert "restored" in surgeon.connection_notice
+        assert not surgeon.tokens and not surgeon.replays
+        assert surgeon.selected == {"node:camera"}
+        assert patient.peers[surgeon.remote_status["id"]]["selected"] == {"node:camera"}
+        await patient.action("access.revoke", {"id": surgeon.remote_status["id"]})
+        await until(lambda: surgeon.remote_status.get("status") == "revoked")
+        assert not surgeon.reconnect_enabled
+        assert "ended your access" in surgeon.connection_notice
+        await asyncio.sleep(2.2)
+        assert surgeon.remote_status["status"] == "revoked"
+        assert (await surgeon.connect(address, "Observer", False))["status"] == "pending"
+        await surgeon.action("disconnect", {})
+        assert not surgeon.reconnect_enabled and surgeon.reconnect_task is None
     finally:
         await surgeon.close()
         await patient.close()
@@ -250,7 +306,7 @@ async def test_two_surgeons_admission_handoff_and_disconnect(tmp_path, enrolled_
             previous_sequence = patient.owners[robot_id].sequence
             await other.remote.close()
             await until(lambda: previous_id not in patient.access.surgeons)
-            await until(lambda: other.remote_status.get("status") == "disconnected")
+            await until(lambda: other.remote_status.get("status") == "reconnecting")
             assert patient.owners[robot_id].owner == previous_id
             with pytest.raises(RuntimeError, match="another surgeon"):
                 await winner.action("robot.acquire", {"id": robot_id})
