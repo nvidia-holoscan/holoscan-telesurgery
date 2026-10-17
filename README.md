@@ -42,7 +42,7 @@ With the CUDA 13 development toolkit installed, run:
 ./setup.sh
 ```
 
-Unchanged setups are reused automatically. Use `./setup.sh --force` to rerun installation and validation.
+Setups are cached; use `--force` to rerun. Native setup builds SDK 5 and logs to `build/setup.log`. Retry failed downloads without deleting `build/`. On slow connections, avoid simultaneous native and Docker builds.
 
 Follow the quickstart below, omitting `--docker` from run commands. Simulation nodes still require Docker for Isaac Sim.
 

@@ -36,6 +36,7 @@ ARG CUDAARCHS=all-major
 ENV CUDAARCHS=$CUDAARCHS
 COPY dependencies ./dependencies
 COPY scripts/builders/sdk4.py scripts/builders/sdk5.py ./scripts/builders/
+COPY native/patches/holoscan-sdk5-archives.patch ./native/patches/
 RUN mkdir -p /opt/holoscan /opt/hololink /opt/sdk4-development
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,id=telesurgery-build-${SDK}-cuda${CUDA_VERSION}-${TARGETARCH},target=/app/build,sharing=locked \

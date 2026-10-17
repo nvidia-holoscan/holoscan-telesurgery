@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A newer commit supersedes checks for the same PR; main and scheduled runs stay independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   portable:
     name: Unit tests (CPU)
@@ -26,10 +31,10 @@ jobs:
           version: "0.12.21"
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk xvfb xauth
-      - run: uv sync --locked --all-packages --extra franka
-      - run: uv run --no-sync python -c 'import pinocchio'
-      - run: uv run --no-sync playwright install --with-deps chromium
-      - run: xvfb-run -a uv run --no-sync pytest -q -m 'not sdk and not gpu'
+      # The portable suite does not build libfranka or use its Pinocchio toolchain.
+      - run: uv sync --locked --all-packages
+      - run: uv run --no-sync playwright install --with-deps --only-shell chromium
+      - run: xvfb-run -a uv run --no-sync pytest -q -m 'not sdk and not gpu' --durations=20 --durations-min=1
   security:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

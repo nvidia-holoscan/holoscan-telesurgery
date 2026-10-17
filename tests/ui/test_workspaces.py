@@ -23,7 +23,7 @@ PEER = """window.offers=0;window.closedPeers=0;window.RTCPeerConnection=class {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["patient", "surgeon"])
-async def test_camera_action_columns_with_mixed_codecs_and_states(role, tmp_path):
+async def test_camera_action_columns_with_mixed_codecs_and_states(role):
     cameras = [
         {**camera("one", "Room camera"), "codec": "h264"},
         {**camera("two", "Endoscope", "stopped"), "codec": "raw-bgr8"},
@@ -86,7 +86,6 @@ async def test_camera_action_columns_with_mixed_codecs_and_states(role, tmp_path
                 assert await page.locator(f"{root}").evaluate(
                     "node => node.scrollWidth <= node.clientWidth"
                 )
-                await page.screenshot(path=str(tmp_path / f"{role}-actions-{width}.png"))
             if role == "surgeon":
                 cameras[1]["status"] = "live"
                 await expect(page.locator("#quick-feeds")).to_contain_text("Endoscope")
@@ -104,7 +103,6 @@ async def test_camera_action_columns_with_mixed_codecs_and_states(role, tmp_path
                     "const r=b.getBoundingClientRect();return [r.x-c.x,r.bottom-c.bottom]})})"
                 )
                 assert offsets[0] == offsets[1]
-                await native.screenshot(path=str(tmp_path / f"{role}-native-{width}.png"))
         finally:
             await browser.close()
 
@@ -124,7 +122,7 @@ def camera(node, name, status="live"):
 
 
 @pytest.mark.asyncio
-async def test_patient_node_workflow_and_metrics(tmp_path):
+async def test_patient_node_workflow_and_metrics():
     state = {
         "role": "patient",
         "sdk": "5.0",
@@ -198,10 +196,8 @@ async def test_patient_node_workflow_and_metrics(tmp_path):
             await expect(page.get_by_role("heading", name="Room overview")).to_be_visible()
             assert not await page.locator("video").count()
             assert await page.locator("#patient-nav a").count() == 3
-            await page.screenshot(path=str(tmp_path / "patient-overview.png"))
             await page.get_by_role("link", name="Nodes", exact=False).first.click()
             await expect(page.get_by_role("heading", name="Nodes", exact=True)).to_be_visible()
-            await page.screenshot(path=str(tmp_path / "patient-nodes.png"))
             await (
                 page.locator("#nodes .device")
                 .filter(has_text="Thor")
@@ -252,7 +248,6 @@ async def test_patient_node_workflow_and_metrics(tmp_path):
             assert await page.evaluate("window.offers") == 0
             await page.get_by_role("button", name="Preview", exact=True).click()
             await page.wait_for_function("window.offers === 1")
-            await page.screenshot(path=str(tmp_path / "patient-node.png"))
             await page.get_by_role("link", name="Surgeons", exact=False).click()
             await (
                 page.locator("#surgeons .device")
@@ -265,7 +260,6 @@ async def test_patient_node_workflow_and_metrics(tmp_path):
             ).to_contain_text("approved")
             assert actions[-1]["params"]["robot"] is True
             assert state["cameras"][1]["status"] == "live"
-            await page.screenshot(path=str(tmp_path / "patient-surgeons.png"))
             await page.goto("http://localhost:8777/#node/thor")
             await page.get_by_role("button", name="Endoscope", exact=True).click()
             await (
@@ -284,7 +278,6 @@ async def test_patient_node_workflow_and_metrics(tmp_path):
             await page.wait_for_timeout(1200)
             assert len(metric_requests) == count
             await page.set_viewport_size({"width": 390, "height": 844})
-            await page.screenshot(path=str(tmp_path / "patient-mobile.png"), full_page=True)
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert not errors
         finally:
@@ -292,7 +285,7 @@ async def test_patient_node_workflow_and_metrics(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls(tmp_path):
+async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls():
     cameras = [camera("host", "Room camera"), camera("thor", "Endoscope")]
     state = {
         "role": "surgeon",
@@ -370,7 +363,6 @@ async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls
             await page.get_by_role("button", name="Done arranging").click()
             assert await page.evaluate("window.offers") == 2
             assert await page.evaluate("window.closedPeers") == 0
-            await page.screenshot(path=str(tmp_path / "surgeon-workspace.png"))
             await (
                 page.locator('[data-camera="thor:camera"]')
                 .get_by_role("button", name="Metrics", exact=True)
@@ -383,7 +375,6 @@ async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls
             await page.get_by_role("button", name="Add feeds", exact=True).first.click()
             await page.locator("#camera-search").fill("Endoscope")
             await expect(page.locator("#cameras .device:visible")).to_have_count(1)
-            await page.screenshot(path=str(tmp_path / "surgeon-feed-picker.png"))
             heading = page.locator("#feed-title")
             await heading.click()
             await expect(page.locator("#feed-dialog")).to_be_visible()
@@ -414,7 +405,6 @@ async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls
             await expect(page.locator("#view-layout")).to_have_value("two")
             await expect(page.locator('[data-camera="thor:camera"]')).to_have_css("order", "0")
             await page.set_viewport_size({"width": 390, "height": 844})
-            await page.screenshot(path=str(tmp_path / "surgeon-mobile.png"), full_page=True)
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             state["session"]["robot"] = False
             await expect(page.locator("#robots-panel")).to_contain_text("View-only access")
@@ -460,7 +450,7 @@ async def test_surgeon_arranges_views_without_reconnecting_or_switching_controls
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("robot_count", [1, 3])
-async def test_patient_inline_previews_preserve_media_and_alignment(tmp_path, robot_count):
+async def test_patient_inline_previews_preserve_media_and_alignment(robot_count):
     def camera_item(index):
         return {**camera("host", f"Procedure camera {index}"), "id": f"host:camera-{index}"}
 
@@ -557,7 +547,6 @@ async def test_patient_inline_previews_preserve_media_and_alignment(tmp_path, ro
                             f'#equipment-rows td[data-label="{col}"]'
                         ).evaluate_all("cells => cells.map(c => c.getBoundingClientRect().x)")
                         assert max(positions) - min(positions) < 1
-                await page.screenshot(path=str(tmp_path / f"equipment-{width}.png"), full_page=True)
             for _ in range(2):
                 await (
                     page.locator("#equipment-rows")

@@ -82,7 +82,7 @@ async def test_gripper_keyboard_release_pairs_are_one_hold(kind, interruption):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("simulation", [True, False])
-async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
+async def test_mira_gripper_buttons_and_home_permissions(simulation):
     adapter = (MiraSimulation if simulation else MiraAdapter)({"uri": "unused"})
     robot = {
         "id": "node:mira",
@@ -241,7 +241,6 @@ async def test_mira_gripper_buttons_and_home_permissions(simulation, tmp_path):
             await page.keyboard.up("m")
             await page.clock.run_for(100)
             assert calls[-1]["action"] == "robot.hold"
-            await page.locator("#robots-panel").screenshot(path=str(tmp_path / "mira-grippers.png"))
             state["session"]["robot"] = False
             await page.clock.run_for(1100)
             await expect(page.locator(".gripper-controls")).to_have_count(0)

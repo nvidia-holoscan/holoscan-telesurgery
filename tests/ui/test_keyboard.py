@@ -14,7 +14,7 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mira", "mira-sim", "franka-sim", "franka"])
-async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
+async def test_keyboard_mapping_permission_and_robot_switch(kind):
     groups = {"joints": 7} if kind.startswith("franka") else {"left": 4, "right": 4}
     robot = {
         "id": "host:robot",
@@ -158,7 +158,6 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind, tmp_path):
                 c["params"]["command"][key] == [0] * (count - 1) + [-distance] for c in moves
             )
             assert calls[-1]["action"] == "robot.hold"
-            await page.screenshot(path=str(tmp_path / f"{kind}-keyboard.png"))
             calls.clear()
             # Input listeners are removed when switching robots. Held keys cannot
             # transfer to a different robot or resume after an approval changes.

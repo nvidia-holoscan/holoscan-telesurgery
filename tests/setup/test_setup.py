@@ -39,6 +39,8 @@ with Path(os.environ["SETUP_CALLS"]).open("a") as log:
     log.write(json.dumps({"command": command, "sdk": os.environ["TELESURGERY_SDK"]}) + "\\n")
 if os.environ.get("SETUP_FAIL") in command:
     sys.exit("Setup fixture failure")
+if any(part.startswith("scripts/builders/sdk") for part in command):
+    print("SDK build progress", flush=True)
 if "scripts/setup_cache.py" in command and "check" in command:
     sys.exit(0 if os.environ.get("SETUP_CACHE_HIT") and "--force" not in command else 1)
 if "scripts/select_runtime.py" in command:
@@ -145,6 +147,9 @@ def test_native_setup_selects_sdk_and_installs_only_missing_packages(setup, opti
         ["python", "-m", "telesurgery", "doctor"],
     ]
     assert "Setup complete." in result.stdout
+    assert "SDK build progress" in result.stdout
+    assert "SDK build progress" in (root / "build/setup.log").read_text()
+    assert "Building SDK and camera support finished in" in result.stdout
     assert records[-1]["command"][:3] == ["python", "scripts/setup_cache.py", "record"]
 
 

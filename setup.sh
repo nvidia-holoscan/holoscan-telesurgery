@@ -119,13 +119,17 @@ export UV_MANAGED_PYTHON=1
 log="$root/build/setup.log"
 : > "$log"
 echo "Setup details: $log"
+# Keep Python progress messages visible when output is piped to the log.
+export PYTHONUNBUFFERED=1
 step() {
-    echo "$1"
+    local label="$1" started=$SECONDS
+    echo "$label" | tee -a "$log"
     shift
-    if ! "$@" >> "$log" 2>&1; then
+    if ! "$@" 2>&1 | tee -a "$log"; then
         tail -n 30 "$log" >&2
         fail "Setup failed. See $log"
     fi
+    echo "${label%…} finished in $((SECONDS - started))s." | tee -a "$log"
 }
 
 step "Preparing Python environment…" uv run --no-project --python 3.12 \

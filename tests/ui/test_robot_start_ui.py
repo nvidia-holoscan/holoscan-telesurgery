@@ -12,9 +12,7 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("connection_enabled", [False, True])
-async def test_patient_retries_controller_without_confirmation_and_node_layout(
-    tmp_path, connection_enabled
-):
+async def test_patient_retries_controller_without_confirmation_and_node_layout(connection_enabled):
     robot = {
         "id": "node:mira",
         "node": "node",
@@ -114,9 +112,6 @@ async def test_patient_retries_controller_without_confirmation_and_node_layout(
                 await page.set_viewport_size({"width": width, "height": 980})
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 await expect(page.locator("#equipment-panel")).to_be_visible()
-                await page.screenshot(
-                    path=str(tmp_path / f"robot-start-{width}.png"), full_page=True
-                )
             assert not errors
         finally:
             await browser.close()

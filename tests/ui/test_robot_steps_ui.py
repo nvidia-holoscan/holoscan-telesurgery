@@ -17,7 +17,7 @@ STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static
 @pytest.mark.asyncio
 @pytest.mark.parametrize("percent", [1, 20, 100])
 @pytest.mark.parametrize("simulation", [False, True])
-async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulation):
+async def test_joint_button_and_key_are_single_steps(percent, simulation):
     speed_value = FRANKA_SPEED["max"] * percent / 100
     step_size = speed_value * 0.05
     robot = {
@@ -201,7 +201,6 @@ async def test_joint_button_and_key_are_single_steps(tmp_path, percent, simulati
             assert len(moves()) == count  # Recovery keeps the lock but cannot resume old input.
             assert len([c for c in calls if c["action"] == "robot.acquire"]) == 1
             assert not any(c["action"] == "robot.release" for c in calls)
-            await page.screenshot(path=str(tmp_path / "franka-steps.png"), full_page=True)
             assert not errors
         finally:
             await browser.close()
