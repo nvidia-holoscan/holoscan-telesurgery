@@ -34,7 +34,7 @@ def read_csv(name):
 
 def write_csv(name, fields, rows):
     with (ROOT / "results" / name).open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -323,6 +323,14 @@ def documents(rows, dates):
                 "The coordinator and receiver use Holoscan `5.0.0a3 (public EA3)`; "
                 "HSB capture uses `4.6.0` and all other sources use SDK 5.",
             )
+        content = re.sub(
+            r"^\|[^\n]+\|$",
+            lambda match: (
+                "| " + " | ".join(cell.strip() for cell in match[0][1:-1].split("|")) + " |"
+            ),
+            content,
+            flags=re.M,
+        )
         path.write_text(content)
 
 

@@ -75,6 +75,7 @@ class Window:
         self.selected, self.inputs = robot, None
         self.replay_manual_mode = None
         self.switching_robot = False
+        self.confirming = False
         self.pending_robot = None
         self.incoming_control = robot if retain_control else None
         self.return_control = False
@@ -166,11 +167,9 @@ class Window:
             self.toolbar, "Replay inputs", self.start_replay, width=34, icon="replay"
         )
         Tooltip(self.replay_button, "Replay inputs")
-        self.stop_button = Button(
-            self.toolbar, "Stop", self.stop, width=34, color="#a63735", icon="stop"
-        )
+        self.stop_button = Button(self.toolbar, "Stop", self.stop, width=88, height=44, danger=True)
         self.stop_button.pack(side="left")
-        Tooltip(self.stop_button, "Stop motion · Esc")
+        Tooltip(self.stop_button, "Stop motion · Esc / Space")
         self.replay_status = self.label(self.body, "", size=9, color=MUTED)
         self.replay_status.configure(wraplength=self.px(356))
         self.controls = tk.Frame(
@@ -284,6 +283,7 @@ class Window:
             and not state.get("home_active")
             and not state.get("stopping")
             and not self.pending_home
+            and not self.confirming
             and not self.pending_reset
             and not self.replay.busy
             and not self.closing
@@ -318,8 +318,21 @@ class Window:
         self.root.focus_set()
 
     def confirm_robot_switch(self, selected):
+        name = self.robots[selected]["name"]
+        return self.confirm_action(
+            "Release control and switch?",
+            f"Release the current robot before selecting {name}.\n\n"
+            "Acquire control of the new robot when you are ready.",
+            "Release control and switch",
+        )
+
+    def confirm_action(self, title, detail, label):
+        if self.confirming:
+            return False
+        self.stop()
+        self.confirming = True
         dialog = tk.Toplevel(self.root)
-        dialog.title("Release control and switch?")
+        dialog.title(title)
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.configure(bg="white", padx=self.px(20), pady=self.px(18))
@@ -330,31 +343,29 @@ class Window:
             accepted = confirm
             dialog.destroy()
 
-        self.label(dialog, "Release control and switch?", size=12, bold=True).pack(anchor="w")
-        name = self.robots[selected]["name"]
-        description = self.label(
-            dialog,
-            f"Release the current robot before selecting {name}.\n\n"
-            "Acquire control of the new robot when you are ready.",
-        )
+        self.label(dialog, title, size=12, bold=True).pack(anchor="w")
+        description = self.label(dialog, detail)
         description.configure(wraplength=self.px(360), justify="left")
         description.pack(fill="x", pady=self.px(12, 18))
         actions = tk.Frame(dialog, bg="white")
         actions.pack(fill="x")
         cancel = ttk.Button(actions, text="Cancel", command=finish)
         cancel.pack(side="left")
-        ttk.Button(actions, text="Release control and switch", command=lambda: finish(True)).pack(
+        ttk.Button(actions, text=label, command=lambda: finish(True)).pack(
             side="right", padx=self.px(12, 0)
         )
         dialog.protocol("WM_DELETE_WINDOW", finish)
-        dialog.bind("<Escape>", lambda _: finish())
+        dialog.bind("<Escape>", lambda _: (self.stop(), finish()))
         dialog.update_idletasks()
         dialog.geometry(
             f"+{self.root.winfo_rootx() + self.px(20)}+{self.root.winfo_rooty() + self.px(80)}"
         )
         dialog.grab_set()
         cancel.focus_set()
-        self.root.wait_window(dialog)
+        try:
+            self.root.wait_window(dialog)
+        finally:
+            self.confirming = False
         return accepted and not self.closing
 
     def finish_robot_switch(self):
@@ -971,7 +982,11 @@ class Window:
 
     def key_down(self, event):
         key = ";" if event.keysym == "semicolon" else event.keysym.lower()
-        if key == "escape":
+        if key == "escape" or (
+            key == "space"
+            and not self.editing()
+            and not isinstance(self.root.focus_get(), (Button, ttk.Button, tk.Button))
+        ):
             self.stop()
             self.root.focus_set()
             return "break"
@@ -996,9 +1011,18 @@ class Window:
             key = ";" if event.keysym == "semicolon" else event.keysym.lower()
             self.inputs.keyboard.release(key, time.monotonic())
 
-    def go_home(self):
-        robot = self.robots.get(self.selected)
+    def go_home(self, *, confirmed=False):
+        selected = self.selected
+        robot = self.robots.get(selected)
         if not robot or not self.available() or self.control.feedback(robot).get("control_active"):
+            return
+        if not confirmed and not self.confirm_action(
+            "Move to Home?",
+            f"{robot['name']} will move to its starting pose. Check the path is clear.",
+            "Move to Home",
+        ):
+            return
+        if self.selected != selected or not self.available():
             return
         self.stop()
         self.pending_home = True
@@ -1013,6 +1037,16 @@ class Window:
             or not robot["controls"].get("reset_scene")
             or robot.get("reset_scene_blocked")
         ):
+            return
+        selected = self.selected
+        if not self.confirm_action(
+            "Reset simulation scene?",
+            "The scene and its objects will return to their starting state.",
+            "Reset scene",
+        ):
+            return
+        robot = self.robots.get(selected, {})
+        if self.selected != selected or not self.permitted() or robot.get("reset_scene_blocked"):
             return
         self.stop()
         self.pending_reset = True
@@ -1279,7 +1313,7 @@ class Window:
             if mode == "release":
                 self.control.stop()
             elif mode == "home":
-                self.go_home()
+                self.go_home(confirmed=True)
             else:
                 self.control.move(
                     self.selected,

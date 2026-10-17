@@ -147,6 +147,7 @@ async def test_explicit_startup_opt_out_still_allows_manual_start(node):
         controller.status.return_value = {"status": "running"}
 
     controller.start.side_effect = started
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
     await service.start()
     service.local.start_camera.assert_not_called()
@@ -171,6 +172,7 @@ async def test_managed_controller_starts_after_admission_and_failures_require_ma
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped", "error": ""}),
     )
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
     connections = []
     service.robots.sync.side_effect = lambda: connections.append(
@@ -215,6 +217,7 @@ async def test_cancel_during_controller_creation_finishes_before_shutdown(node):
         stop=AsyncMock(),
         status=AsyncMock(return_value={"status": "stopped"}),
     )
+    service.controllers["arm"] = controller
     service.controller = lambda key: controller
     startup = asyncio.create_task(service.start())
     await entered.wait()
@@ -226,3 +229,54 @@ async def test_cancel_during_controller_creation_finishes_before_shutdown(node):
         await startup
     await service.close()
     controller.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter_fails", [False, True])
+async def test_inventory_removal_closes_adapter_before_ending_vendor_lease(node, adapter_fails):
+    service, _ = node
+    events = []
+
+    async def refresh():
+        service.local.robots = {}
+
+    def sync():
+        events.append("adapter")
+        if adapter_fails:
+            raise RuntimeError("Adapter shutdown unconfirmed")
+
+    async def stop():
+        events.append("vendor")
+
+    service.local.refresh = refresh
+    service.robots.sync.side_effect = sync
+    controller = SimpleNamespace(stop=AsyncMock(side_effect=stop))
+    service.controllers["removed"] = controller
+    service.controller_errors["removed"] = "Old startup error"
+    if adapter_fails:
+        with pytest.raises(RuntimeError, match="Adapter shutdown unconfirmed"):
+            await service.call("inventory")
+    else:
+        await service.call("inventory")
+    assert events == ["adapter", "vendor"]
+    assert not service.controllers
+    assert not service.controller_errors
+    await service.close()
+    controller.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_stops_cached_controllers_after_inventory_disappears(node):
+    service, _ = node
+    first = SimpleNamespace(stop=AsyncMock(side_effect=RuntimeError("Docker unavailable")))
+    second = SimpleNamespace(stop=AsyncMock())
+    service.controllers.update(first=first, second=second)
+    service.local.robots = {}
+    # Shutdown must use owned instances, not reconstruct controllers from inventory.
+    service.controller = Mock(side_effect=AssertionError("Unexpected controller creation"))
+    with pytest.raises(RuntimeError, match="Docker unavailable"):
+        await service.close()
+    first.stop.assert_awaited_once()
+    second.stop.assert_awaited_once()
+    assert not service.controllers
+    service.controller.assert_not_called()

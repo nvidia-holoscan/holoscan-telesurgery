@@ -375,6 +375,8 @@ class Button(tk.Canvas):
         command=None,
         *,
         width=64,
+        height=34,
+        danger=False,
         color=INK,
         hold=None,
         icon=None,
@@ -393,7 +395,7 @@ class Button(tk.Canvas):
         super().__init__(
             parent,
             width=max(self.px(width), text_width + self.px(12)) if not icon else self.px(width),
-            height=self.px(34),
+            height=self.px(height),
             bg="white",
             highlightthickness=0,
             takefocus=True,
@@ -401,6 +403,7 @@ class Button(tk.Canvas):
         )
         self.text, self.command, self.color, self.hold = text, command, color, hold
         self.icon = icon
+        self.danger = danger
         self.shortcut = shortcut
         self.enabled, self.pressed = True, False
         self.down = False
@@ -440,18 +443,33 @@ class Button(tk.Canvas):
         self.delete("all")
         px = self.px
         width = max(self.winfo_width(), int(self.cget("width")))
+        height = max(self.winfo_height(), int(self.cget("height")))
         rounded(
             self,
             px(1),
             px(1),
             width - px(3),
-            px(31),
+            height - px(3),
             radius=px(5),
             width=px(1),
-            fill="#e4f1cf" if self.pressed else "white",
-            outline="#76b900" if self.pressed else "#cdd6cc",
+            fill="#a63735"
+            if self.danger and self.enabled
+            else "#e4f1cf"
+            if self.pressed
+            else "white",
+            outline="#7d2827"
+            if self.danger and self.enabled
+            else "#76b900"
+            if self.pressed
+            else "#cdd6cc",
         )
-        color = self.color if self.enabled or self.pressed else "#a8b0ab"
+        color = (
+            "white"
+            if self.danger and self.enabled
+            else self.color
+            if self.enabled or self.pressed
+            else "#a8b0ab"
+        )
         if self.icon == "home":
             # The dashboard's 24-unit Home outline, centered in a 20px icon.
             points = (
@@ -577,7 +595,7 @@ class Button(tk.Canvas):
         else:
             self.create_text(
                 width / 2,
-                px(17),
+                height / 2,
                 text=self.text,
                 font=self.text_font,
                 fill=color,

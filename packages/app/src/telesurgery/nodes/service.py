@@ -81,7 +81,12 @@ class NodeService:
                             controller.owned and (await controller.status())["status"] == "running"
                         )
                         spec["connection_enabled"] = enabled and running
-                await asyncio.to_thread(self.robots.sync)
+                try:
+                    await asyncio.to_thread(self.robots.sync)
+                finally:
+                    # Close adapters before ending the removed vendor leases,
+                    # including when an adapter cannot confirm shutdown.
+                    await self.stop_controllers(self.controllers.keys() - self.local.robots.keys())
             self.start_cameras(room)
             feedback = self.robots.report()
             robots = []
@@ -265,6 +270,18 @@ class NodeService:
             for camera in list(self.local.workers):
                 await self.local.stop_camera(camera)
 
+    async def stop_controllers(self, keys):
+        errors = []
+        for key in keys:
+            controller = self.controllers.pop(key)
+            self.controller_errors.pop(key, None)
+            try:
+                await controller.stop()
+            except Exception as exc:
+                errors.append(str(exc) or type(exc).__name__)
+        if errors:
+            raise RuntimeError("Controller cleanup failed: " + "; ".join(errors))
+
     async def close(self):
         self.started = False
         await self.cancel_startup()
@@ -282,13 +299,7 @@ class NodeService:
         if self.robots.devices:
             await cleanup(asyncio.to_thread(self.robots.close))
         await cleanup(self.local.close())
-        for key in self.local.robots:
-            try:
-                controller = self.controller(key)
-                if controller:
-                    await cleanup(controller.stop())
-            except Exception as exc:
-                errors.append(str(exc) or type(exc).__name__)
+        await cleanup(self.stop_controllers(tuple(self.controllers)))
         if self.room:
             await cleanup(self.room.close())
         if errors:
