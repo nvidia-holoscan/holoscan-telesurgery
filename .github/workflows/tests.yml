@@ -34,7 +34,10 @@ jobs:
       # The portable suite does not build libfranka or use its Pinocchio toolchain.
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync playwright install --with-deps --only-shell chromium
-      - run: xvfb-run -a uv run --no-sync pytest -q -m 'not sdk and not gpu' --durations=20 --durations-min=1
+      # Bound Chromium concurrency and redistribute work when a worker finishes early.
+      - run: >-
+          xvfb-run -a uv run --no-sync pytest -q -m 'not sdk and not gpu'
+          -n 4 --dist worksteal --durations=20 --durations-min=1
   security:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

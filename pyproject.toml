@@ -14,7 +14,7 @@ codecs-cu13 = ["cupy-cuda13x>=14,<15", "pynvvideocodec==2.2.3", "nvidia-nvimgcod
 tokenizer-cu13 = ["tensorrt-cu13-bindings==10.13.3.9.post1", "tensorrt-cu13-libs==10.13.3.9.post1"]
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff==0.17.0", "pre-commit==4.6.2", "playwright>=1.50,<2"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist==3.8.0", "ruff==0.17.0", "pre-commit==4.6.2", "playwright>=1.50,<2"]
 
 [tool.uv]
 package = false

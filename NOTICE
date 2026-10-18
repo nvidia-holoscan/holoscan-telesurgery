@@ -203,6 +203,15 @@ pytest-asyncio (https://github.com/pytest-dev/pytest-asyncio)
 Version 1.4.0. Development dependency.
 Licensed under Apache-2.0 (https://github.com/pytest-dev/pytest-asyncio/blob/v1.4.0/LICENSE)
 
+pytest-xdist (https://github.com/pytest-dev/pytest-xdist)
+Copyright (c) 2010 Holger Krekel and contributors.
+Version 3.8.0. Development dependency.
+Licensed under MIT (https://github.com/pytest-dev/pytest-xdist/blob/v3.8.0/LICENSE)
+
+execnet (https://github.com/pytest-dev/execnet)
+Version 2.1.2. Development dependency of pytest-xdist.
+Licensed under MIT (https://github.com/pytest-dev/execnet/blob/v2.1.2/LICENSE)
+
 ruff (https://github.com/astral-sh/ruff)
 Version 0.17.0. Development dependency.
 Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.17.0/LICENSE)
