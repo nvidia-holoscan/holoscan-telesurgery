@@ -99,6 +99,10 @@ Tests cover admission, exclusive control, stale commands, disconnection, real SD
 
 Pull requests run CPU-only unit and browser tests, pre-commit, SPDX copyright/license checks, documentation link checks and security checks. GPU and Holoscan integration tests run locally with the corresponding SDK installed.
 
+CI runs the CPU-only suite across four pytest workers and reports the 20 slowest tests. To reproduce it locally, run `xvfb-run -a .venv-sdk5/bin/pytest -q -m 'not sdk and not gpu' -n 4 --dist worksteal --durations=20 --durations-min=1`. Use `-n 0` for serial debugging. Keep temporary files, service ports and displays isolated per test or worker. Parallel execution is opt-in; SDK/GPU tests still run serially by default.
+
+Cover shared behavior once per distinct code path; test device labels and responsive layouts separately instead of multiplying them into every motion scenario. Keep screenshots only when they are asserted or retained as review artifacts.
+
 For Blossom CI, `SachidanandAlle`, `jjomier` and `wendell-hom` can comment `/build` on a pull request. The repository needs the `blossom` runner and `BLOSSOM_KEY` / `CI_SERVER` secrets; `workflow_dispatch` is reserved for CI result callbacks. Comment triggers become available once the workflow is on `main`.
 
 CI audits locked Python dependencies, scans Python code and checks workflow security on changes and weekly. Dependency updates come through Dependabot. Private keys are checked before commit; keep certificates, credentials and runtime state out of Git. Dependency scans do not cover the CUDA/Isaac Sim images or vendor binaries.

@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright, expect
 
 
 @pytest.mark.asyncio
-async def test_node_requests_approval_rejection_and_removal(tmp_path):
+async def test_node_requests_approval_rejection_and_removal():
     static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
     actions = []
     state = {
@@ -86,7 +86,7 @@ async def test_node_requests_approval_rejection_and_removal(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_node_grid_alignment_at_different_counts_and_widths(tmp_path):
+async def test_node_grid_alignment_at_different_counts_and_widths():
     static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
     state = {
         "role": "patient",
@@ -164,10 +164,6 @@ async def test_node_grid_alignment_at_different_counts_and_widths(tmp_path):
                     for status in ("online", "offline"):
                         heights = [box["height"] for box in boxes if box["group"] == status]
                         assert max(heights) - min(heights) < 1
-                    if count in (2, 4, 9) and width != 1024:
-                        await page.screenshot(
-                            path=str(tmp_path / f"nodes-{count}-{width}.png"), full_page=True
-                        )
             # A host coming back online moves groups on the next status update.
             reconnected = state["nodes"][0]
             reconnected["status"] = "online"

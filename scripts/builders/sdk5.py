@@ -38,6 +38,7 @@ def rust(work):
     os.environ.update(CARGO_HOME=str(cargo), RUSTUP_HOME=str(work / "toolchain/rustup"))
     os.environ["PATH"] = f"{cargo}/bin:{os.environ['PATH']}"
     if not (cargo / "bin/cargo").exists():
+        print("Downloading the Rust build toolchain…", flush=True)
         installer = work / "install-rust.sh"
         run("curl", "-fLsS", "https://sh.rustup.rs", "-o", installer)
         run(
@@ -63,6 +64,7 @@ def slang(source, work):
     )[1]
     target = work / "toolchain" / f"slang-{version}-{arch}-{checksum[:12]}"
     if not (target / "bin/slangc").exists():
+        print(f"Downloading Slang {version} for {arch}…", flush=True)
         target.mkdir(parents=True, exist_ok=True)
         archive = target / "slang.tar.gz"
         run(
@@ -131,6 +133,7 @@ install(CODE "${code}" COMPONENT holoscan-wheel-core)
 
 
 def build_holoscan(sdk_spec, work, args):
+    print("Preparing pinned SDK 5 sources…", flush=True)
     source = checkout("holoscan", sdk_spec, work)
     build = work / source.name
     prefix = args.prefix.resolve() if args.prefix else build / "install"
@@ -146,6 +149,7 @@ def build_holoscan(sdk_spec, work, args):
         "INFERENCE",
     )
     flags = [f"-DHOLOSCAN_BUILD_{key}=OFF" for key in disabled]
+    print("Configuring SDK 5 and downloading missing dependencies…", flush=True)
     run(
         "cmake",
         "-S",
@@ -166,12 +170,17 @@ def build_holoscan(sdk_spec, work, args):
         "-DGLFW_BUILD_WAYLAND=OFF",
         "-DVOLK_HEADERS_ONLY=ON",
         "-DCPM_DOWNLOAD_ALL=ON",
+        # Dependency revisions are pinned by this SDK checkout. Keep initial
+        # downloads enabled, but do not contact Git remotes on every reconfigure.
+        "-DFETCHCONTENT_UPDATES_DISCONNECTED=ON",
         *flags,
     )
+    print(f"Compiling SDK 5 with {args.jobs} jobs…", flush=True)
     run("cmake", "--build", build, "-j", args.jobs)
     run("cmake", "--install", build)
     wheels = build / "wheels"
     for module in ("core", "visualization"):
+        print(f"Packaging the SDK 5 {module} wheel…", flush=True)
         run(
             "uv",
             "build",

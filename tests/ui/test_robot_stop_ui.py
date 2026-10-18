@@ -460,9 +460,7 @@ async def test_observing_same_session_ownership_does_not_release_another_tabs_in
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stop_key", ["Escape", "Space"])
-async def test_explicit_ownership_idle_renewal_release_and_patient_force_release(
-    tmp_path, stop_key
-):
+async def test_explicit_ownership_idle_renewal_release_and_patient_force_release(stop_key):
     calls = []
     robot = {
         "id": "node:franka",
@@ -554,7 +552,6 @@ async def test_explicit_ownership_idle_renewal_release_and_patient_force_release
             assert calls.count("robot.renew") >= 2
             assert "robot.release" not in calls
             await expect(status).to_have_text("Active · Operator")
-            await page.locator("#robots").screenshot(path=str(tmp_path / "active-controls.png"))
             await release.click()
             await expect(status).to_have_text("Available")
             await expect(release).to_be_hidden()

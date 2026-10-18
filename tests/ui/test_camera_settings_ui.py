@@ -13,7 +13,7 @@ from playwright.async_api import async_playwright, expect
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["USB", "HSB"])
 @pytest.mark.parametrize("codec", ["h264", "h265", "nvjpeg", "raw-bgr8", "surgical-tokenizer"])
-async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tmp_path):
+async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
     static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
     usb_modes = [
         {"width": 640, "height": 480, "fps": [30], "pixel_format": "YUYV"},
@@ -118,11 +118,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec, tm
                     )
             if codec not in {"h264", "surgical-tokenizer"}:
                 await expect(page.locator("#stream-viewing")).to_contain_text("View in Holoviz")
-            await page.screenshot(path=str(tmp_path / f"{kind}-settings.png"))
             await page.set_viewport_size({"width": 390, "height": 844})
-            await page.screenshot(
-                path=str(tmp_path / f"{kind}-settings-mobile.png"), full_page=True
-            )
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.get_by_role("button", name="Start stream", exact=True).click()
             await expect(page.get_by_role("dialog", name="Start stream")).not_to_be_visible()

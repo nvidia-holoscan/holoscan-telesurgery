@@ -7,3 +7,4 @@ provider = "git"
 git = "https://github.com/nvidia-holoscan/holoscan-sdk.git"
 rev = "163dac10195d6b603f9e6158a1d5dfb390732203" # v5.0.0-ea3
 version = "5.0.0a3" # Local wheel version for the source-only EA3 release.
+patches = ["native/patches/holoscan-sdk5-archives.patch"]

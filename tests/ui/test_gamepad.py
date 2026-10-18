@@ -28,7 +28,7 @@ document.hasFocus = () => true;
         ("mira", {"left": 4, "right": 4}),
     ],
 )
-async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind, groups):
+async def test_gamepad_deadman_mapping_disconnect_and_revocation(kind, groups):
     robot = {
         "id": "node:robot",
         "name": "Robot",
@@ -180,7 +180,6 @@ async def test_gamepad_deadman_mapping_disconnect_and_revocation(tmp_path, kind,
             await page.wait_for_timeout(150)
             assert len([a for a in actions if a["action"] == "robot.move"]) == count
             await expect(page.locator(".gamepad-controls")).to_have_attribute("data-state", "ready")
-            await page.screenshot(path=str(tmp_path / f"{kind}-gamepad.png"))
             # Disconnect and reconnect while pressed must not resume movement.
             await page.evaluate("pad.buttons[4].pressed=true; pad.axes[0]=1")
             await page.wait_for_timeout(150)

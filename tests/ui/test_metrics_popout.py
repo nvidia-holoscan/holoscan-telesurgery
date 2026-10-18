@@ -14,7 +14,7 @@ from telesurgery.server.security import security_headers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["patient", "surgeon"])
-async def test_metrics_popout_dock_close_and_blocked_popup(role, tmp_path):
+async def test_metrics_popout_dock_close_and_blocked_popup(role):
     static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
     camera = {
         "id": "host:room",
@@ -122,7 +122,6 @@ async def test_metrics_popout_dock_close_and_blocked_popup(role, tmp_path):
             assert boxes[0]["y"] == boxes[1]["y"]
             await header.locator("h2").click()
             await expect(page.locator("#metrics-page")).to_be_visible()
-            await page.screenshot(path=str(tmp_path / "metrics-inline.png"))
 
             async with page.expect_popup() as opening:
                 await page.get_by_role("button", name="Pop out", exact=True).click()
@@ -141,7 +140,6 @@ async def test_metrics_popout_dock_close_and_blocked_popup(role, tmp_path):
             assert await page.locator("#metrics-page").count() == 0
             assert await page.evaluate("window.offers") == 1
             assert await page.evaluate("window.closedPeers") == 0
-            await popup.screenshot(path=str(tmp_path / "metrics-popout.png"))
             before = len(requests)
             # Hiding the dashboard must not stop a visible pop-out's sampler.
             await page.evaluate("""Object.defineProperty(document, 'hidden', {

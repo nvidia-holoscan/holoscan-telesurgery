@@ -18,21 +18,27 @@ from telesurgery_robots.adapters.simulation import (
 
 STATIC = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("device", ["keyboard", "gamepad", "haply"])
-@pytest.mark.parametrize("ending", ["escape", "complete", "blur", "hidden", "error", "stall"])
-@pytest.mark.parametrize(
-    "environment,name,adapter,width",
-    [
+# Exercise every ending with each input device on the reference layout. Blur
+# continues playback and exercises active input/gripper badges, so repeat that
+# path on the other robot layouts and the narrow viewport.
+REPLAY_CASES = [
+    (*layout, device, ending)
+    for layout in [
         ("franka", "Franka", FrankaSimulation, 1280),
         ("versius", "Versius left", VersiusSimulation, 1280),
         ("mira", "MIRA", MiraSimulation, 1280),
         ("mira", "MIRA", MiraSimulation, 360),
-    ],
-)
+    ]
+    for device in ("keyboard", "gamepad", "haply")
+    for ending in ("escape", "complete", "blur", "hidden", "error", "stall")
+    if layout[0] == "franka" or ending == "blur"
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment,name,adapter,width,device,ending", REPLAY_CASES)
 async def test_replay_requires_matching_recording_and_ownership_and_escape_discards_reply(
-    environment, name, adapter, width, ending, device, tmp_path
+    environment, name, adapter, width, ending, device
 ):
     role = "left" if environment == "versius" else environment
     simulated = adapter({"uri": "unused"})
@@ -174,7 +180,6 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             assert await page.locator(".robot-toolbar").evaluate(
                 "e => e.scrollWidth <= e.clientWidth"
             )
-            await page.locator("#robots-panel").screenshot(path=str(tmp_path / "replay-layout.png"))
             await page.clock.run_for(250)
             assert any(c["action"] == "replay.heartbeat" for c in calls)
             if ending == "escape":
@@ -201,12 +206,6 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                             '.gripper-controls [data-active="true"]'
                         ).count()
                         > 0
-                    )
-                    await page.get_by_role("button", name="Appearance", exact=True).click()
-                    await page.get_by_role("radio", name="Dark", exact=True).check()
-                    await page.locator("#appearance-panel").evaluate("panel => panel.hidePopover()")
-                    await page.locator("#robots-panel").screenshot(
-                        path=str(tmp_path / "replay-active-dark.png")
                     )
                 await expect(selector).to_be_disabled()
                 await page.evaluate("document.hasFocus = () => true")

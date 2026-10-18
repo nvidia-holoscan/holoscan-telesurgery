@@ -64,7 +64,6 @@ async def controller_page(gripper=False, kind="franka-sim", controller="DualSens
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["franka-sim", "franka", "versius-sim"])
-@pytest.mark.parametrize("controller", ["DualSense", "Xbox", "Nintendo Switch Pro Controller"])
 @pytest.mark.parametrize(
     "axis,value,button,key,component,index,sign",
     [
@@ -82,10 +81,10 @@ async def controller_page(gripper=False, kind="franka-sim", controller="DualSens
         (None, 0, 13, "down", "rotation", 1, 1),
     ],
 )
-async def test_cartesian_axes_and_release(
-    axis, value, button, key, component, index, sign, kind, controller
-):
-    async with controller_page(kind=kind, controller=controller) as page:
+async def test_cartesian_axes_and_release(axis, value, button, key, component, index, sign, kind):
+    # Standard gamepads share these axes and button positions. Device labels and
+    # raw Nintendo HID normalization have their own browser tests.
+    async with controller_page(kind=kind) as page:
         await expect(page.get_by_label("Robot gamepad mode")).to_have_value("cartesian")
         await expect(page.get_by_label("Robot gamepad mode")).to_be_visible()
         await expect(page.locator(".franka-joint-group")).to_have_count(0)
