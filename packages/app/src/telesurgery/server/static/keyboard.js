@@ -27,7 +27,6 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     const container = element("div", undefined, "keyboard-controls");
     const inputStatus = element("p", "", "robot-input-status");
     inputStatus.setAttribute("role", "status");
-    container.append(inputStatus);
     container.tabIndex = 0;
     container.setAttribute("aria-label", `${robot.name} keyboard controls`);
     const group = document.createElement("select");
@@ -85,7 +84,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     mapping.append(arms, rollControls);
     let feedback = robot.state || {};
     let feedbackLabels = [];
-    container.append(group, mapping);
+    container.append(group, inputStatus, mapping);
     if (!group.hidden && !toolControl && !miraTool)
         container.append(
             element("p", "[ / ] switch joint groups", "gamepad-hint"),
@@ -118,9 +117,9 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
     function showInputStatus(ignored = false) {
         const reason = stopping || feedback.stopping ? "Stopping…" : feedback.home_active ? "Going Home…" : "";
         inputStatus.textContent = reason
-            ? `${reason} ${ignored ? "Input ignored. " : ""}Release and press again when ready.`
-            : "";
-        inputStatus.style.visibility = reason ? "visible" : "hidden";
+            ? `${reason} ${ignored ? "Input ignored. " : ""}Release, then retry.`
+            : continuousTool() ? "Hold to move · Release to stop" : "Press a key or button to step";
+        inputStatus.title = inputStatus.textContent;
     }
     function halt() {
         lastJogAt = 0;
@@ -167,7 +166,7 @@ export function keyboardInput(robot, send, stop, stepSize = () => 0.2, jointSpee
             const hint = element("div", undefined, "cartesian-keyboard-hint");
             const frame = element("span", "Arm-base directions");
             frame.title = "Relative to this arm’s fixed base: forward +X, left +Y, up +Z. Camera and tool rotation do not change these directions.";
-            hint.append(element("span", "Hold to move · release to stop"), frame);
+            hint.append(frame);
             armRows.append(hint);
             return;
         }

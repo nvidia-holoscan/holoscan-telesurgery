@@ -31,6 +31,7 @@ const paths = {
     stop: "M6 6h12v12H6V6Z",
     disconnect:
         "m19 5 3-3M2 22l3-3M7 12l5 5-3 3a2 2 0 0 1-3 0l-2-2a2 2 0 0 1 0-3l3-3Zm5-5 5 5 3-3a2 2 0 0 0 0-3l-2-2a2 2 0 0 0-3 0l-3 3ZM8.5 13.5l2-2m0 4.5 2-2",
+    enter: "M9 4H4v16h5M21 12H8m5-5-5 5 5 5",
     leave: "M9 4H4v16h5m-1-8h13m-5-5 5 5-5 5",
     layout: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z",
     check: "m4 12 5 5L20 6",

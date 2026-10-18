@@ -184,13 +184,31 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
         assert window.mode_choice.winfo_viewable()
         assert "Tool movement" in " ".join(window.mode_choice.cget("values"))
         assert window.body.winfo_width() >= window.body.winfo_reqwidth()
+        assert window.scroll.canvas.winfo_viewable()
+        assert not window.scroll.bar.winfo_ismapped()
+        assert window.scroll.canvas.winfo_height() >= window.scroll.content.winfo_reqheight()
         assert window.stop_button.winfo_width() >= window.stop_button.winfo_reqwidth()
-        assert window.stop_button.winfo_height() >= window.px(44)
-        assert any(
-            window.stop_button.itemcget(item, "text") == "Stop"
-            for item in window.stop_button.find_all()
-            if window.stop_button.type(item) == "text"
-        )
+        for field in (
+            window.robot_choice,
+            window.device,
+            window.mode_choice,
+            window.home,
+            window.stop_button,
+            window.acquire_button,
+        ):
+            assert field.winfo_height() == window.px(36)
+        assert window.stop_button.winfo_width() == window.px(36)
+        assert window.stop_button.icon == "stop"
+        assert window.stop_button.tooltip.text.startswith("Stop motion")
+        for control, text in (
+            (window.acquire_button, "Acquire"),
+            (window.release_button, "Release"),
+        ):
+            assert any(
+                control.itemcget(item, "text") == text
+                for item in control.find_all()
+                if control.type(item) == "text"
+            )
         assert window.reset_button.winfo_ismapped()
         assert window.home.winfo_x() < window.reset_button.winfo_x() < window.stop_button.winfo_x()
         for canvas in [window.home, window.stop_button, *window.keys.values(), *window.sliders]:
@@ -216,6 +234,208 @@ def test_native_layout_fits_rendered_text(monkeypatch, virtual_display, scale, k
     finally:
         if window:
             window.shutdown()
+        root.destroy()
+
+
+@pytest.mark.parametrize("dark", [False, True])
+def test_native_stop_stays_red_in_all_button_states(virtual_display, dark):
+    import tkinter as tk
+
+    from telesurgery.controller.appearance import Colors
+
+    root = tk.Tk(screenName=virtual_display)
+    palette = {"danger": "#ff9992", "danger-border": "#80504e", "surface": "#19232d"}
+    root.controller_colors = Colors(palette if dark else None)
+    button = Button(root, "Stop", icon="stop", danger=True)
+    button.pack()
+    root.update()
+    try:
+        for enabled, pressed in [(False, False), (True, False), (True, True)]:
+            button.update_state(enabled, pressed)
+            glyph = next(item for item in button.find_all() if button.type(item) == "rectangle")
+            assert button.itemcget(glyph, "fill") == root.controller_colors("#a63735")
+            background = button.find_all()[0]
+            assert button.itemcget(background, "fill") == root.controller_colors(
+                "#eddad6" if pressed else "white"
+            )
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("operator_name", ["Operator", "Operator " + "long " * 14])
+def test_native_resizes_height_without_moving_toolbar(monkeypatch, virtual_display, operator_name):
+    import tkinter as tk
+
+    from telesurgery.controller.window import Window
+
+    root = tk.Tk(screenName=virtual_display)
+    monkeypatch.setattr(root, "winfo_screenheight", lambda: 4000)
+    monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+    monkeypatch.setattr(Window, "tick", lambda self: None)
+    client = SimpleNamespace(action=Mock(side_effect=AssertionError("No robot commands")))
+    window = Window(root, client)
+    try:
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "preview",
+                    "name": operator_name,
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [robot("mira")],
+                },
+            },
+            time.monotonic(),
+        )
+        window.feedback()
+        root.update()
+        width = root.winfo_width()
+        keyboard_height = root.winfo_height()
+        geometry = [
+            (w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
+            for w in (window.toolbar, window.device, window.stop_button)
+        ]
+        window.control.owned = window.selected
+        window.feedback()
+        root.update()
+        assert window.release_button.winfo_ismapped()
+        assert geometry == [
+            (w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
+            for w in (window.toolbar, window.device, window.stop_button)
+        ]
+        window.control.owned = None
+        window.device.configure(values=["Keyboard", "Xbox"])
+        window.device.current(1)
+        window.build_controls()
+        window.feedback()
+        root.update()
+        assert root.winfo_width() == width
+        assert not window.scroll.bar.winfo_ismapped()
+        window.device.current(0)
+        window.build_controls()
+        window.feedback()
+        root.update()
+        assert root.winfo_width() == width
+        assert root.winfo_height() == keyboard_height
+        extra = tk.Label(window.scroll.content, text="Additional device guidance", height=5)
+        extra.pack()
+        root.update()
+        assert root.winfo_height() > keyboard_height
+        assert not window.scroll.bar.winfo_ismapped()
+        extra.destroy()
+        root.update()
+        assert root.winfo_height() == keyboard_height
+        device_width = window.device.winfo_width()
+        window.robots[window.selected].update(kind="mira", simulation=False)
+        window.feedback()
+        root.update()
+        assert not window.reset_button.winfo_ismapped()
+        assert not window.replay_button.winfo_ismapped()
+        assert root.winfo_width() == width
+        assert window.device.winfo_width() == device_width + window.px(44)
+        assert window.device.winfo_x() + window.device.winfo_width() + window.px(8) == (
+            window.home.master.winfo_x() + window.home.winfo_x()
+        )
+        monkeypatch.setattr(root, "winfo_screenheight", lambda: window.px(650))
+        window.schedule_fit()
+        root.update()
+        assert root.winfo_height() <= window.px(560)
+        assert window.scroll.bar.winfo_ismapped()
+        assert window.stop_button.winfo_viewable()
+        client.action.assert_not_called()
+    finally:
+        window.control.owned = None
+        window.shutdown()
+        root.destroy()
+
+
+@pytest.mark.parametrize("selector", ["robot_choice", "device", "mode_choice"])
+@pytest.mark.parametrize("open_key", ["Down", "Up", "Return", "space"])
+def test_native_selectors_keep_keyboard_navigation_out_of_robot_input(
+    monkeypatch, virtual_display, selector, open_key
+):
+    import tkinter as tk
+
+    from telesurgery.controller.window import Window
+
+    root = tk.Tk(screenName=virtual_display)
+    monkeypatch.setattr("telesurgery.controller.window.Gamepads", lambda: None)
+    monkeypatch.setattr(Window, "tick", lambda self: None)
+    client = SimpleNamespace(action=Mock(side_effect=AssertionError("No robot commands")))
+    window = Window(root, client)
+
+    def key(name):
+        root.tk.call("event", "generate", root.tk.call("focus"), f"<KeyPress-{name}>")
+        root.update()
+        root.tk.call("event", "generate", root.tk.call("focus"), f"<KeyRelease-{name}>")
+        root.update()
+        window.drive(time.monotonic())
+        assert not window.inputs.keyboard.active
+
+    def choice():
+        return getattr(window, selector)
+
+    try:
+        window.update_status(
+            {
+                "role": "surgeon",
+                "session": {
+                    "id": "preview",
+                    "status": "approved",
+                    "robot": True,
+                    "robots": [robot("franka"), robot("mira")],
+                },
+            },
+            time.monotonic(),
+        )
+        window.device.configure(values=["Keyboard", "Xbox controller"])
+        window.device_ids = [None, 1]
+        # Device/mode navigation must remain safe even with control already acquired.
+        if selector != "robot_choice":
+            window.control.owned = "franka"
+        window.feedback()
+        root.update()
+        root.focus_force()
+        root.update()
+        key("Tab")
+        assert root.focus_get() == window.robot_choice
+        for _ in range(20):
+            if root.focus_get() == choice():
+                break
+            key("Tab")
+        assert root.focus_get() == choice()
+        original = choice().get()
+        key(open_key)
+        popup = str(choice()) + ".popdown.f.l"
+        assert str(root.tk.call("focus")) == popup
+        assert window.editing()
+        key("Down")
+        assert root.tk.call(popup, "curselection") == (1,)
+        key("Up")
+        assert root.tk.call(popup, "curselection") == (0,)
+        key("Down")
+        assert choice().get() == original  # Browsing does not apply a selection.
+        key("Return")
+        assert choice().current() == 1
+        assert root.focus_get() == choice()
+        assert window.editing()
+        if selector == "robot_choice":
+            assert window.selected == "mira"
+        elif selector == "mode_choice":
+            assert window.inputs.mode == "joints"
+        # A second navigation works without another mouse click; Escape cancels it.
+        key("Up")
+        key("Up")
+        key("Escape")
+        assert choice().current() == 1
+        assert root.focus_get() == choice()
+        key("Tab")
+        assert root.focus_get() != choice()
+        client.action.assert_not_called()
+    finally:
+        window.control.owned = None
+        window.shutdown()
         root.destroy()
 
 
@@ -743,7 +963,8 @@ def test_native_always_shuts_down_after_gamepad_enumeration_failure(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_native_launch_requires_approved_robot_access():
+@pytest.mark.parametrize("appearance", [None, {"surface": "#19232d", "danger": "#ff9992"}])
+async def test_native_launch_requires_approved_robot_access(appearance):
     service = SimpleNamespace(
         role="surgeon",
         remote_status={"status": "approved", "robot": False},
@@ -755,9 +976,10 @@ async def test_native_launch_requires_approved_robot_access():
     with pytest.raises(PermissionError):
         await Application.action(service, "controller.open", {})
     service.remote_status.update(robot=True, robots=[{"id": "robot"}])
-    await Application.action(service, "controller.open", {"id": "robot"})
+    extra = {"appearance": appearance} if appearance else {}
+    await Application.action(service, "controller.open", {"id": "robot", **extra})
     service.controller.open.assert_awaited_once_with(
-        "http://127.0.0.1:8002", "robot", None, None, None
+        "http://127.0.0.1:8002", "robot", None, None, None, **extra
     )
     with pytest.raises(ValueError):
         await Application.action(service, "controller.open", {"id": "missing"})

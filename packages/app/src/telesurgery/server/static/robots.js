@@ -234,7 +234,10 @@ export function robotControls(refresh, openMetrics) {
             owner_id: owned ? state.session?.id : null,
         });
         const card = cards.get(id);
-        if (card) card.status.textContent = robotStatus(acknowledgedRobot(card.robot));
+        if (card) {
+            card.status.textContent = robotStatus(acknowledgedRobot(card.robot));
+            card.status.title = card.status.textContent;
+        }
         if (card?.release && state.role === "surgeon") {
             card.release.hidden = !owned;
             card.acquire.hidden = owned;
@@ -504,7 +507,9 @@ export function robotControls(refresh, openMetrics) {
             const identity = element("div", undefined, "robot-identity");
             const detail = element("small", "", "robot-description");
             const statusLine = element("div", undefined, "robot-status-line");
+            const statusActions = element("div", undefined, "robot-status-actions");
             statusLine.append(status);
+            if (state.role === "surgeon") statusLine.append(statusActions);
             detail.hidden = state.role !== "patient";
             identity.append(
                 element("strong", robotLabel(robot), "robot-name"),
@@ -626,20 +631,23 @@ export function robotControls(refresh, openMetrics) {
                         await endInput(robot.id);
                         await refresh();
                     },
-                    "danger robot-stop",
+                    "danger icon-button robot-stop",
+                    "stop",
                 );
                 card.stop.title = "Stop motion · Esc or Space";
-                card.acquire = button("Acquire", () => acquire(card.robot), "secondary small acquire-control");
+                card.acquire = button("Acquire", () => acquire(card.robot), "secondary small acquire-control", "enter");
                 card.acquire.setAttribute("aria-label", "Acquire control");
                 card.acquire.title = "Acquire control";
-                card.release = button("Release control", async () => {
+                card.release = button("Release", async () => {
                     stopInputs(card);
                     await stop();
                     await release(robot.id);
                     await refresh();
-                }, "secondary small icon-button", "leave");
+                }, "secondary small release-control", "leave");
+                card.release.setAttribute("aria-label", "Release control");
+                card.release.title = "Release control";
                 card.release.hidden = true;
-                statusLine.append(card.acquire, card.release);
+                statusActions.append(card.acquire, card.release);
                 const actions = element("div", undefined, "robot-toolbar");
                 const inputLabel = element("label", undefined, "robot-input-choice");
                 inputLabel.append(mode);
@@ -786,7 +794,7 @@ export function robotControls(refresh, openMetrics) {
             );
             metrics.setAttribute("aria-label", `${robot.name} robot metrics`);
             (state.role === "surgeon"
-                ? statusLine
+                ? statusActions
                 : card.actions || element_
             ).append(metrics);
             container.append(element_);
@@ -992,6 +1000,7 @@ export function robotControls(refresh, openMetrics) {
                     !!state.session?.id &&
                     (robot.owner_id === state.session.id || releaseFailures.has(robot.id));
                 card.status.textContent = robotStatus(robot);
+                card.status.title = card.status.textContent;
                 card.status.className = `status ${deviceStatus(robot, true)[1]}`;
                 card.detail.textContent = robot.simulation
                     ? "Simulation controller"

@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import font, ttk
 
+from telesurgery.controller.appearance import Colors
 from telesurgery.controller.client import Client, Control
 from telesurgery.controller.gamepad import (
     Gamepads,
@@ -39,6 +40,7 @@ from telesurgery.controller.widgets import (
     Badge,
     Button,
     Scale,
+    ScrollArea,
     Slider,
     ToolPosition,
     Tooltip,
@@ -61,8 +63,10 @@ class Window:
         changed=None,
         input_device=None,
         retain_control=False,
+        appearance=None,
     ):
         self.root, self.client = root, client
+        self.colors = root.controller_colors = Colors(appearance)
         self.px = Scale(root)
         self.control = Control(client)
         self.replay = NativeReplay(client, self.control)
@@ -102,91 +106,101 @@ class Window:
         self.error = ""
         self.keys, self.sliders, self.positions, self.grippers = {}, [], {}, {}
         self.root.title("Robot control · Holoscan Telesurgery")
-        self.root.geometry(f"{self.px(420)}x{self.px(750)}")
-        self.root.minsize(self.px(400), self.px(450))
-        self.root.configure(bg="#f5f6f7")
+        height = min(self.px(750), max(self.px(450), root.winfo_screenheight() - self.px(90)))
+        self.root.geometry(f"{self.px(440)}x{height}")
+        self.root.minsize(self.px(440), self.px(450))
+        self.root.configure(bg=self.colors("#f5f6f7"))
         self.root.option_add("*Font", (FONT, 10))
         self.meter_font = font.Font(root, family=FONT, size=9)
         self.dropdown_images = dropdown_style(root)
         self.card = tk.Frame(
             root,
-            bg="white",
-            highlightbackground=BORDER,
-            highlightcolor=BORDER,
+            bg=self.colors("white"),
+            highlightbackground=self.colors(BORDER),
+            highlightcolor=self.colors(BORDER),
             highlightthickness=self.px(1),
         )
         self.card.pack(fill="both", expand=True, padx=self.px(12), pady=self.px(12))
-        self.body = tk.Frame(self.card, bg="white")
+        self.body = tk.Frame(self.card, bg=self.colors("white"))
         self.body.pack(fill="both", expand=True, padx=self.px(14), pady=self.px(12))
         self.label(self.body, "Robot control", size=13, bold=True).pack(
             anchor="w", pady=self.px(0, 10)
         )
         self.separator(self.body)
-        self.robot_choice = ttk.Combobox(
+        self.robot_choice = self.combobox(
             self.body,
+            width=1,
             state="disabled" if self.incoming_control else "readonly",
-            takefocus=False,
-            font=(FONT, 10, "bold"),
+            font=(FONT, 10),
         )
         self.robot_choice.pack(fill="x", pady=self.px(0, 10))
         self.robot_choice.bind("<<ComboboxSelected>>", self.select_robot)
-        status_row = tk.Frame(self.body, bg="white")
+        status_row = tk.Frame(self.body, bg=self.colors("white"))
         status_row.pack(fill="x", pady=self.px(4, 8))
         self.status_dot = self.label(status_row, "●", color=MUTED, size=8)
         self.status_dot.pack(side="left", padx=self.px(0, 5))
         self.status_label = self.label(status_row, "Connecting…", color=MUTED, size=9)
-        self.status_label.configure(wraplength=self.px(240))
+        self.status_label.configure(width=1, height=1)
         self.status_label.pack(side="left", fill="x", expand=True)
-        self.acquire_button = Button(status_row, "Acquire", self.acquire_control, width=72)
+        Tooltip(self.status_label, "Connecting…")
+        self.acquire_button = Button(
+            status_row, "Acquire", self.acquire_control, width=100, icon="acquire", icon_text=True
+        )
         Tooltip(self.acquire_button, "Acquire control")
         self.release_button = Button(
-            status_row, "Release control", self.release_control, width=34, icon="release"
+            status_row, "Release", self.release_control, width=100, icon="release", icon_text=True
         )
         Tooltip(self.release_button, "Release control")
-        self.toolbar = tk.Frame(self.body, bg="white")
+        self.toolbar = tk.Frame(self.body, bg=self.colors("white"))
         self.toolbar.pack(fill="x", pady=self.px(0, 10))
-        self.device = ttk.Combobox(
+        self.device = self.combobox(
             self.toolbar,
             state="readonly",
             values=["Keyboard"],
-            takefocus=False,
-            width=17,
-            font=(FONT, 10, "bold"),
+            width=1,
+            font=(FONT, 10),
         )
         self.device.current(0)
-        self.device.pack(side="left", fill="x", expand=True, padx=self.px(0, 8))
+        self.toolbar.columnconfigure(0, weight=1)
+        self.device.grid(row=0, column=0, sticky="ew", padx=self.px(0, 8))
         self.device.bind("<<ComboboxSelected>>", self.select_device)
-        self.home = Button(self.toolbar, "Home", self.go_home, width=34, icon="home")
+        actions = tk.Frame(self.toolbar, bg=self.colors("white"))
+        actions.grid(row=0, column=1)
+        self.home = Button(actions, "Home", self.go_home, width=36, icon="home")
         self.home.pack(side="left", padx=self.px(0, 8))
         Tooltip(self.home, "Home · Return to starting pose")
-        self.reset_button = Button(
-            self.toolbar, "Reset scene", self.reset_scene, width=34, icon="reset"
-        )
+        self.reset_button = Button(actions, "Reset scene", self.reset_scene, width=36, icon="reset")
         Tooltip(self.reset_button, "Reset scene")
         self.replay_button = Button(
-            self.toolbar, "Replay inputs", self.start_replay, width=34, icon="replay"
+            actions, "Replay inputs", self.start_replay, width=36, icon="replay"
         )
         Tooltip(self.replay_button, "Replay inputs")
-        self.stop_button = Button(self.toolbar, "Stop", self.stop, width=88, height=44, danger=True)
+        self.stop_button = Button(actions, "Stop", self.stop, width=36, icon="stop", danger=True)
         self.stop_button.pack(side="left")
         Tooltip(self.stop_button, "Stop motion · Esc / Space")
-        self.replay_status = self.label(self.body, "", size=9, color=MUTED)
+        self.message = self.label(self.body, "", size=9, color=MUTED)
+        self.message.configure(wraplength=self.px(356), height=1)
+        self.message.pack(anchor="w", fill="x", pady=self.px(0, 8))
+        Tooltip(self.message, "")
+        self.scroll = ScrollArea(self.body)
+        self.scroll.pack(fill="both", expand=True)
+        self.fit_pending = False
+        self.content_height = 0
+        self.scroll.content.bind("<Configure>", self.schedule_fit, add=True)
+        self.replay_status = self.label(self.scroll.content, "", size=9, color=MUTED)
         self.replay_status.configure(wraplength=self.px(356))
         self.controls = tk.Frame(
-            self.body,
-            bg="#f6f8f7",
-            highlightbackground=BORDER,
-            highlightcolor=BORDER,
+            self.scroll.content,
+            bg=self.colors("#f6f8f7"),
+            highlightbackground=self.colors(BORDER),
+            highlightcolor=self.colors(BORDER),
             highlightthickness=self.px(1),
             padx=self.px(10),
             pady=self.px(10),
         )
         self.controls.pack(fill="both", expand=True)
-        self.feedback_panel = tk.Frame(self.body, bg="white")
+        self.feedback_panel = tk.Frame(self.scroll.content, bg=self.colors("white"))
         self.feedback_panel.pack(fill="x", pady=self.px(8, 0))
-        self.message = self.label(self.body, "", size=9, color=MUTED)
-        self.message.configure(wraplength=self.px(356))
-        self.message.pack(anchor="w", fill="x", pady=self.px(8, 0))
         root.bind("<KeyPress>", self.key_down)
         root.bind("<KeyRelease>", self.key_up)
         root.bind("<FocusOut>", lambda _: root.after_idle(self.check_focus))
@@ -194,16 +208,27 @@ class Window:
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(10, self.tick)
 
-    @staticmethod
-    def label(parent, text, *, size=10, color=INK, bold=False):
+    def label(self, parent, text, *, size=10, color=INK, bold=False):
         return tk.Label(
             parent,
             text=text,
-            bg="white",
-            fg=color,
+            bg=self.colors("white"),
+            fg=self.colors(color),
             font=(FONT, size, "bold" if bold else "normal"),
             anchor="w",
         )
+
+    def combobox(self, parent, **options):
+        choice = ttk.Combobox(parent, postcommand=self.stop, **options)
+        choice.bind("<FocusIn>", lambda _: self.stop())
+
+        def open_list(_):
+            choice.tk.call("ttk::combobox::Post", choice)
+            return "break"
+
+        for key in ("<Up>", "<Return>", "<space>"):
+            choice.bind(key, open_list)
+        return choice
 
     def stop(self, reason="operator stopped replay"):
         self.replay.stop(reason)
@@ -289,7 +314,7 @@ class Window:
             and not self.closing
         )
 
-    def select_robot(self, _=None):
+    def select_robot(self, event=None):
         if self.switching_robot:
             return
         index = self.robot_choice.current()
@@ -315,7 +340,8 @@ class Window:
             self.robot_choice.configure(state="readonly")
         else:
             self.apply_robot_selection(selected)
-        self.root.focus_set()
+        if event is not None:
+            self.robot_choice.focus_set()
 
     def confirm_robot_switch(self, selected):
         name = self.robots[selected]["name"]
@@ -335,7 +361,7 @@ class Window:
         dialog.title(title)
         dialog.transient(self.root)
         dialog.resizable(False, False)
-        dialog.configure(bg="white", padx=self.px(20), pady=self.px(18))
+        dialog.configure(bg=self.colors("white"), padx=self.px(20), pady=self.px(18))
         accepted = False
 
         def finish(confirm=False):
@@ -347,7 +373,7 @@ class Window:
         description = self.label(dialog, detail)
         description.configure(wraplength=self.px(360), justify="left")
         description.pack(fill="x", pady=self.px(12, 18))
-        actions = tk.Frame(dialog, bg="white")
+        actions = tk.Frame(dialog, bg=self.colors("white"))
         actions.pack(fill="x")
         cancel = ttk.Button(actions, text="Cancel", command=finish)
         cancel.pack(side="left")
@@ -381,7 +407,7 @@ class Window:
         self.robot_choice.configure(state="readonly")
         if not self.control.release_failed and not self.control.owned:
             self.apply_robot_selection(selected)
-        self.root.focus_set()
+        self.robot_choice.focus_set()
 
     def apply_robot_selection(self, selected):
         if selected in self.robot_ids:
@@ -402,7 +428,7 @@ class Window:
             self.build_controls()
             self.publish()
 
-    def select_device(self, _=None):
+    def select_device(self, event=None):
         self.stop()
         haply = self.device.get() == HAPLY_NAME and self.haply_supported()
         if self.haply and not haply:
@@ -420,13 +446,14 @@ class Window:
                 self.device.current(0)
         self.build_controls()
         self.publish()
-        self.root.focus_set()
+        if event is not None:
+            self.device.focus_set()
 
     def change_mode(self, _=None):
         self.stop()
         self.inputs.mode = self.mode_ids[self.mode_choice.current()]
         self.build_controls()
-        self.root.focus_set()
+        self.mode_choice.focus_set()
 
     def speed_changed(self, kind, value):
         self.stop()
@@ -482,6 +509,7 @@ class Window:
             parent,
             text or key.upper(),
             width=width,
+            height=32,
             hold=lambda down: self.pointer(key, down),
             shortcut=shortcut,
         )
@@ -489,7 +517,7 @@ class Window:
         return cap
 
     def separator(self, parent):
-        tk.Frame(parent, bg=BORDER, height=self.px(1)).pack(fill="x", pady=self.px(10))
+        tk.Frame(parent, bg=self.colors(BORDER), height=self.px(1)).pack(fill="x", pady=self.px(6))
 
     def build_controls(self):
         for child in [*self.controls.winfo_children(), *self.feedback_panel.winfo_children()]:
@@ -514,11 +542,11 @@ class Window:
         elif inputs.controls.get("mira_cartesian"):
             options = [("joints", "Joint movement"), ("mira-tool", "Tool movement · X/Y/Z + elbow")]
         self.mode_ids = [key for key, _ in options]
-        self.mode_choice = ttk.Combobox(
+        self.mode_choice = self.combobox(
             self.controls,
+            width=1,
             style="Control.TCombobox",
             state="readonly",
-            takefocus=False,
             values=[name for _, name in options],
         )
         self.mode_choice.current(self.mode_ids.index(inputs.mode))
@@ -526,14 +554,11 @@ class Window:
             self.mode_choice.pack(fill="x", pady=self.px(0, 8))
         self.mode_choice.bind("<<ComboboxSelected>>", self.change_mode)
         if keyboard or haply:
-            self.message.pack(anchor="w", fill="x", pady=self.px(8, 0))
             self.slider(self.controls, "arm", "Arm speed")
-        else:
-            self.message.pack_forget()
         if haply:
             self.haply_mapping()
         elif keyboard and inputs.mode == "cartesian":
-            grid = tk.Frame(self.controls, bg="white")
+            grid = tk.Frame(self.controls, bg=self.colors("white"))
             grid.pack(fill="x")
             groups = [
                 (
@@ -555,7 +580,7 @@ class Window:
             ]
             symbols = {"left": "←", "right": "→", "up": "↑", "down": "↓"}
             for column, (title, rows) in enumerate(groups):
-                section = tk.Frame(grid, bg="white")
+                section = tk.Frame(grid, bg=self.colors("white"))
                 section.grid(
                     row=0, column=column, sticky="nsew", padx=self.px(0, 10 if column == 0 else 0)
                 )
@@ -582,11 +607,11 @@ class Window:
             if inputs.controls.get("cartesian", {}).get("independent_rotation"):
                 self.slider(self.controls, "roll", "Rotation speed")
         elif keyboard:
-            grid = tk.Frame(self.controls, bg="white")
+            grid = tk.Frame(self.controls, bg=self.colors("white"))
             grid.pack(fill="x")
             bindings = inputs.bindings()
             for column, (group, count) in enumerate(inputs.groups.items()):
-                section = tk.Frame(grid, bg="white")
+                section = tk.Frame(grid, bg=self.colors("white"))
                 section.grid(
                     row=0,
                     column=column,
@@ -643,16 +668,16 @@ class Window:
                 and inputs.mode == "cartesian"
                 and "hand" in inputs.controls["grippers"]
             ):
-                row = tk.Frame(self.controls, bg="white")
+                row = tk.Frame(self.controls, bg=self.colors("white"))
                 row.pack(fill="x", pady=self.px(0, 6))
                 self.badge(row, buttons["close"], ("button", 2)).pack(
                     side="left", padx=self.px(0, 8)
                 )
                 self.label(row, "Open / close", size=8).pack(side="left")
-            grip_grid = tk.Frame(self.controls, bg="white")
+            grip_grid = tk.Frame(self.controls, bg=self.colors("white"))
             grip_grid.pack(fill="x")
             for column, group in enumerate(inputs.controls["grippers"]):
-                section = tk.Frame(grip_grid, bg="white")
+                section = tk.Frame(grip_grid, bg=self.colors("white"))
                 section.grid(row=0, column=column, sticky="ew", padx=self.px(0, 8))
                 grip_grid.columnconfigure(column, weight=1)
                 if group != "hand":
@@ -660,7 +685,7 @@ class Window:
                         anchor="w", pady=self.px(0, 4)
                     )
                 if group in GRIP_KEYS and not haply:
-                    row = tk.Frame(section, bg="white")
+                    row = tk.Frame(section, bg=self.colors("white"))
                     row.pack(fill="x")
                     for key, text in zip(GRIP_KEYS[group], ("Close", "Open"), strict=True):
                         cap = self.cap(
@@ -693,7 +718,7 @@ class Window:
                         )
                 meter = tk.Canvas(
                     section,
-                    bg="white",
+                    bg=self.colors("white"),
                     height=self.px(18),
                     highlightthickness=0,
                     width=self.px(155),
@@ -701,12 +726,13 @@ class Window:
                 meter.pack(fill="x", pady=self.px(4, 0))
                 Tooltip(meter, "Measured opening · 0% closed · 100% open")
                 self.grippers[group] = meter
-        if not keyboard or inputs.mode == "cartesian":
+        inline_feedback = not keyboard and not haply and inputs.mode == "joints"
+        if (not keyboard and not inline_feedback) or inputs.mode == "cartesian":
             self.label(self.feedback_panel, "Measured joints (°)", bold=True, size=9).pack(
                 anchor="w"
             )
             if inputs.dual:
-                grid = tk.Frame(self.feedback_panel, bg="white")
+                grid = tk.Frame(self.feedback_panel, bg=self.colors("white"))
                 grid.pack(fill="x", pady=self.px(4, 0))
                 for index in range(inputs.groups["left"]):
                     grid.columnconfigure(index + 1, weight=1)
@@ -723,7 +749,7 @@ class Window:
                         self.positions[group, index] = value
             else:
                 for group, count in inputs.groups.items():
-                    grid = tk.Frame(self.feedback_panel, bg="white")
+                    grid = tk.Frame(self.feedback_panel, bg=self.colors("white"))
                     grid.pack(fill="x", pady=self.px(4, 0))
                     for index in range(count):
                         grid.columnconfigure(index, weight=1)
@@ -735,13 +761,15 @@ class Window:
                         self.positions[group, index] = value
 
         def background(widget):
-            if "background" in widget.configure() and widget.cget("background") != BORDER:
-                widget.configure(background="#f6f8f7")
+            if "background" in widget.configure() and widget.cget("background") != self.colors(
+                BORDER
+            ):
+                widget.configure(background=self.colors("#f6f8f7"))
             for child in widget.winfo_children():
                 background(child)
 
         background(self.controls)
-        self.root.after_idle(self.fit)
+        self.schedule_fit()
 
     def badge(self, parent, text, binding):
         cap = Badge(parent, text)
@@ -817,7 +845,7 @@ class Window:
         self.gamepad_status.pack(fill="x", pady=self.px(0, 8))
         Tooltip(self.gamepad_status, self.gamepad_guidance)
         self.slider(self.controls, "arm", "Arm speed")
-        grid = tk.Frame(self.controls, bg="white")
+        grid = tk.Frame(self.controls, bg=self.colors("white"))
         grid.pack(fill="x")
         if tool:
             for column in range(2):
@@ -838,7 +866,7 @@ class Window:
                     ),
                 ]
             ):
-                section = tk.Frame(grid, bg="white")
+                section = tk.Frame(grid, bg=self.colors("white"))
                 section.grid(
                     row=index // 2,
                     column=index % 2,
@@ -848,7 +876,7 @@ class Window:
                 )
                 self.label(section, title, size=8, color=MUTED).pack(anchor="w", pady=self.px(0, 3))
                 for glyph, title, binding in rows:
-                    row = tk.Frame(section, bg="white")
+                    row = tk.Frame(section, bg=self.colors("white"))
                     row.pack(fill="x", pady=self.px(2))
                     self.badge(row, glyph, binding).pack(side="left", padx=self.px(0, 6))
                     self.label(row, title, size=8).pack(side="left")
@@ -871,21 +899,25 @@ class Window:
                     (f"{buttons['enable']} + {buttons['alternate']}", second),
                 ]
             ):
-                section = tk.Frame(grid, bg="white")
-                section.pack(fill="x", pady=self.px(3, 6))
-                heading = tk.Frame(section, bg="white")
+                section = tk.Frame(grid, bg=self.colors("white"))
+                section.pack(fill="x", pady=self.px(2))
+                heading = tk.Frame(section, bg=self.colors("white"))
                 heading.pack(fill="x")
                 self.badge(heading, key, ("bank", index)).pack(side="left", padx=self.px(0, 8))
                 self.label(heading, title, size=8).pack(side="left")
-                sticks = tk.Frame(section, bg="white")
-                sticks.pack(fill="x", pady=self.px(4, 0))
+                sticks = tk.Frame(section, bg=self.colors("white"))
+                sticks.pack(fill="x", pady=self.px(2, 0))
                 for stick in range(2):
-                    column = tk.Frame(sticks, bg="white")
-                    column.grid(row=0, column=stick, sticky="nw")
+                    column = tk.Frame(sticks, bg=self.colors("white"))
+                    column.grid(row=0, column=stick, sticky="ew")
                     sticks.columnconfigure(stick, weight=1, uniform="sticks")
-                    self.label(
-                        column, "Left stick" if stick == 0 else "Right stick", size=8, color=MUTED
-                    ).pack(anchor="w")
+                    if index == 0:
+                        self.label(
+                            column,
+                            "Left stick" if stick == 0 else "Right stick",
+                            size=8,
+                            color=MUTED,
+                        ).pack(anchor="w")
                     for direction in range(2):
                         axis = stick * 2 + direction
                         joint = index * 2 + direction if inputs.dual else index * 4 + axis
@@ -897,16 +929,20 @@ class Window:
                             if inputs.mode == "mira-tool"
                             else f"J{joint + 1}"
                         )
-                        row = tk.Frame(column, bg="white")
-                        row.pack(fill="x", pady=self.px(2))
+                        row = tk.Frame(column, bg=self.colors("white"))
+                        row.pack(fill="x", pady=self.px(1))
                         self.badge(row, "↕" if direction else "↔", ("bank_axis", index, axis)).pack(
                             side="left", padx=self.px(0, 6)
                         )
                         self.label(row, label, size=8).pack(side="left")
+                        if inputs.mode == "joints":
+                            value = self.label(row, "—", size=8)
+                            value.pack(side="right", padx=self.px(0, 8))
+                            self.positions[group, joint] = value
         if roll:
             self.separator(self.controls)
             self.slider(self.controls, "roll", "Rotation speed")
-            grid = tk.Frame(self.controls, bg="white")
+            grid = tk.Frame(self.controls, bg=self.colors("white"))
             grid.pack(fill="x")
             for column, (title, keys) in enumerate(
                 [
@@ -914,16 +950,22 @@ class Window:
                     ("Right", [(buttons["roll_up"], 3, 0), (buttons["roll_down"], 0, 3)]),
                 ]
             ):
-                section = tk.Frame(grid, bg="white")
+                section = tk.Frame(grid, bg=self.colors("white"))
                 section.grid(row=0, column=column, sticky="ew")
                 grid.columnconfigure(column, weight=1, uniform="roll")
-                self.label(section, title, size=8, color=MUTED).pack(anchor="w", pady=self.px(0, 4))
-                row = tk.Frame(section, bg="white")
-                row.pack(fill="x")
+                self.label(section, title, size=8, color=MUTED).pack(
+                    side="left", padx=self.px(0, 6)
+                )
+                row = tk.Frame(section, bg=self.colors("white"))
+                row.pack(side="left")
                 for glyph, positive, negative in keys:
                     self.badge(row, glyph, ("button", positive, negative)).pack(
                         side="left", padx=self.px(0, 6)
                     )
+                if inputs.mode == "joints":
+                    value = self.label(section, "—", size=8)
+                    value.pack(side="right", padx=self.px(0, 8))
+                    self.positions[title.lower(), 4] = value
         self.home_instruction = (
             f"Home · Hold {buttons['home']} or {buttons['home_fallback']} for 1s"
         )
@@ -955,16 +997,27 @@ class Window:
             return (values[0] in buttons) != (values[1] in buttons)
         return values[0] in buttons and (len(values) == 1 or values[1] not in buttons)
 
+    def schedule_fit(self, event=None):
+        height = self.scroll.content.winfo_reqheight()
+        if event is not None and height == self.content_height:
+            return
+        self.content_height = height
+        if not self.fit_pending and not self.closing:
+            self.fit_pending = True
+            self.root.after_idle(self.fit)
+
     def fit(self):
         if not self.closing:
             self.root.update_idletasks()
-            width = max(self.px(420), self.root.winfo_reqwidth())
-            height = min(
-                self.root.winfo_screenheight() - self.px(90),
-                max(self.px(450), self.root.winfo_reqheight()),
+            needed = (
+                self.root.winfo_reqheight()
+                + self.scroll.content.winfo_reqheight()
+                - self.scroll.winfo_reqheight()
             )
-            self.root.minsize(width, height)
-            self.root.geometry(f"{max(width, self.root.winfo_width())}x{height}")
+            height = min(self.root.winfo_screenheight() - self.px(90), max(self.px(450), needed))
+            self.root.geometry(f"{max(self.px(440), self.root.winfo_width())}x{height}")
+            self.scroll.resize()
+        self.fit_pending = False
 
     def pointer(self, key, down):
         if not self.inputs:
@@ -1341,6 +1394,7 @@ class Window:
         elif state.get("stopping"):
             status += " · Stopping…"
         self.status_label.configure(text=status)
+        self.status_label.tooltip.text = status
         mine = (
             owned
             or self.control.release_failed == self.selected
@@ -1360,14 +1414,16 @@ class Window:
         )
         self.status_dot.configure(
             fg=(
-                GREEN
-                if robot.get("status") == "online"
-                and not robot.get("stale")
-                and not robot.get("error")
-                and not now_stale(self.last_status)
-                else "#a63735"
-                if robot.get("error")
-                else MUTED
+                self.colors(
+                    GREEN
+                    if robot.get("status") == "online"
+                    and not robot.get("stale")
+                    and not robot.get("error")
+                    and not now_stale(self.last_status)
+                    else "#a63735"
+                    if robot.get("error")
+                    else MUTED
+                )
             )
         )
         available = self.available()
@@ -1405,15 +1461,16 @@ class Window:
         else:
             self.reset_button.pack_forget()
         recording = self.replay_recording()
-        if recording and self.permitted():
+        self.replay_button.update_state(bool(recording and available and not self.replay.busy))
+        if recording:
             if not self.replay_button.winfo_manager():
                 self.replay_button.pack(side="left", before=self.stop_button, padx=self.px(0, 8))
-            self.replay_button.update_state(available and not self.replay.busy)
             self.replay_button.tooltip.text = (
                 f"Replay {recording['device']} inputs · {recording['task']}"
             )
         else:
             self.replay_button.pack_forget()
+            self.replay_button.tooltip.text = "No recording available for this robot and input"
         if self.replay.status and self.replay.robot == self.selected:
             self.replay_status.configure(text=self.replay.status)
             if not self.replay_status.winfo_manager():
@@ -1530,7 +1587,7 @@ class Window:
                 self.px(9),
                 end,
                 self.px(9),
-                fill=BORDER,
+                fill=self.colors(BORDER),
                 width=self.px(4),
                 capstyle="round",
             )
@@ -1540,7 +1597,7 @@ class Window:
                     self.px(9),
                     self.px(2) + (end - self.px(2)) * max(0, min(1, value)),
                     self.px(9),
-                    fill=GREEN,
+                    fill=self.colors(GREEN),
                     width=self.px(4),
                     capstyle="round",
                 )
@@ -1550,7 +1607,7 @@ class Window:
                 anchor="e",
                 text=text,
                 font=self.meter_font,
-                fill=MUTED,
+                fill=self.colors(MUTED),
             )
         self.message.configure(
             text=self.error
@@ -1558,19 +1615,20 @@ class Window:
             or robot.get("error")
             or (self.haply_error if self.haply and not self.replay.active else "")
             or (
-                ""
+                "Replaying recorded inputs · Stop to cancel."
                 if self.replay.active
                 else "Acquire control to enable input."
                 if not self.permitted()
                 else "Focus this window to control the robot."
                 if not self.focused()
-                else ""
+                else "Control acquired · Ready for input."
                 if self.haply
                 else "Center sticks and release buttons to resume."
                 if self.device.current() != 0 and self.inputs and not self.inputs.armed
-                else self.gamepad_error
+                else self.gamepad_error or "Control acquired · Ready for input."
             )
         )
+        self.message.tooltip.text = self.message.cget("text")
 
     def close(self, retain_control=True):
         self.stop()
@@ -1619,6 +1677,7 @@ def run(config):
             report,
             config.get("input"),
             retain_control=config.get("retain_control") is True,
+            appearance=config.get("appearance"),
         )
         for number in (signal.SIGTERM, signal.SIGINT):
             signal.signal(number, lambda *_: window.close())

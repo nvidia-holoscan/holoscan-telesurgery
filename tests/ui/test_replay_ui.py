@@ -154,7 +154,10 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
                 }
             ]
             await page.clock.run_for(1100)
-            await expect(control).to_be_hidden()
+            if device == "keyboard":
+                await expect(control).to_be_disabled()
+            else:
+                await expect(control).to_be_hidden()
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             selector = page.get_by_label(f"{name} input", exact=True)
             await selector.select_option("0" if device == "gamepad" else device)
@@ -247,7 +250,7 @@ async def test_replay_requires_matching_recording_and_ownership_and_escape_disca
             await page.clock.run_for(60)
             assert await page.locator('[data-pressed="true"], [data-active="true"]').count() == 0
             await page.get_by_role("button", name="Release control", exact=True).click()
-            await expect(control).to_be_hidden()
+            await expect(control).to_be_disabled()
             assert not errors
         finally:
             gate.set()

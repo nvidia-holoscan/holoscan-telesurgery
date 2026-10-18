@@ -12,6 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from telesurgery.controller.appearance import validate as validate_appearance
 from telesurgery_core import configuration
 
 
@@ -40,7 +41,9 @@ class NativeController:
         *,
         retain_control=False,
         token=None,
+        appearance=None,
     ):
+        appearance = validate_appearance(appearance)
         preferences = preferences or {}
         if (
             not isinstance(preferences, dict)
@@ -85,6 +88,7 @@ class NativeController:
                         "generation": self.temporary.name,
                         "input": input_device,
                         "retain_control": retain_control,
+                        "appearance": appearance,
                         "preferences": {**self.finished.get("preferences", {}), **preferences},
                     }
                 )
