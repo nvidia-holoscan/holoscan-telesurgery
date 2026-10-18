@@ -1051,6 +1051,7 @@ class Application:
                 self.controller_certificate,
                 params.get("preferences"),
                 params.get("input"),
+                **({"appearance": params["appearance"]} if "appearance" in params else {}),
                 **({"token": self.controller_token} if self.controller_token else {}),
                 **({"retain_control": True} if retain else {}),
             )

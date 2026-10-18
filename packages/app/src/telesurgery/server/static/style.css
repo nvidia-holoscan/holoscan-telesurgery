@@ -811,7 +811,7 @@ body[data-role="surgeon"] #cameras .actions {
     align-items: start;
 }
 .operating-workspace.has-robot {
-    grid-template-columns: minmax(0, 1fr) 350px;
+    grid-template-columns: minmax(0, 1fr) 370px;
 }
 .views-panel {
     min-width: 0;
@@ -1039,10 +1039,38 @@ body[data-role] .video-tile:fullscreen video,
     margin: 10px 0 20px;
 }
 .robot-panel {
+    --control-height: 36px;
+    container: robot-controls / inline-size;
     position: sticky;
     top: 20px;
     max-height: calc(100dvh - 40px);
     overflow: auto;
+}
+.robot-panel select,
+.robot-panel > .section-title button,
+.robot-panel .robot-status-actions > button,
+.robot-panel .haply-calibration button {
+    height: var(--control-height);
+    min-height: var(--control-height);
+}
+.robot-panel select {
+    padding: 4px 8px;
+    font-size: 13px;
+    font-weight: 400;
+}
+.robot-panel > .section-title .icon-button,
+.robot-panel .robot-status-actions > .icon-button {
+    width: var(--control-height);
+}
+.robot-panel .robot-status-line {
+    min-height: var(--control-height);
+    margin-bottom: 8px;
+}
+.robot-panel .robot-status-line > p {
+    margin: 0;
+}
+.robot-panel button.secondary {
+    border: 1px solid color-mix(in srgb, var(--ink) 25%, var(--theme-surface, #fff));
 }
 #native-controller-away .field-hint {
     margin: 0 0 12px;
@@ -1075,18 +1103,37 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     align-items: center;
     gap: 8px;
 }
-.robot-status-line > .camera-metrics,
-.robot-status-line > button:last-child {
+.robot-status-line > p {
+    flex: 1;
+    min-width: 0;
+}
+.robot-status-line > .status {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.robot-status-line > .status::before {
+    display: inline-block;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.robot-status-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
     margin-left: auto;
 }
-.robot-status-line > button {
+.robot-status-actions > button {
     flex-shrink: 0;
     width: 30px;
     min-height: 30px;
     padding: 5px;
 }
-.robot-status-line > .acquire-control {
-    width: auto;
+.robot-status-actions > .acquire-control,
+.robot-status-actions > .release-control {
+    width: 100px;
     padding: 4px 10px;
 }
 .robot > button {
@@ -1254,17 +1301,21 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     margin: 0 0 12px;
 }
 .robot-toolbar {
-    display: flex;
-    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
     align-items: center;
     gap: 8px;
     margin-top: 12px;
+    background: var(--theme-surface, #fff);
 }
 .robot-input-choice {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1 1 120px;
+    flex: 1 1 160px;
     min-width: 0;
     margin: 0;
 }
@@ -1387,20 +1438,28 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     flex: 1;
     min-width: 0;
     margin: 0;
-    height: 36px;
-    min-height: 36px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    height: var(--control-height, 36px);
+    min-height: var(--control-height, 36px);
+    padding: 4px 8px;
 }
 .robot-toolbar button {
     flex-shrink: 0;
-    height: 36px;
-    min-height: 36px;
+    width: var(--control-height, 36px);
+    height: var(--control-height, 36px);
+    min-height: var(--control-height, 36px);
+    padding: 0;
 }
 .robot-toolbar-actions {
     display: flex;
+    align-items: center;
     flex-shrink: 0;
     gap: 8px;
+    min-height: var(--control-height, 36px);
+    justify-content: flex-end;
+}
+.robot-toolbar .icon-stop {
+    width: 24px;
+    height: 24px;
 }
 .replay-status:not([hidden]) {
     display: block;
@@ -1540,7 +1599,7 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
 }
 .speed-control {
     display: grid;
-    grid-template-columns: 76px minmax(0, 1fr) 32px;
+    grid-template-columns: 90px minmax(0, 1fr) 32px;
     gap: 0 6px;
     margin: 0 0 10px;
     padding: 0;
@@ -1681,12 +1740,12 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     gap: 12px;
 }
 .keyboard-paired {
-    grid-template-columns: 18px minmax(0, 1fr) 28px 28px;
+    grid-template-columns: 18px minmax(0, 1fr) 32px 32px;
     gap: 3px;
     font-size: 11px;
 }
 .keyboard-paired.keyboard-columns {
-    grid-template-columns: minmax(0, 1fr) max-content 28px 28px;
+    grid-template-columns: minmax(0, 1fr) max-content 32px 32px;
 }
 .keyboard-paired .joint-position {
     font-size: 11px;
@@ -1733,10 +1792,10 @@ body[data-role="surgeon"] #robot-choice:not([hidden]) ~ #robots .robot-name {
     border-color: #76b900;
 }
 .keyboard-paired .keyboard-binding .key-cap {
-    width: 28px;
-    min-width: 28px;
-    height: 28px;
-    min-height: 28px;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
 }
 .robot-panel:has(.compact-controls) {
     padding: 14px;
@@ -1748,8 +1807,8 @@ body[data-role="surgeon"] .app-shell:has(.compact-controls) {
     min-height: 0;
 }
 .robot-panel:has(.compact-controls) > .section-title {
-    padding-bottom: 8px;
-    margin-bottom: 10px;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
 }
 .robot-panel:has(.compact-controls) .section-kicker {
     display: none;
@@ -1760,35 +1819,47 @@ body[data-role="surgeon"] .app-shell:has(.compact-controls) {
 .compact-controls .keyboard-controls,
 .compact-controls .gamepad-controls {
     padding: 10px;
-    margin: 10px 0 0;
+    margin: 8px 0 0;
+}
+.compact-controls .keyboard-controls > select {
+    margin-bottom: 8px;
+}
+.compact-controls .keyboard-mapping {
+    margin-bottom: 8px;
+}
+.compact-controls .keyboard-mapping:last-child {
+    margin-bottom: 0;
 }
 .compact-controls .motion-section + .motion-section:not([hidden]),
 .compact-controls .gripper-controls {
-    margin-top: 8px;
-    padding-top: 8px;
+    margin-top: 6px;
+    padding-top: 6px;
 }
 .compact-controls .speed-control {
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+    align-items: center;
 }
+.compact-controls .speed-control input[type="range"] { min-height: 24px; }
 .compact-controls .gripper-controls > .speed-control {
     margin-bottom: 0;
 }
 .compact-controls .gamepad-status {
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 .franka-joint-group + .franka-joint-group {
-    margin-top: 10px;
-    padding-top: 10px;
+    margin-top: 4px;
+    padding-top: 4px;
     border-top: 1px solid var(--border);
 }
 .franka-sticks {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
-    margin-top: 8px;
+    margin-top: 4px;
 }
 .franka-sticks .keyboard-rows {
     align-content: start;
+    gap: 2px;
 }
 .franka-stick-heading {
     display: flex;
@@ -1802,7 +1873,7 @@ body[data-role="surgeon"] .app-shell:has(.compact-controls) {
     grid-template-columns: 22px minmax(0, 1fr) 28px;
     align-items: center;
     gap: 4px;
-    min-height: 28px;
+    min-height: 26px;
     font-size: 11px;
 }
 .gamepad-joint-position {
@@ -1813,7 +1884,7 @@ body[data-role="surgeon"] .app-shell:has(.compact-controls) {
 .franka-stick-joint kbd {
     display: grid;
     place-items: center;
-    height: 26px;
+    height: 24px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--theme-surface, #fff);
@@ -1914,6 +1985,26 @@ body[data-role="surgeon"] .app-shell:has(.compact-controls) {
     align-items: center;
     gap: 1px;
 }
+.franka-controls .feedback-joints:has(> :nth-child(8):last-child) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@container robot-controls (max-width: 300px) {
+    .keyboard-arms,
+    .gripper-controls {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+@container robot-controls (max-width: 335px) {
+    .robot-toolbar { grid-template-columns: minmax(0, 1fr); }
+}
+.compact-controls .gamepad-roll-arm {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+.compact-controls .gamepad-roll-arm > span { font-size: 11px; }
+.compact-controls .gripper-controls { gap: 6px; }
+.compact-controls .gripper-control { gap: 4px; }
 body[data-role="patient"] #workspace-title {
     font-size: 16px;
     letter-spacing: 0;
@@ -2288,7 +2379,7 @@ dialog h2 {
         padding: 22px;
     }
     .operating-workspace.has-robot {
-        grid-template-columns: minmax(0, 1fr) 290px;
+        grid-template-columns: minmax(0, 1fr) 370px;
         gap: 16px;
     }
     .robot-panel {
@@ -2885,8 +2976,17 @@ body[data-role="surgeon"] .robot-panel {
 .access-page form { display: grid; gap: 12px; }
 .access-page input, .access-page button { min-height: 44px; }
 .confirm-action { max-width: min(440px, calc(100vw - 32px)); }
-.robot-toolbar .robot-stop { min-width: 88px; min-height: 44px; height: 44px; font-weight: 700; margin-left: 12px; }
 .physical-start-warning { font-weight: 600; }
 #connection-notice { padding: 12px 24px; background: var(--panel, #fff); border-bottom: 2px solid var(--accent, #76b900); }
 #connection-notice:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.robot-input-status { min-height: 3lh; margin: 8px 0; font-weight: 600; }
+.robot-input-status {
+    height: 16px;
+    min-height: 16px;
+    margin: 0 0 6px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

@@ -6,6 +6,15 @@ import { icon } from "./icons.js";
 const trigger = document.getElementById("appearance-button");
 const panel = document.getElementById("appearance-panel");
 const choices = document.getElementById("theme-choices");
+export function controllerAppearance() {
+    const style = getComputedStyle(document.documentElement);
+    return Object.fromEntries(Object.entries({
+        page: "#f5f6f7", surface: "#ffffff", "surface-soft": "#f6f8f7",
+        ink: "#18211d", muted: "#69756f", border: "#e1e5e4",
+        selected: "#edf5df", "green-border": "#a9bd92", link: "#426b09",
+        danger: "#a63735", "danger-border": "#eddad6",
+    }).map(([key, fallback]) => [key, style.getPropertyValue(`--theme-${key}`).trim() || fallback]));
+}
 const themes = new Map([
     ["light", "Light"], ["dark", "Dark"], ["midnight", "Midnight"],
     ["ocean", "Ocean"], ["warm", "Warm"],

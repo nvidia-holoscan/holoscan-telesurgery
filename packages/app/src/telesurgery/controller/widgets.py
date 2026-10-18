@@ -7,6 +7,8 @@ import math
 import tkinter as tk
 from tkinter import font, ttk
 
+from telesurgery.controller.appearance import colors
+
 INK, MUTED, BORDER, GREEN = "#18211d", "#69756f", "#e1e5e4", "#659c13"
 FONT = "Inter"
 FACE_POSITIONS = {"North": (0, -1), "South": (0, 1), "West": (-1, 0), "East": (1, 0)}
@@ -16,17 +18,25 @@ class ToolPosition(tk.Frame):
     """One axis triad and measured coordinates, independent of the robot model."""
 
     def __init__(self, parent, basis):
-        super().__init__(parent, bg="white")
+        super().__init__(parent, bg=colors(parent)("white"))
         px = Scale(parent)
-        tk.Label(self, text="Arm tip · mm", bg="white", fg=MUTED, font=(FONT, 9)).pack(anchor="w")
-        body = tk.Frame(self, bg="white")
+        tk.Label(
+            self,
+            text="Arm tip · mm",
+            bg=colors(parent)("white"),
+            fg=colors(parent)(MUTED),
+            font=(FONT, 9),
+        ).pack(anchor="w")
+        body = tk.Frame(self, bg=colors(parent)("white"))
         body.pack(fill="x")
-        diagram = tk.Canvas(body, width=px(104), height=px(72), bg="white", highlightthickness=0)
+        diagram = tk.Canvas(
+            body, width=px(104), height=px(72), bg=colors(parent)("white"), highlightthickness=0
+        )
         diagram.pack(side="left", padx=px(0, 18))
-        rows = tk.Frame(body, bg="white")
+        rows = tk.Frame(body, bg=colors(parent)("white"))
         rows.pack(side="left")
         self.values = []
-        colors = ("#aa4e4e", "#427e59", "#477eac")
+        axis_colors = ("#aa4e4e", "#427e59", "#477eac")
         directions = []
         for row in basis:
             x, y = row[0] + 0.72 * row[1], -0.69 * row[1] - row[2]
@@ -43,23 +53,38 @@ class ToolPosition(tk.Frame):
                 (72 - (ymax + ymin) * scale) / 2 + y * scale,
             )
 
-        for axis, color, (x, y) in zip("XYZ", colors, directions, strict=True):
+        for axis, color, (x, y) in zip("XYZ", axis_colors, directions, strict=True):
             diagram.create_line(
                 *point(0, 0),
                 *point(34 * x, 34 * y),
-                fill=color,
+                fill=colors(parent)(color),
                 width=px(2),
                 arrow="last",
                 arrowshape=px(5, 6, 3),
             )
             diagram.create_text(
-                *point(47 * x, 47 * y), text="+" + axis, fill=color, font=(FONT, 9, "bold")
+                *point(47 * x, 47 * y),
+                text="+" + axis,
+                fill=colors(parent)(color),
+                font=(FONT, 9, "bold"),
             )
-            row = tk.Frame(rows, bg="white")
+            row = tk.Frame(rows, bg=colors(parent)("white"))
             row.pack(fill="x")
-            tk.Label(row, text=axis, bg="white", fg=color, font=(FONT, 9, "bold")).pack(side="left")
+            tk.Label(
+                row,
+                text=axis,
+                bg=colors(parent)("white"),
+                fg=colors(parent)(color),
+                font=(FONT, 9, "bold"),
+            ).pack(side="left")
             value = tk.Label(
-                row, text="—", bg="white", fg=INK, font=(FONT, 10), anchor="e", width=9
+                row,
+                text="—",
+                bg=colors(parent)("white"),
+                fg=colors(parent)(INK),
+                font=(FONT, 10),
+                anchor="e",
+                width=9,
             )
             value.pack(side="right")
             self.values.append(value)
@@ -97,6 +122,7 @@ def dropdown_style(root):
     style.theme_use("clam")
 
     def field(border, fill="white"):
+        border, fill = colors(root)(border), colors(root)(fill)
         image = tk.PhotoImage(master=root, width=px(24), height=px(24))
         for y in range(px(24)):
             for x in range(px(24)):
@@ -107,6 +133,7 @@ def dropdown_style(root):
         return image
 
     def arrow(color):
+        color = colors(root)(color)
         image = tk.PhotoImage(master=root, width=px(28), height=px(20))
         for x in range(px(9)):
             y = px(7) + min(x, px(9) - 1 - x)
@@ -155,14 +182,46 @@ def dropdown_style(root):
             ),
         ],
     )
-    style.configure("TCombobox", padding=px(10, 8, 0, 8), foreground=INK, background="white")
-    style.configure("Control.TCombobox", background="#f6f8f7")
+    line = font.Font(root, family=FONT, size=10).metrics("linespace")
+    vertical = max(0, px(36) - line)
+    style.configure(
+        "TCombobox",
+        padding=(px(8), vertical // 2, 0, vertical - vertical // 2),
+        foreground=colors(root)(INK),
+        background=colors(root)("white"),
+    )
+    style.configure("Control.TCombobox", background=colors(root)("#f6f8f7"))
+    button_padding = max(0, px(36) - line - 4)
+    style.configure(
+        "TButton",
+        font=(FONT, 10),
+        relief="solid",
+        borderwidth=1,
+        padding=(px(8), button_padding // 2, px(8), button_padding - button_padding // 2),
+        background=colors(root)("white"),
+        foreground=colors(root)(INK),
+        bordercolor=colors(root)(BORDER),
+        lightcolor=colors(root)(BORDER),
+        darkcolor=colors(root)(BORDER),
+    )
+    style.map(
+        "TButton",
+        background=[("active", colors(root)("#eaf3df"))],
+        foreground=[("disabled", colors(root)(MUTED))],
+    )
+    style.configure(
+        "Vertical.TScrollbar",
+        background=colors(root)("#f6f8f7"),
+        troughcolor=colors(root)("white"),
+        arrowcolor=colors(root)(MUTED),
+        bordercolor=colors(root)(BORDER),
+    )
     style.map(
         "TCombobox",
-        fieldbackground=[("readonly", "white")],
-        selectbackground=[("readonly", "white")],
-        selectforeground=[("readonly", INK)],
-        foreground=[("disabled", "#a8b0ab")],
+        fieldbackground=[("readonly", colors(root)("white"))],
+        selectbackground=[("readonly", colors(root)("white"))],
+        selectforeground=[("readonly", colors(root)(INK))],
+        foreground=[("disabled", colors(root)("#a8b0ab"))],
     )
     for option, value in {
         "font": (FONT, 10),
@@ -173,8 +232,52 @@ def dropdown_style(root):
         "relief": "flat",
         "borderWidth": 0,
     }.items():
-        root.option_add(f"*TCombobox*Listbox.{option}", value)
+        root.option_add(
+            f"*TCombobox*Listbox.{option}", colors(root)(value) if isinstance(value, str) else value
+        )
     return normal, focused, disabled, chevron, muted_chevron
+
+
+class ScrollArea(tk.Frame):
+    """Scroll long device mappings while the robot selector and Stop stay in place."""
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=colors(parent)("white"))
+        # A 1px request can leave Tk's grid child unmapped after hiding the scrollbar.
+        self.canvas = tk.Canvas(
+            self, width=100, height=100, highlightthickness=0, bg=colors(parent)("white")
+        )
+        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.content = tk.Frame(self.canvas, bg=colors(parent)("white"))
+        self.item = self.canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.content.bind("<Configure>", self.resize)
+        self.canvas.bind("<Configure>", self.resize)
+        for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(event, self.wheel, add=True)
+
+    def resize(self, _=None):
+        self.canvas.itemconfigure(self.item, width=self.canvas.winfo_width())
+        self.canvas.configure(scrollregion=self.canvas.bbox(self.item))
+        if self.content.winfo_reqheight() > self.canvas.winfo_height():
+            self.bar.grid(row=0, column=1, sticky="ns")
+        else:
+            self.bar.grid_remove()
+            self.canvas.yview_moveto(0)
+
+    def wheel(self, event):
+        widget = event.widget
+        if isinstance(widget, (ttk.Combobox, Slider)):
+            return
+        while widget is not None and widget is not self:
+            widget = getattr(widget, "master", None)
+        if widget is self and self.bar.winfo_ismapped():
+            direction = -1 if event.num == 4 or getattr(event, "delta", 0) > 0 else 1
+            self.canvas.yview_scroll(direction * 3, "units")
+            return "break"
 
 
 class Tooltip:
@@ -202,8 +305,8 @@ class Tooltip:
             self.window,
             text=self.text,
             font=(FONT, 9),
-            fg=INK,
-            bg="#fffde8",
+            fg=colors(self.widget)(INK),
+            bg=colors(self.widget)("white"),
             padx=self.px(6),
             pady=self.px(4),
             wraplength=self.px(260),
@@ -264,14 +367,18 @@ def symbol(canvas, text, x, y, size, color, text_font):
                 cy - radius,
                 cx + radius,
                 cy + radius,
-                fill=color if position == text else "",
-                outline=color if position == text else MUTED,
+                fill=colors(canvas)(color if position == text else ""),
+                outline=colors(canvas)(color if position == text else MUTED),
                 width=max(1, size / 16),
             )
     elif text == "□":
-        canvas.create_rectangle(x - half, y - half, x + half, y + half, outline=color, width=stroke)
+        canvas.create_rectangle(
+            x - half, y - half, x + half, y + half, outline=colors(canvas)(color), width=stroke
+        )
     elif text == "○":
-        canvas.create_oval(x - half, y - half, x + half, y + half, outline=color, width=stroke)
+        canvas.create_oval(
+            x - half, y - half, x + half, y + half, outline=colors(canvas)(color), width=stroke
+        )
     elif text == "△":
         canvas.create_polygon(
             x,
@@ -281,7 +388,7 @@ def symbol(canvas, text, x, y, size, color, text_font):
             x - half,
             y + half,
             fill="",
-            outline=color,
+            outline=colors(canvas)(color),
             width=stroke,
         )
     elif text in {"←", "→", "↑", "↓"}:
@@ -295,13 +402,13 @@ def symbol(canvas, text, x, y, size, color, text_font):
         for points in (head, shaft):
             canvas.create_line(
                 *[(x if i % 2 == 0 else y) + (v - 12) * size / 24 for i, v in enumerate(points)],
-                fill=color,
+                fill=colors(canvas)(color),
                 width=size * 2.5 / 24,
                 capstyle="round",
                 joinstyle="round",
             )
     else:
-        canvas.create_text(x, y, text=text, font=text_font, fill=color)
+        canvas.create_text(x, y, text=text, font=text_font, fill=colors(canvas)(color))
 
 
 class Badge(tk.Canvas):
@@ -324,7 +431,7 @@ class Badge(tk.Canvas):
             if text in FACE_POSITIONS
             else max(self.px(28), self.text_font.measure(text) + self.px(12)),
             height=self.px(27),
-            bg="#f6f8f7",
+            bg=colors(parent)("#f6f8f7"),
             highlightthickness=0,
             takefocus=False,
         )
@@ -342,8 +449,8 @@ class Badge(tk.Canvas):
             height - self.px(3),
             radius=self.px(4),
             width=self.px(1),
-            fill="#eaf3df" if self.active else "white",
-            outline="#76a443" if self.active else BORDER,
+            fill=colors(self)("#eaf3df" if self.active else "white"),
+            outline=colors(self)("#76a443" if self.active else BORDER),
         )
         symbol(
             self,
@@ -375,15 +482,16 @@ class Button(tk.Canvas):
         command=None,
         *,
         width=64,
-        height=34,
+        height=36,
         danger=False,
         color=INK,
         hold=None,
         icon=None,
+        icon_text=False,
         shortcut=None,
     ):
         self.px = Scale(parent)
-        self.text_font = font.Font(parent, family=FONT, size=10, weight="bold")
+        self.text_font = font.Font(parent, family=FONT, size=9 if icon_text else 10, weight="bold")
         self.label_font = (
             font.Font(parent, family=FONT, size=9, weight="bold") if shortcut else None
         )
@@ -394,15 +502,20 @@ class Button(tk.Canvas):
         )
         super().__init__(
             parent,
-            width=max(self.px(width), text_width + self.px(12)) if not icon else self.px(width),
+            width=max(self.px(width), text_width + self.px(39))
+            if icon_text
+            else max(self.px(width), text_width + self.px(12))
+            if not icon
+            else self.px(width),
             height=self.px(height),
-            bg="white",
+            bg=colors(parent)("white"),
             highlightthickness=0,
             takefocus=True,
             cursor="hand2",
         )
         self.text, self.command, self.color, self.hold = text, command, color, hold
         self.icon = icon
+        self.icon_text = icon_text
         self.danger = danger
         self.shortcut = shortcut
         self.enabled, self.pressed = True, False
@@ -442,8 +555,8 @@ class Button(tk.Canvas):
     def draw(self):
         self.delete("all")
         px = self.px
-        width = max(self.winfo_width(), int(self.cget("width")))
-        height = max(self.winfo_height(), int(self.cget("height")))
+        width = self.winfo_width() if self.winfo_width() > 1 else int(self.cget("width"))
+        height = self.winfo_height() if self.winfo_height() > 1 else int(self.cget("height"))
         rounded(
             self,
             px(1),
@@ -452,26 +565,34 @@ class Button(tk.Canvas):
             height - px(3),
             radius=px(5),
             width=px(1),
-            fill="#a63735"
-            if self.danger and self.enabled
-            else "#e4f1cf"
-            if self.pressed
-            else "white",
-            outline="#7d2827"
-            if self.danger and self.enabled
-            else "#76b900"
-            if self.pressed
-            else "#cdd6cc",
+            fill=colors(self)(
+                "#eddad6"
+                if self.danger and self.pressed
+                else "#e4f1cf"
+                if self.pressed
+                else "white"
+            ),
+            outline=colors(self)(
+                "#eddad6" if self.danger else "#76b900" if self.pressed else "#cdd6cc"
+            ),
         )
         color = (
-            "white"
-            if self.danger and self.enabled
-            else self.color
-            if self.enabled or self.pressed
-            else "#a8b0ab"
+            "#a63735" if self.danger else self.color if self.enabled or self.pressed else "#a8b0ab"
         )
+        icon_x = (
+            (width - self.text_font.measure(self.text) - px(7)) / 2 if self.icon_text else width / 2
+        )
+        if self.icon_text:
+            self.create_text(
+                icon_x + px(15),
+                height / 2,
+                text=self.text,
+                anchor="w",
+                font=self.text_font,
+                fill=colors(self)(color),
+            )
         if self.icon == "home":
-            # The dashboard's 24-unit Home outline, centered in a 20px icon.
+            # The dashboard's 24-unit Home outline, centered in a 16px icon.
             points = (
                 3,
                 10,
@@ -500,69 +621,77 @@ class Button(tk.Canvas):
             )
             self.create_line(
                 *[
-                    width / 2 + px(-10 + value * 5 / 6) if index % 2 == 0 else px(7 + value * 5 / 6)
+                    icon_x + px(-8 + value * 2 / 3)
+                    if index % 2 == 0
+                    else height / 2 + px(-8 + value * 2 / 3)
                     for index, value in enumerate(points)
                 ],
-                fill=color,
+                fill=colors(self)(color),
                 width=1.5 * px.factor,
                 capstyle="round",
                 joinstyle="round",
             )
-        elif self.icon == "release":
-            for points in ((9, 4, 4, 4, 4, 20, 9, 20), (8, 12, 21, 12), (16, 7, 21, 12, 16, 17)):
+        elif self.icon in {"acquire", "release"}:
+            arrow = (13, 7, 8, 12, 13, 17) if self.icon == "acquire" else (16, 7, 21, 12, 16, 17)
+            for points in ((9, 4, 4, 4, 4, 20, 9, 20), (8, 12, 21, 12), arrow):
                 self.create_line(
                     *[
-                        width / 2 + px(-10 + value * 5 / 6)
+                        icon_x + px(-8 + value * 2 / 3)
                         if index % 2 == 0
-                        else px(7 + value * 5 / 6)
+                        else height / 2 + px(-8 + value * 2 / 3)
                         for index, value in enumerate(points)
                     ],
-                    fill=color,
+                    fill=colors(self)(color),
                     width=1.5 * px.factor,
                     capstyle="round",
                     joinstyle="round",
                 )
         elif self.icon == "stop":
             self.create_rectangle(
-                width / 2 - px(6), px(11), width / 2 + px(6), px(23), fill=color, outline=""
+                icon_x - px(6),
+                height / 2 - px(6),
+                icon_x + px(6),
+                height / 2 + px(6),
+                fill=colors(self)(color),
+                outline="",
             )
-        elif self.icon == "reset":
+        elif self.icon in {"reset", "replay"}:
             self.create_arc(
-                width / 2 - px(8),
-                px(9),
-                width / 2 + px(8),
-                px(25),
-                start=135,
-                extent=-300,
+                icon_x - px(6),
+                height / 2 - px(6),
+                icon_x + px(6),
+                height / 2 + px(6),
+                start=160,
+                extent=-310,
                 style="arc",
-                outline=color,
-                width=px(2),
+                outline=colors(self)(color),
+                width=1.5 * px.factor,
             )
             self.create_line(
-                width / 2 - px(8),
-                px(9),
-                width / 2 - px(8),
-                px(15),
-                width / 2 - px(2),
-                px(15),
-                fill=color,
-                width=px(2),
+                icon_x - px(6),
+                height / 2 - px(6),
+                icon_x - px(6),
+                height / 2 - px(2),
+                icon_x - px(2),
+                height / 2 - px(2),
+                fill=colors(self)(color),
+                width=1.5 * px.factor,
                 capstyle="round",
                 joinstyle="round",
             )
-        elif self.icon == "replay":
-            self.create_polygon(
-                width / 2 - px(5),
-                px(9),
-                width / 2 + px(7),
-                px(17),
-                width / 2 - px(5),
-                px(25),
-                fill="",
-                outline=color,
-                width=px(2),
-                joinstyle="round",
-            )
+            if self.icon == "replay":
+                self.create_polygon(
+                    icon_x - px(1),
+                    height / 2 - px(3),
+                    icon_x + px(3),
+                    height / 2,
+                    icon_x - px(1),
+                    height / 2 + px(3),
+                    fill="",
+                    outline=colors(self)(color),
+                    width=1.5 * px.factor,
+                    joinstyle="round",
+                )
         elif self.shortcut:
             left = (width - self.label_font.measure(self.text) - px(23)) / 2
             self.create_rectangle(
@@ -570,8 +699,8 @@ class Button(tk.Canvas):
                 px(8),
                 left + px(17),
                 px(25),
-                fill="#f6f8f7",
-                outline="#d7dfd3",
+                fill=colors(self)("#f6f8f7"),
+                outline=colors(self)("#d7dfd3"),
                 width=px(1),
             )
             symbol(
@@ -590,7 +719,12 @@ class Button(tk.Canvas):
                 (FONT, 9, "bold"),
             )
             self.create_text(
-                left + px(23), px(17), text=self.text, anchor="w", font=self.label_font, fill=color
+                left + px(23),
+                px(17),
+                text=self.text,
+                anchor="w",
+                font=self.label_font,
+                fill=colors(self)(color),
             )
         else:
             self.create_text(
@@ -598,7 +732,7 @@ class Button(tk.Canvas):
                 height / 2,
                 text=self.text,
                 font=self.text_font,
-                fill=color,
+                fill=colors(self)(color),
             )
 
     def update_state(self, enabled=True, pressed=None, text=None):
@@ -641,7 +775,7 @@ class Slider(tk.Canvas):
             parent,
             width=self.px(365),
             height=self.px(32),
-            bg="white",
+            bg=colors(parent)("white"),
             highlightthickness=0,
             takefocus=True,
         )
@@ -682,30 +816,43 @@ class Slider(tk.Canvas):
         color = GREEN if self.enabled else "#a8b0ab"
         start, end = self.track_bounds()
         position = start + (end - start) * (self.value - self.minimum) / max(1, 100 - self.minimum)
-        self.create_text(0, px(16), anchor="w", text=self.text, font=self.label_font, fill=INK)
+        self.create_text(
+            0, px(16), anchor="w", text=self.text, font=self.label_font, fill=colors(self)(INK)
+        )
         self.create_line(
             start - px(6),
             px(16),
             end + px(6),
             px(16),
-            fill="#d7dfd3",
+            fill=colors(self)("#d7dfd3"),
             width=px(4),
             capstyle="round",
         )
         self.create_line(
-            start - px(6), px(16), position, px(16), fill=color, width=px(4), capstyle="round"
+            start - px(6),
+            px(16),
+            position,
+            px(16),
+            fill=colors(self)(color),
+            width=px(4),
+            capstyle="round",
         )
         self.create_oval(
             position - px(6),
             px(10),
             position + px(6),
             px(22),
-            fill=color,
-            outline="white",
+            fill=colors(self)(color),
+            outline=colors(self)("white"),
             width=px(2),
         )
         self.create_oval(
-            position - px(7), px(9), position + px(7), px(23), outline=color, width=px(1)
+            position - px(7),
+            px(9),
+            position + px(7),
+            px(23),
+            outline=colors(self)(color),
+            width=px(1),
         )
         self.create_text(
             self.label_left(),
@@ -713,7 +860,7 @@ class Slider(tk.Canvas):
             anchor="w",
             text=f"{self.value}%",
             font=self.value_font,
-            fill=INK,
+            fill=colors(self)(INK),
         )
 
     def update_state(self, enabled):

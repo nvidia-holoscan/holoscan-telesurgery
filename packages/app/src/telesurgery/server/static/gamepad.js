@@ -658,7 +658,7 @@ export function gamepadInput(
         element: container,
         arms,
         roll: rollControls,
-        get inlineFeedback() { return bankedJoints && !cartesian; },
+        get inlineFeedback() { return (bankedJoints && !cartesian) || (dual && !miraCartesian()); },
         replay(input) {
             replayInput = input?.device === "gamepad" ? input : null;
             if (replayInput && manualMode === null) manualMode = group.value;

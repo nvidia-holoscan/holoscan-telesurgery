@@ -27,7 +27,7 @@ import { depthView, nativeDepthControls } from "./depth.js";
 import { equipmentTable } from "./equipment.js";
 import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
-import { setThemeRole } from "./theme.js";
+import { setThemeRole, controllerAppearance } from "./theme.js";
 import { viewZoom, cameraZoom } from "./view-zoom.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
@@ -130,7 +130,7 @@ async function transferController(native) {
             const retain = await robots.prepareHandoff(id);
             await action("controller.open", {
                 id, preferences: controllerPreferences(), input: robots.inputSelection(id),
-                retain_control: retain,
+                retain_control: retain, appearance: controllerAppearance(),
             });
             transferred = true;
         } else {

@@ -4,9 +4,9 @@ A distributed telesurgery demo built with **NVIDIA Holoscan and Holoscan Sensor 
 
 Use physical devices or **MIRA, Franka and Versius simulations**, with browser or native Holoviz viewing and per-stream latency metrics.
 
-![Project walkthrough: CMR Versius and MIRA simulation, Franka color and depth side by side, physical Franka, patient approvals, HSB 4K stream settings, browser and native controls, and live metrics](docs/images/surgeon-walkthrough.gif)
+![Project overview: patient room and access approvals, HSB capture settings, MIRA and Versius simulations, Franka color and depth inspection, physical robots, native Holoviz controls, and latency metrics](docs/images/project-overview.gif)
 
-[Patient dashboard](docs/images/patient-walkthrough.gif) · [Architecture](docs/architecture.md) · [Benchmarks](BENCHMARK.md)
+[Architecture](docs/architecture.md) · [Robot controls](docs/robot-controls.md) · [Benchmarks](BENCHMARK.md)
 
 ## System requirements
 
@@ -40,6 +40,12 @@ With the CUDA 13 development toolkit installed, run:
 
 ```bash
 ./setup.sh
+```
+
+For a node connected to a **physical Franka**, run this instead to include the required native robot adapter:
+
+```bash
+./setup.sh --profile franka
 ```
 
 Setups are cached; use `--force` to rerun. Native setup builds SDK 5 and logs to `build/setup.log`. Retry failed downloads without deleting `build/`. On slow connections, avoid simultaneous native and Docker builds.

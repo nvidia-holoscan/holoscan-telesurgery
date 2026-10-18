@@ -30,7 +30,7 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
         "controlled_robots": [],
         "session": {
             "id": "operator",
-            "name": "Operator",
+            "name": "Operator with a long display name",
             "status": "approved",
             "robot": True,
             "robots": [robot],
@@ -49,7 +49,7 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
             method = route.request.post_data_json["action"]
             calls.append(method)
             if method == "robot.acquire":
-                robot.update(owner="Operator", owner_id="operator")
+                robot.update(owner="Operator with a long display name", owner_id="operator")
                 state["controlled_robots"] = [robot["id"]]
             elif method == "robot.renew" and fail_renew:
                 failed.set()
@@ -72,6 +72,10 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
             await page.goto("http://localhost:8777/")
             acquire = page.get_by_role("button", name="Acquire control", exact=True)
             await expect(acquire).to_be_visible()
+            acquire_box = await acquire.bounding_box()
+            metrics = page.get_by_role("button", name="Franka robot metrics", exact=True)
+            metrics_box = await metrics.bounding_box()
+            assert metrics_box["x"] == acquire_box["x"] + acquire_box["width"] + 8
             space = """() => {
                 const event = new KeyboardEvent('keydown', {
                     key:' ', code:'Space', bubbles:true, cancelable:true
@@ -81,6 +85,10 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
             }"""
             assert not await page.evaluate(space)  # Normal page scrolling before acquisition.
             await acquire.click()
+            release = page.get_by_role("button", name="Release control", exact=True)
+            await expect(release).to_be_visible()
+            assert await release.bounding_box() == acquire_box
+            assert await metrics.bounding_box() == metrics_box
             key = page.locator('.key-cap[data-key="g"]')
             await expect(page.locator(".keyboard-controls")).to_be_visible()
             await expect(key).to_be_enabled()
@@ -533,7 +541,8 @@ async def test_explicit_ownership_idle_renewal_release_and_patient_force_release
             await expect(acquire).to_be_hidden()
             await expect(release).to_be_visible()
             await expect(release.locator("svg")).to_be_visible()
-            await expect(release.locator("span")).to_have_class("sr-only")
+            await expect(release.locator("span")).to_have_text("Release")
+            await expect(release.locator("span")).not_to_have_class("sr-only")
             await expect(page.locator('.key-cap[data-key="q"]')).to_be_enabled()
             await page.locator(".keyboard-controls").focus()
             await page.keyboard.down("q")

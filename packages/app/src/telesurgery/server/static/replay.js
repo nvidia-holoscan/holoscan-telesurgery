@@ -10,6 +10,7 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback, sh
     status.setAttribute("role", "status");
     status.hidden = true;
     control.hidden = true;
+    control.disabled = true;
     let recording, active = false, allowed = false, busy = false, disposed = false;
     let generation = 0, lastTick = performance.now();
     let heartbeatBusy = false, lastHeartbeat = 0;
@@ -119,9 +120,11 @@ export function replayControls(robot, prepare, send, hold, refresh, feedback, sh
             recording = records.find(item => robot.simulation && robot.kind === `${item.environment}-sim`
                 && item.device === device && item.streams.includes(role));
             allowed = permitted;
-            control.hidden = !recording || !permitted;
-            control.disabled = active;
-            control.title = recording ? `Replay ${device} inputs · ${recording.task}` : "Replay inputs";
+            control.hidden = !recording;
+            control.disabled = active || !recording || !permitted;
+            control.title = !recording ? "No recording available for this robot and input"
+                : !permitted ? "Acquire control to replay inputs"
+                : `Replay ${device} inputs · ${recording.task}`;
             if (active && (!allowed || !recording)) stop(false,
                 !allowed ? "control no longer available" : "recording selection changed");
         },
