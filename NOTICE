@@ -15,9 +15,17 @@ Copyright (c) NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 tensorrt-cu13 10.13.3.9.post1, including its matching bindings and libraries.
 Licensed under the NVIDIA Software License Agreement (https://docs.nvidia.com/deeplearning/tensorrt/sla/index.html).
 
-Third-party software is not copied into this source tree. Native setup and the container image download the components below at build or install time. Versions are the pin in uv.lock, dependencies/*.toml, the Dockerfile, or the build script. Transitive Python packages resolved by uv.lock are not repeated here unless their license obligation is stronger than the direct dependency.
+Third-party software is not copied into this source tree. Native setup and the container image download the components below at build or install time. Versions are the pin in uv.lock, dependencies/*.toml, the Dockerfile, or the build script.
+The complete Python dependency inventory selected by the release, including transitive runtime, optional Franka, and development-only packages, is maintained in THIRD_PARTY_DEPENDENCIES.md.
 
 Corresponding source for GPL and LGPL components installed from Ubuntu 24.04 is available from the Ubuntu archive for that release. Corresponding source for other copyleft components is at the URLs below.
+
+Haply Inverse Service (https://develop.haply.co/releases/installer/3.5.6)
+Vendor: Haply Robotics Inc.
+Copyright and ownership: Haply Robotics Inc. and its licensors, as stated in section 2 of the vendor agreement.
+Version 3.5.6. Optional haptic-input runtime service installed by native setup or copied into the container runtime image.
+Licensed under the proprietary Haply End-User Software License Agreement included by the vendor at /usr/share/doc/haply-inverse-service/copyright.
+The agreement does not grant third-party redistribution rights; container distribution requires separate written authorization from Haply.
 
 SDL2 (https://github.com/libsdl-org/SDL)
 Copyright (C) 1997-2024 Sam Lantinga.
