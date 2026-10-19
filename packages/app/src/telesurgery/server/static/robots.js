@@ -807,8 +807,10 @@ export function robotControls(refresh, openMetrics) {
         try {
             for (const id of held) {
                 try {
-                    acknowledge(id, await action(interrupted.has(id) ? "robot.hold" : "robot.renew", { id }), true);
-                    interrupted.delete(id);
+                    const method = interrupted.has(id) ? "robot.hold" : "robot.renew";
+                    acknowledge(id, await action(method, { id }), true);
+                    // A renewal sent before a failed hold cannot confirm that stop.
+                    if (method === "robot.hold") interrupted.delete(id);
                 } catch {
                     interrupted.add(id);
                     stopInputs(cards.get(id));

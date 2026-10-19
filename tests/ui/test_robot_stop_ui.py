@@ -128,8 +128,10 @@ async def test_reload_and_missed_renewal_preserve_lock_without_replaying_input()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("hold_fails", [False, True])
-async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fails):
+@pytest.mark.parametrize(
+    "hold_fails, delayed_renewal", [(False, False), (True, False), (True, True)]
+)
+async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fails, delayed_renewal):
     robot = {
         "id": "node:franka",
         "name": "Franka",
@@ -153,6 +155,8 @@ async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fail
         },
     }
     calls = []
+    renewal_started = asyncio.Event()
+    finish_renewal = asyncio.Event()
 
     async def route(route):
         path = route.request.url.removeprefix("http://localhost:8777/")
@@ -161,11 +165,15 @@ async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fail
         elif path == "api/action":
             method = route.request.post_data_json["action"]
             calls.append(method)
+            sequence = len(calls) + 1
+            if method == "robot.renew" and delayed_renewal and not renewal_started.is_set():
+                renewal_started.set()
+                await finish_renewal.wait()
             if method == "robot.move" or (method == "robot.hold" and hold_fails):
                 await route.fulfill(status=409, json={"error": "Controller rejected request"})
             else:
                 await route.fulfill(
-                    json={"result": {"sequence": len(calls) + 1, "control_active": False}}
+                    json={"result": {"sequence": sequence, "control_active": False}}
                 )
         else:
             await route.fulfill(path=STATIC / (path.removeprefix("static/") or "index.html"))
@@ -179,6 +187,8 @@ async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fail
             await page.get_by_role("button", name="Acquire control", exact=True).click()
             key = page.locator('.key-cap[data-key="g"]')
             await expect(key).to_be_enabled()
+            if delayed_renewal:
+                await asyncio.wait_for(renewal_started.wait(), 3)
             await key.hover()
             await page.mouse.down()
             for _ in range(120):
@@ -192,6 +202,23 @@ async def test_rejected_move_preserves_lock_even_when_stop_reply_fails(hold_fail
             release = page.get_by_role("button", name="Release control", exact=True)
             if hold_fails:
                 await expect(key).to_be_disabled()
+            if delayed_renewal:
+                # A renewal already in flight cannot acknowledge the failed stop.
+                async with page.expect_request(
+                    lambda request: (
+                        request.method == "POST"
+                        and request.post_data_json.get("action") in {"robot.hold", "robot.renew"}
+                    )
+                ) as retry:
+                    finish_renewal.set()
+                assert (await retry.value).post_data_json["action"] == "robot.hold"
+                await expect(key).to_be_disabled()
+                # A successful hold retry restores controls without replaying input.
+                hold_fails = False
+                await expect(key).to_be_enabled()
+                await page.wait_for_timeout(600)
+                assert calls.count("robot.move") == 1
+                assert "robot.release" not in calls
             await expect(release).to_be_visible()
             await page.mouse.up()
         finally:
