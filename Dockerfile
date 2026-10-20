@@ -116,7 +116,7 @@ COPY --from=haply /opt/haply/doc /usr/share/doc/haply-inverse-service
 COPY --from=application /opt/application/ /opt/telesurgery/
 COPY --from=application /app/packages ./packages
 COPY examples/controller-replays ./examples/controller-replays
-COPY pyproject.toml uv.lock README.md LICENSE NOTICE SECURITY.md ./
+COPY pyproject.toml uv.lock README.md LICENSE NOTICE THIRD_PARTY_DEPENDENCIES.md SECURITY.md ./
 # Native controls use desktop Python, whose dependencies are separate from the SDK venv.
 RUN PYTHONPATH=/app/packages/app/src:/app/packages/core/src \
     /usr/bin/python3 -c 'import telesurgery.controller.window'
