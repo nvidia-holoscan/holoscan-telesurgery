@@ -110,7 +110,7 @@ Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICE
 
 CMake (https://gitlab.kitware.com/cmake/cmake)
 Version 4.4.4. Build tool; uninstalled from the runtime image.
-Licensed under BSD-3-Clause (https://gitlab.kitware.com/cmake/cmake/-/raw/v4.4.4/Copyright.txt)
+Licensed under BSD-3-Clause (https://github.com/Kitware/CMake/blob/v4.4.4/LICENSE.rst)
 
 Ninja (https://github.com/ninja-build/ninja)
 Version 1.13.2. Build tool; uninstalled from the runtime image.

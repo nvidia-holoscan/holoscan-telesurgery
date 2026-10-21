@@ -60,7 +60,7 @@ These packages are selected only when the physical Franka profile is built. Buil
 
 | Component | Version | License / terms | Upstream source | Legal-file location | Distribution role |
 | --- | ---: | --- | --- | --- | --- |
-| `cmake` | 4.4.4 | Apache-2.0 AND BSD-3-Clause | [upstream](https://github.com/scikit-build/cmake-python-distributions) | [wrapper `LICENSE_Apache_20`](https://github.com/scikit-build/cmake-python-distributions/blob/main/LICENSE_Apache_20), [CMake `Copyright.txt`](https://gitlab.kitware.com/cmake/cmake/-/blob/master/Copyright.txt) | optional Franka direct/build |
+| `cmake` | 4.4.4 | Apache-2.0 AND BSD-3-Clause | [upstream](https://github.com/scikit-build/cmake-python-distributions) | [wrapper `LICENSE_Apache_20`](https://github.com/scikit-build/cmake-python-distributions/blob/main/LICENSE_Apache_20), [CMake `LICENSE.rst`](https://github.com/Kitware/CMake/blob/v4.4.4/LICENSE.rst) | optional Franka direct/build |
 | `cmeel` | 0.61.0 | BSD-2-Clause | [upstream](https://github.com/cmake-wheel/cmeel) | distribution: `LICENSE` | optional Franka transitive |
 | `cmeel-assimp` | 6.0.5 | BSD-3-Clause | [upstream](https://github.com/cmake-wheel/cmeel-assimp) | [Assimp `LICENSE`](https://github.com/assimp/assimp/blob/master/LICENSE) | optional Franka transitive |
 | `cmeel-boost` | 1.90.0 | BSL-1.0 | [upstream](https://github.com/cmake-wheel/cmeel-boost) | [Boost Software License](https://www.boost.org/LICENSE_1_0.txt) | optional Franka transitive |
