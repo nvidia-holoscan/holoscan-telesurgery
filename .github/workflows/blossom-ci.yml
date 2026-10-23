@@ -1,104 +1,96 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2020-2025, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+# A workflow to trigger ci on hybrid infra (github + self hosted runner)
 name: Blossom-CI
 on:
   issue_comment:
     types: [created]
-  # Blossom uses dispatch to return results from its external CI server.
   workflow_dispatch:
-    inputs:
-      platform:
-        description: Runner platform
-        required: false
-      args:
-        description: Blossom result arguments
-        required: false
-
-permissions:
-  contents: read
-
+      inputs:
+          platform:
+            description: 'runs-on argument'
+            required: false
+          args:
+            description: 'argument'
+            required: false
 jobs:
   Authorization:
-    name: Authorize build
+    name: Authorization
     runs-on: blossom
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
     outputs:
       args: ${{ env.args }}
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      github.event.comment.body == '/build' &&
-      contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.actor) &&
-      contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
+
+    # This job only runs for pull request comments
+    if: |
+         github.event.comment.body == '/build' &&
+         (
+           github.actor == 'jjomier' ||
+           github.actor == 'wendell-hom' ||
+           github.actor == 'SachidanandAlle'
+         )
+
     steps:
-      - run: blossom-ci
+      - name: Check if comment is issued by authorized person
+        run: blossom-ci
         env:
-          OPERATION: AUTH
+          OPERATION: 'AUTH'
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_KEY_DATA: ${{ secrets.BLOSSOM_KEY }}
 
   Vulnerability-scan:
     name: Vulnerability scan
-    needs: Authorization
-    # GitHub can rerun downstream jobs without rerunning Authorization.
-    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
+    needs: [Authorization]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout code
+        uses: actions/checkout@v2
         with:
-          repository: ${{ fromJSON(needs.Authorization.outputs.args).repo }}
-          ref: ${{ fromJSON(needs.Authorization.outputs.args).ref }}
-          persist-credentials: false
-      - uses: NVIDIA/blossom-action@2b0c950b993808dc31f80a1ccc32615902e39032 # main
+          repository: ${{ fromJson(needs.Authorization.outputs.args).repo }}
+          ref: ${{ fromJson(needs.Authorization.outputs.args).ref }}
+          lfs: 'true'
+
+      - name: Run blossom action
+        uses: NVIDIA/blossom-action@main
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_KEY_DATA: ${{ secrets.BLOSSOM_KEY }}
         with:
-          args1: ${{ fromJSON(needs.Authorization.outputs.args).args1 }}
-          args2: ${{ fromJSON(needs.Authorization.outputs.args).args2 }}
-          args3: ${{ fromJSON(needs.Authorization.outputs.args).args3 }}
+          args1: ${{ fromJson(needs.Authorization.outputs.args).args1 }}
+          args2: ${{ fromJson(needs.Authorization.outputs.args).args2 }}
+          args3: ${{ fromJson(needs.Authorization.outputs.args).args3 }}
 
   Job-trigger:
-    name: Start CI job
-    needs: Vulnerability-scan
-    if: contains(fromJSON('["SachidanandAlle", "jjomier", "wendell-hom"]'), github.triggering_actor)
+    name: Start ci job
+    needs: [Vulnerability-scan]
     runs-on: blossom
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
     steps:
-      - run: blossom-ci
+      - name: Start ci job
+        run: blossom-ci
         env:
-          OPERATION: START-CI-JOB
+          OPERATION: 'START-CI-JOB'
           CI_SERVER: ${{ secrets.CI_SERVER }}
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   Upload-Log:
-    name: Publish CI results
+    name: Upload log
     runs-on: blossom
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if : github.event_name == 'workflow_dispatch'
     steps:
-      - run: blossom-ci
+      - name: Jenkins log for pull request ${{ fromJson(github.event.inputs.args).pr }} (click here)
+        run: blossom-ci
         env:
-          OPERATION: POST-PROCESSING
+          OPERATION: 'POST-PROCESSING'
           CI_SERVER: ${{ secrets.CI_SERVER }}
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
