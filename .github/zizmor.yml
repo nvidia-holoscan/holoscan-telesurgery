@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Blossom AUTH rejects workflows that differ from its supported templates.
+# These exceptions cover only findings in the preserved vendor template.
+# scripts/check_license.py pins that template's checksum; review these exceptions
+# when Blossom supports a hardened template. All other audits remain enabled.
+rules:
+  artipacked:
+    ignore:
+      - blossom-ci.yml:57
+  excessive-permissions:
+    ignore:
+      - blossom-ci.yml:16
+      - blossom-ci.yml:29
+      - blossom-ci.yml:52
+      - blossom-ci.yml:74
+      - blossom-ci.yml:86
+  unpinned-uses:
+    ignore:
+      - blossom-ci.yml:58
+      - blossom-ci.yml:65
