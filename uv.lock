@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 
 [manifest]
@@ -1010,11 +1010,11 @@ wheels = [
 
 [[package]]
 name = "pyrealsense2"
-version = "2.58.4.10922"
+version = "2.59.1.11053"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/26/b477bca457fd20f221f1e408b196d6c16ff33aacbf73f8e325b6370b4ddb/pyrealsense2-2.58.4.10922-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:1e83454cbaf9de50962d78ce3addb0b6a6d8d02259c1f0c64d4a0d527a02bf73", size = 13094959, upload-time = "2026-08-30T08:34:38.859Z" },
-    { url = "https://files.pythonhosted.org/packages/85/e6/8b1d98e717834351131dbdb479d6a169d3a81e04f6165d599509293d818c/pyrealsense2-2.58.4.10922-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:04a61fad8d4c69bcd6acb3ddcee65630e6ce31f94f5bd309a72c5831b9fa83cd", size = 6742674, upload-time = "2026-08-30T08:34:44.333Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/aa/d740d01d8e244a837d2a7937592c2e506229f79f8664c2b9cd7f3ac2565a/pyrealsense2-2.59.1.11053-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:5da55a75e0af0fa4064e7496289a93a27af2aee0a650ca2b47756eda0c74d578", size = 13423985, upload-time = "2026-10-11T08:57:58.266Z" },
+    { url = "https://files.pythonhosted.org/packages/19/b4/66b1e773d48ea91657b0a8782fe3d9b156ac03b2b87bfc74b352007b6ce5/pyrealsense2-2.59.1.11053-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:38310867ca6ba29aefcb313ad65aac7a6d8937f8c9f32d094c8345d904855811", size = 7094617, upload-time = "2026-10-11T08:58:06.608Z" },
 ]
 
 [[package]]
@@ -1191,7 +1191,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50,<51" },
     { name = "numpy", specifier = ">=2.5.4,<3" },
     { name = "opencv-python-headless", specifier = ">=4.10,<6" },
-    { name = "pyrealsense2", marker = "sys_platform == 'linux'", specifier = "==2.58.4.10922" },
+    { name = "pyrealsense2", marker = "sys_platform == 'linux'", specifier = "==2.59.1.11053" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "pyzmq", specifier = ">=26,<28" },
     { name = "websocket-client", specifier = ">=1.8,<2" },
