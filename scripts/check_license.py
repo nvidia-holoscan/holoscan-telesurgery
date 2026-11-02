@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Require SPDX metadata, except for the exact Blossom vendor template."""
+"""Require SPDX metadata, except for the reviewed Blossom workflow."""
 
 import hashlib
 import sys
 from pathlib import Path
 
-# Blossom rejects workflows that do not match a supported template. Preserve its
-# full Apache-2.0 notice; permit only this reviewed template, not arbitrary edits.
+# Blossom validates workflows against supported templates. Preserve the vendor's
+# full Apache-2.0 notice; permit only the reviewed workflow with pinned actions.
 BLOSSOM_TEMPLATE = Path(".github/workflows/blossom-ci.yml")
-BLOSSOM_SHA256 = "f8d76badb269f1531f69f0816587fa78436c68b40fc00ac2e2c51b4a9ad0b6b7"
+BLOSSOM_SHA256 = "db3ae7177f667063b126f75a9ac7bf20b0d3cd9caf49589e944aea47bca6977e"
 
 
 def main():
