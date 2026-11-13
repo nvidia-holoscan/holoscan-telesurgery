@@ -30,6 +30,7 @@ from telesurgery_core.transport.protocol import MAX_FRAME, decode_video
 from telesurgery_core.transport.rpc import RpcClient
 from telesurgery_core.video.capabilities import supported_codecs
 from telesurgery_core.video.config import Config
+from telesurgery_core.video.reference import KEYFRAME_SUFFIX
 
 
 async def _terminate(process):
@@ -224,7 +225,7 @@ class LocalNode:
             if key in self.workers:
                 if not self.workers[key].get("error"):
                     changed = {k for k in selected if selected[k] != camera.get(k, "")}
-                    if changed - {"codec", "qp", "jpeg_quality", "encoder_preset"}:
+                    if changed - {"codec", "bitrate_mbps", "jpeg_quality", "encoder_preset"}:
                         raise ValueError("Stop this stream before changing its capture settings")
                     path = self.workers[key]["settings"]
                     if changed or path.with_suffix(".error").exists():
@@ -309,6 +310,15 @@ class LocalNode:
             self.settings[key] = selected
             save(self.settings_path, self.settings)
             self.cameras.setdefault(key, camera).update(selected)
+
+    def request_keyframe(self, key):
+        """Ask a running camera's encoder for an IDR; its worker polls for this file."""
+        worker = self.workers.get(key)
+        if worker is not None and not worker.get("error"):
+            try:
+                worker["settings"].with_suffix(KEYFRAME_SUFFIX).touch()
+            except OSError:
+                pass  # The worker is shutting down; its replacement starts with an IDR.
 
     async def _frames(self, key, worker):
         try:

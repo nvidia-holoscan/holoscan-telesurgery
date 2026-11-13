@@ -25,10 +25,12 @@ from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.diagnostics.trace import mark
 from telesurgery_core.transport.protocol import VideoHeader, decode_video
 from telesurgery_core.video.depth import split
+from telesurgery_core.video.reference import ReferenceChain
 
 
 class Feed:
-    def __init__(self):
+    def __init__(self, refresh=None):
+        self.refresh = refresh or (lambda: None)  # Ask the camera's encoder for an IDR.
         self.packet = None
         self.revision = 0
         self.changed = asyncio.Condition()
@@ -40,6 +42,14 @@ class Feed:
         self.profile = None
         self.error = None
         self.closed = False
+
+    def request_keyframe(self):
+        """Predicted frames need their reference; ask the encoder that produced them."""
+        if self.profile and self.profile[0] == "surgical-tokenizer":
+            if self.preview is not None:
+                self.preview.request_keyframe()  # Source frames are intra-only.
+        else:
+            self.refresh()
 
     async def put(self, header, payload, timing=None):
         if self.closed:
@@ -128,32 +138,41 @@ class EncodedTrack(MediaStreamTrack):
     def __init__(self, feed):
         super().__init__()
         self.feed, self.revision, self.origin = feed, -1, None
+        self.chain = ReferenceChain()
         self.trace, self.pts = None, None
         self.depth, self.depth_size = b"", (0, 0)
 
     async def recv(self):
         if self.readyState != "live":
             raise MediaStreamError
-        async with self.feed.changed:
-            await self.feed.changed.wait_for(
-                lambda: (
-                    self.feed.closed
-                    or self.feed.error
-                    or (self.feed.packet is not None and self.feed.revision != self.revision)
+        while True:
+            async with self.feed.changed:
+                await self.feed.changed.wait_for(
+                    lambda: (
+                        self.feed.closed
+                        or self.feed.error
+                        or (self.feed.packet is not None and self.feed.revision != self.revision)
+                    )
                 )
-            )
-            if self.feed.closed or self.feed.error:
-                raise MediaStreamError(self.feed.error or "Stream closed")
-            header, data = self.feed.packet
-            self.depth = b""
-            if header.get("depth_bytes"):
-                parsed = VideoHeader(**header)
-                data, self.depth = split(parsed, data)
-                self.depth_size = parsed.width, parsed.height
-            if header["codec"] != "h264":
-                raise MediaStreamError("Use Holoviz for this codec")
-            self.trace = self.feed.trace
-            self.revision = self.feed.revision
+                if self.feed.closed or self.feed.error:
+                    raise MediaStreamError(self.feed.error or "Stream closed")
+                header, data = self.feed.packet
+                self.revision = self.feed.revision
+                # The feed keeps only the newest frame, so this track may have skipped
+                # one. A browser decodes nothing useful until an IDR repairs the chain.
+                if not self.chain.accept(VideoHeader(**header)):
+                    if self.chain.refresh_due():
+                        self.feed.request_keyframe()
+                    continue
+                self.depth = b""
+                if header.get("depth_bytes"):
+                    parsed = VideoHeader(**header)
+                    data, self.depth = split(parsed, data)
+                    self.depth_size = parsed.width, parsed.height
+                if header["codec"] != "h264":
+                    raise MediaStreamError("Use Holoviz for this codec")
+                self.trace = self.feed.trace
+                break
         timestamp = header["captured_ns"]
         if self.origin is None:
             self.origin = timestamp
@@ -165,15 +184,19 @@ class EncodedTrack(MediaStreamTrack):
 
 
 class Media:
-    def __init__(self, on_change=None):
+    def __init__(self, on_change=None, refresh=None):
         self.on_change = on_change
+        self.refresh = refresh or (lambda camera: None)
         self.feeds = {}
         self.connections = {}
 
-    async def put(self, camera, header, payload, timing=None):
+    def feed(self, camera):
         if camera not in self.feeds:
-            self.feeds[camera] = Feed()
-        await self.feeds[camera].put(header, payload, timing)
+            self.feeds[camera] = Feed(lambda: self.refresh(camera))
+        return self.feeds[camera]
+
+    async def put(self, camera, header, payload, timing=None):
+        await self.feed(camera).put(header, payload, timing)
 
     async def offer(self, camera, sdp, kind):
         feed = self.feeds.get(camera)
@@ -209,8 +232,19 @@ class Media:
             ]
             transceiver.setCodecPreferences(codecs)
             await peer.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=kind))
-            track = EncodedTrack(self.feeds.setdefault(camera, Feed()))
+            feed = self.feed(camera)
+            track = EncodedTrack(feed)
             sender = peer.addTrack(track)
+            # A browser's picture-loss request is the one RTCP signal aiortc cannot
+            # satisfy itself: it re-encodes nothing, so the IDR must come from the camera.
+            send_keyframe = sender._send_keyframe
+
+            def keyframe():
+                send_keyframe()
+                track.chain.reset()
+                feed.request_keyframe()
+
+            sender._send_keyframe = keyframe
             depth = DepthChannel(peer, track)
             StreamTiming(peer, track, sender, on_frame=depth.send)
             await peer.setLocalDescription(await peer.createAnswer())

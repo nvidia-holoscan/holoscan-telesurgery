@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Bounded raw frames and independent-frame bitstream validation."""
+"""Bounded raw frames and bitstream validation for keyframes and delta frames."""
 
 from __future__ import annotations
 
@@ -63,17 +63,17 @@ class _Bits:
 
 
 def h264_dimensions(data: bytes) -> tuple[int, int]:
-    """Validate our progressive 8-bit 4:2:0 all-IDR contract before NVDEC allocation.
+    """Validate an IDR access unit of our progressive 8-bit 4:2:0 contract before NVDEC allocation.
 
-    Reject other profiles, predicted slices and interlaced streams: this is the
-    application's wire format, not a general-purpose H.264 file parser.
+    Reject other profiles and interlaced streams: this is the application's wire
+    format, not a general-purpose H.264 file parser. Delta frames go through video_frame().
     """
     if not data.startswith((b"\x00\x00\x01", b"\x00\x00\x00\x01")):
         raise ValueError("expected Annex B H.264")
     units = [unit for unit in re.split(b"\x00\x00\x00?\x01", data) if unit]
     kinds = [unit[0] & 31 for unit in units]
     if not {5, 7, 8}.issubset(kinds) or any(k not in {5, 6, 7, 8, 9, 12} for k in kinds):
-        raise ValueError("H.264 requires SPS, PPS and IDR without predicted slices")
+        raise ValueError("H.264 keyframes require SPS, PPS and IDR without predicted slices")
     if kinds.count(7) != 1 or kinds.count(8) != 1:
         raise ValueError("expected one H.264 parameter-set pair")
     sps = units[kinds.index(7)][1:]
@@ -113,7 +113,7 @@ def h264_dimensions(data: bytes) -> tuple[int, int]:
 
 
 def h265_dimensions(data: bytes) -> tuple[int, int]:
-    """Validate our progressive Main/8-bit 4:2:0 HEVC all-IDR contract."""
+    """Validate an IDR access unit of our progressive Main/8-bit 4:2:0 HEVC contract."""
     if not data.startswith((b"\x00\x00\x01", b"\x00\x00\x00\x01")):
         raise ValueError("expected Annex B H.265")
     units = [unit for unit in re.split(b"\x00\x00\x00?\x01", data) if unit]
@@ -125,7 +125,7 @@ def h265_dimensions(data: bytes) -> tuple[int, int]:
         or not {19, 20}.intersection(kinds)
         or any(k not in {19, 20, 32, 33, 34, 35, 38, 39, 40} for k in kinds)
     ):
-        raise ValueError("H.265 requires VPS, SPS, PPS and IDR without predicted slices")
+        raise ValueError("H.265 keyframes require VPS, SPS, PPS and IDR without predicted slices")
     if any(kinds.count(kind) != 1 for kind in (32, 33, 34)):
         raise ValueError("expected one H.265 parameter-set group")
     sps = units[kinds.index(33)][2:]
@@ -192,3 +192,34 @@ def dimensions(codec, data):
     return {"h264": h264_dimensions, "h265": h265_dimensions, "nvjpeg": jpeg_dimensions}[codec](
         data
     )
+
+
+def _delta_kinds(codec, data):
+    """NAL types of a predicted access unit, or None when the data holds an IDR."""
+    if not data.startswith((b"\x00\x00\x01", b"\x00\x00\x00\x01")):
+        raise ValueError(f"expected Annex B {codec.upper()}")
+    units = [unit for unit in re.split(b"\x00\x00\x00?\x01", data) if unit]
+    if codec == "h264":
+        kinds = [unit[0] & 31 for unit in units]
+        return None if 5 in kinds else (kinds, {1}, {1, 6, 9, 12})
+    if any(len(unit) < 2 or unit[0] & 0x81 or unit[1] & 0xF8 or not unit[1] & 7 for unit in units):
+        raise ValueError("invalid H.265 NAL header")
+    kinds = [(unit[0] >> 1) & 63 for unit in units]
+    return None if {19, 20}.intersection(kinds) else (kinds, {0, 1}, {0, 1, 35, 39, 40})
+
+
+def video_frame(codec, data):
+    """Validate one encoded frame; return ((width, height) or None, keyframe).
+
+    Keyframes carry parameter sets and the full contract checks apply. A delta
+    frame only holds predicted slices, so its size comes from the stream header.
+    """
+    if codec not in {"h264", "h265"}:
+        return dimensions(codec, data), True
+    delta = _delta_kinds(codec, data)
+    if delta is None:
+        return dimensions(codec, data), True
+    kinds, slices, allowed = delta
+    if not slices.intersection(kinds) or not allowed.issuperset(kinds):
+        raise ValueError(f"{codec.upper()} delta frames must contain only predicted slices")
+    return None, False

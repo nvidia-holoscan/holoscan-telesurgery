@@ -34,6 +34,7 @@ class NodeClient:
         self.clock = Clock()
         self.video = VideoEndpoint(self.directory, self.clock)
         self.node = NodeService(self.directory, self.publish)
+        self.video.refresh = self.node.local.request_keyframe
         self.peer = None
         self.ready = self.started = self.removed = False
         self.last_status = ""

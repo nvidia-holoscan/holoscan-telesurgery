@@ -322,6 +322,69 @@ async def test_direct_video_tickets_scope_expiry_and_revocation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
+    from telesurgery.nodes.video import VideoEndpoint
+    from telesurgery_core.diagnostics.clock import Clock
+    from telesurgery_core.transport.peer import Peer
+    from telesurgery_core.transport.tls import client_context
+
+    endpoint = VideoEndpoint(tmp_path, Clock())
+    requested, peers = [], []
+    endpoint.refresh = requested.append
+
+    async def connect():
+        async def reject(*args):
+            raise PermissionError("No inbound commands")
+
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", endpoint.address["port"], ssl=client_context()
+        )
+        peers.append(Peer(reader, writer, reject).start())
+        return peers[-1]
+
+    try:
+        await endpoint.start(0)
+        stranger, viewer = await connect(), await connect()
+        with pytest.raises(RuntimeError, match="single viewer ticket"):
+            await stranger.call("viewer.refresh", {})
+        assert requested == []
+        ticket = (await endpoint.control("video.ticket", {"camera": "one", "id": "node:one"}))[
+            "ticket"
+        ]
+        await viewer.call("viewer.attach", {"ticket": ticket})
+        assert requested == ["one"]  # A new viewer cannot decode deltas until an IDR.
+        await viewer.call("viewer.refresh", {})
+        assert requested == ["one"]  # Coalesced with the request just made.
+        await asyncio.sleep(0.15)
+        await viewer.call("viewer.refresh", {})
+        assert requested == ["one", "one"]
+    finally:
+        for peer in peers:
+            await peer.close()
+        await endpoint.close()
+
+
+@pytest.mark.asyncio
+async def test_node_signals_a_running_camera_worker_for_a_keyframe(tmp_path):
+    from telesurgery.nodes.local import LocalNode
+    from telesurgery_core.video.reference import KEYFRAME_SUFFIX
+
+    node = LocalNode(tmp_path, None)
+    settings = tmp_path / "camera.json"
+    try:
+        node.request_keyframe("missing")  # Unknown cameras are ignored.
+        node.workers["one"] = {"settings": settings}
+        node.request_keyframe("one")
+        assert settings.with_suffix(KEYFRAME_SUFFIX).exists()
+        settings.with_suffix(KEYFRAME_SUFFIX).unlink()
+        node.workers["one"]["error"] = "exited"
+        node.request_keyframe("one")
+        assert not settings.with_suffix(KEYFRAME_SUFFIX).exists()
+    finally:
+        node.temp.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_inventory_during_tls_disconnect_uses_saved_node_address(tmp_path):
     from types import SimpleNamespace
 

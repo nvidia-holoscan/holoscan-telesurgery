@@ -26,6 +26,7 @@ Reviewed 2026-10-12 against the implementation and operator confirmation. Hardwa
 
 - [ ] **Franka home calibration:** support a calibrated home pose per installation. Physical and simulated Franka currently share a fixed [reset pose](../packages/robots/src/telesurgery_robots/franka/poses.py).
 - [ ] **MIRA hardware follow-up:** verify the new Cartesian mode with an operator present; obtain vendor support for hardware timestamps and an acknowledged stop/watchdog before claiming those guarantees.
+- [ ] **CBR/IPPP KPI validation:** H.264/H.265 now use CBR (VBV of one frame), IPPP with forced-IDR recovery and a per-stream Mbps setting (default 20). Validate latency, quality and loss recovery against the CQP all-IDR baselines in [BENCHMARK.md](../BENCHMARK.md), choose per-resolution bitrate defaults, and adopt slice-level output when the R630 drivers provide it.
 - [ ] **Haptic devices:** add calibrated pose/button input, clutching and bounded force feedback.
 - [ ] **Physical CMR Versius:** integrate the vendor hardware control interface; the Isaac Sim adapter is implemented.
 - [ ] **Robot metrics:** measure command-to-measured-feedback latency at P50/P95/P99/P99.9.

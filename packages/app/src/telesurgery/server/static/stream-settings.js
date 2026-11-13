@@ -68,14 +68,14 @@ export function streamSettings(changed) {
             raw = codec === "raw-bgr8",
             neural = codec === "surgical-tokenizer";
         $("#stream-encoder").hidden = raw || neural;
-        $("#stream-qp-field").hidden = jpeg;
-        $("#stream-quality").disabled = jpeg;
+        $("#stream-bitrate-field").hidden = jpeg;
+        $("#stream-bitrate").disabled = jpeg;
         $("#stream-jpeg-field").hidden = !jpeg;
         $("#stream-jpeg-quality").disabled = !jpeg;
         $("#stream-speed-field").hidden = jpeg;
         $("#stream-quality-note").textContent = jpeg
             ? "Higher JPEG quality uses more bandwidth."
-            : "Lower QP gives higher quality and uses more bandwidth. Slower presets use more GPU time.";
+            : "Higher bitrate gives higher quality and uses more bandwidth; choose what the network can carry. Slower presets use more GPU time.";
         const [width, height] = resolution.value.split("x").map(Number);
         $("#stream-viewing").textContent = raw
             ? `View in Holoviz. Raw BGR8 needs about ${((width * height * Number(fps.value) * 24) / 1e9).toFixed(2)} Gbit/s per viewer, before transport overhead. No stream compression.${["MJPG", "JPEG"].includes(format.value) ? " Camera capture is still JPEG-compressed." : ""}`
@@ -141,7 +141,7 @@ export function streamSettings(changed) {
                                 ),
                             }
                           : {
-                                qp: Number($("#stream-quality").value),
+                                bitrate_mbps: Number($("#stream-bitrate").value),
                                 encoder_preset: $("#stream-preset").value,
                             }),
                 },
@@ -183,7 +183,7 @@ export function streamSettings(changed) {
             (value) => (value === "fusa" ? "FuSa CoE" : "LinuxReceiver · UDP"),
             item.receiver,
         );
-        $("#stream-quality").value = item.qp ?? 24;
+        $("#stream-bitrate").value = item.bitrate_mbps ?? 20;
         $("#stream-jpeg-quality").value = item.jpeg_quality ?? 85;
         options(
             $("#stream-codec"),

@@ -229,7 +229,7 @@ Table cells read **SDK 4 → SDK 5**. **P50–P99.9 show measured total latency 
 - These are separate, single runs per configuration. All EA3 configurations measured for 60 seconds after 30 seconds of warmup. The SDK 4 baseline retains its original durations, including earlier 10,000-sample runs. Application code, simulation scenes, duration, frame count, background load and power/clocks were not controlled identically between collection dates. P99.9 is especially sensitive to sparse samples. Differences do not establish an SDK-only cause or statistical significance.
 - Remote totals use synchronized or estimated clock offsets. Bounds are recorded in the CSV; small differences may be within timing uncertainty. Compare latency together with FPS, especially for simulation.
 - Refreshed BRIO runs requested 30 FPS; recorded source rates span 17.1–30.0 FPS. Exposure and dynamic framerate settings can reduce capture rate in low light. Source-rate differences confound FPS and latency comparisons with SDK 4; they do not establish an SDK regression.
-- Codec settings match the source reports: NVENC P1, ultra-low-latency, QP 24, independent frames; nvJPEG quality 85. BRIO capture formats vary with resolution. This is not a comparison at equal visual quality.
+- Codec settings match the source reports, which predate CBR/IPPP: NVENC P1, ultra-low-latency, QP 24, independent frames; nvJPEG quality 85. BRIO capture formats vary with resolution. This is not a comparison at equal visual quality.
 
 <details>
 <summary>

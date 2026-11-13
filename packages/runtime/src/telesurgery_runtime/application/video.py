@@ -19,6 +19,7 @@ from telesurgery_core.transport.protocol import MAX_FRAME, VideoHeader
 from telesurgery_core.video.codecs import CodecWorker
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.model import Frame
+from telesurgery_core.video.reference import KEYFRAME_SUFFIX
 from telesurgery_runtime.backends.sdk import ApplicationSession, backend, require_sdk
 
 
@@ -113,6 +114,10 @@ class Encode:
 
     def compute(self, frame):
         self._refresh()
+        # A receiver lost a reference frame, or a viewer joined mid-GOP.
+        if self.settings_path and self.settings_path.with_suffix(KEYFRAME_SUFFIX).exists():
+            self.settings_path.with_suffix(KEYFRAME_SUFFIX).unlink(missing_ok=True)
+            self.codec.request_keyframe()
         return self.codec.encode(frame)
 
     def stop(self):

@@ -56,10 +56,12 @@ H.264 browser viewing forwards encoded packets into WebRTC without re-encoding. 
 | HSB IMX274 | GPU acquisition, optical-black correction, white balance, demosaic and sRGB transfer |
 | USB | V4L2 capture; CPU pixels uploaded for GPU encoding. MJPEG capture also requires decoding |
 | Isaac Sim | GPU rendering, then CPU RGB readback and local IPC before GPU encoding |
-| H.264 / H.265 | NVENC encoding; NVDEC in the native viewer |
+| H.264 / H.265 | NVENC encoding (CBR, one-frame VBV, IPPP); NVDEC in the native viewer |
 | nvJPEG | GPU JPEG encoding and decoding |
 | BGR8 | No codec. Packing may download GPU pixels; the native viewer uploads and converts BGR to RGB |
 | Surgical Neural Tokenizer (trial) | Public Cosmos-Tokenizer-Surg model, TensorRT encoding/decoding, packed uint16 tokens at 720p or 1080p |
+
+H.264 and H.265 run constant bitrate, with a VBV of one frame's budget (bitrate ÷ FPS), so a frame's transmit time is bounded. Each stream's bitrate is set in Mbps. Frames are IPPP: an IDR, then predicted frames for a ten-second GOP. Every frame header carries its GOP and position in it. Any hop may drop frames to stay current, so a receiver that sees a gap discards predicted frames and asks for an IDR. The request goes to the node's video endpoint (`viewer.refresh`), which signals the camera worker. A newly attached viewer or browser triggers one too, and a browser's picture-loss request is forwarded the same way. Neither the rate control nor the GOP structure is user-configurable. nvJPEG, BGR8 and tokenizer frames remain independent.
 
 Same-host video still uses IPC/TLS, not shared memory. Frame ownership is preserved until CUDA work completes. SDK 4 uses an EventBasedScheduler; SDK 5 uses graph partitions and latest-message queues.
 

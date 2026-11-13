@@ -91,7 +91,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
             )
             await page.get_by_label("Stream codec", exact=True).select_option("h264")
             await page.get_by_text("Encoder settings", exact=True).click()
-            await page.get_by_label("Quality (QP)", exact=True).fill("18")
+            await page.get_by_label("Bitrate (Mbps)", exact=True).fill("12.5")
             await page.get_by_label("Encoder speed", exact=True).select_option("P3")
             if codec == "surgical-tokenizer":
                 await expect(
@@ -105,7 +105,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
                 await expect(page.get_by_text("Encoder settings", exact=True)).not_to_be_visible()
                 await expect(page.locator("#stream-viewing")).to_contain_text("browser or Holoviz")
             if codec == "nvjpeg":
-                await expect(page.get_by_label("Quality (QP)", exact=True)).not_to_be_visible()
+                await expect(page.get_by_label("Bitrate (Mbps)", exact=True)).not_to_be_visible()
                 await page.get_by_label("JPEG quality", exact=True).fill("92")
             if codec == "raw-bgr8":
                 await expect(page.get_by_text("Encoder settings", exact=True)).not_to_be_visible()
@@ -137,7 +137,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
                             if codec in {"raw-bgr8", "surgical-tokenizer"}
                             else {"jpeg_quality": 92}
                             if codec == "nvjpeg"
-                            else {"qp": 18, "encoder_preset": "P3"}
+                            else {"bitrate_mbps": 12.5, "encoder_preset": "P3"}
                         ),
                     },
                 },

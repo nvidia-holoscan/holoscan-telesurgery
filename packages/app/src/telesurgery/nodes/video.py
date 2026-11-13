@@ -13,6 +13,9 @@ from telesurgery_core.transport.peer import Peer
 from telesurgery_core.transport.protocol import VideoHeader
 from telesurgery_core.transport.tls import server_context
 
+# One IDR serves every viewer that asked within this window.
+KEYFRAME_COALESCE = 0.1
+
 
 class VideoEndpoint:
     def __init__(self, directory, clock):
@@ -21,6 +24,8 @@ class VideoEndpoint:
         self.metrics = {}
         self.peers, self.connections = set(), set()
         self.server = None
+        self.refresh = lambda camera: None  # Set by the node: force an IDR for this camera.
+        self.refreshed = {}
 
     async def start(self, port=7449):
         self.server = await asyncio.start_server(
@@ -64,13 +69,25 @@ class VideoEndpoint:
         raise ValueError("Unsupported video operation")
 
     async def _request(self, peer, method, params):
+        if method == "viewer.refresh" and peer.id in self.viewers:
+            self.keyframe(self.viewers[peer.id]["camera"])
+            return True
         if method != "viewer.attach" or peer.id in self.viewers:
             raise PermissionError("Video connections accept a single viewer ticket")
         ticket = self.tickets.pop(params.get("ticket"), None)
         if ticket is None or ticket["expires"] < time.monotonic():
             raise PermissionError("Video ticket expired or is invalid")
         self.viewers[peer.id] = ticket
+        # A new viewer cannot decode predicted frames until the next IDR.
+        self.keyframe(ticket["camera"])
         return True
+
+    def keyframe(self, camera):
+        """Force an IDR, coalescing requests from several viewers that lost the same frame."""
+        now = time.monotonic()
+        if now - self.refreshed.get(camera, -1.0) >= KEYFRAME_COALESCE:
+            self.refreshed[camera] = now
+            self.refresh(camera)
 
     async def _accept(self, reader, writer):
         if len(self.peers) >= 64:

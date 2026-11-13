@@ -14,6 +14,7 @@ from pathlib import Path
 
 import aiohttp
 from telesurgery_core.diagnostics.benchmark import write_report
+from telesurgery_core.video.config import Config
 
 
 class Dashboard:
@@ -92,7 +93,7 @@ async def run(args):
             "codec": args.codec,
             "fps": args.fps,
             "pixel_format": args.pixel_format,
-            "qp": 24,
+            "bitrate_mbps": Config.bitrate_mbps,
             "encoder_preset": "P1",
             "jpeg_quality": 85,
         },
