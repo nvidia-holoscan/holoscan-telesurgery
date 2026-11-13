@@ -31,9 +31,19 @@ class TokenizerPreview:
         # GPU decoding returns RGB; encoders accept BGR. Keep measured depth bytes
         # and the original capture timestamp through preview conversion.
         preview_header = replace(header, codec="h264", codec_profile="", depth_bytes=0)
-        _, encoded = self.encoder.encode(Frame(preview_header, frame.image[..., ::-1]))
+        encoded_header, encoded = self.encoder.encode(Frame(preview_header, frame.image[..., ::-1]))
         trace = mark(trace, "preview_encode_ms")
-        return asdict(replace(preview_header, depth_bytes=len(depth))), encoded + depth, trace
+        # The preview encoder is IPPP too; keep its GOP position for the browser.
+        framing = {name: getattr(encoded_header, name) for name in ("keyframe", "gop", "gop_index")}
+        return (
+            asdict(replace(preview_header, depth_bytes=len(depth), **framing)),
+            encoded + depth,
+            trace,
+        )
+
+    def request_keyframe(self):
+        if self.encoder is not None:
+            self.encoder.request_keyframe()
 
     def close(self):
         for codec in (self.decoder, self.encoder):

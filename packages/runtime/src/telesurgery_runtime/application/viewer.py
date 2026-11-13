@@ -20,6 +20,7 @@ from telesurgery_core.transport.tls import client_context, pin_peer
 from telesurgery_core.video.codecs import CodecWorker
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.depth import render
+from telesurgery_core.video.reference import MissingReference, ReferenceChain
 from telesurgery_core.video.view import crop
 from telesurgery_core.video.view import settings as zoom_settings
 from telesurgery_runtime.application.pipeline import Frames
@@ -36,6 +37,14 @@ class ReceiveDecode:
         self.depth_enabled = depth_enabled
         self.display = {"mode": "color", "distance": 2.0, "opacity": 0.4}
         self.zoom = zoom_settings()
+        self.waiting = ReferenceChain()  # Only paces keyframe requests.
+        self.wants_keyframe = False
+
+    def keyframe_due(self):
+        """True once per interval while predicted frames lack their reference."""
+        if self.wants_keyframe and self.waiting.refresh_due():
+            return True
+        return False
 
     def put(self, header, data, timing=None):
         header, data = decode_video([json.dumps(header).encode(), data])
@@ -69,7 +78,13 @@ class ReceiveDecode:
             )
             self.codec = header.codec
             self.decoder_key = key
-        frame = self.decoder.decode_device(header, data)
+        try:
+            frame = self.decoder.decode_device(header, data)
+        except MissingReference:
+            # Loss or a late join: drop deltas until an IDR arrives and ask for one.
+            self.wants_keyframe = True
+            return None
+        self.wants_keyframe = False
         stage = "unpack_ms" if header.codec == "raw-bgr8" else "decode_ms"
         self.trace = mark(trace, stage)
         self.decoded_ns = time.monotonic_ns()
@@ -114,6 +129,14 @@ async def run(config, report):
     async def reject(peer, method, params):
         raise PermissionError("Native viewer accepts video only")
 
+    keyframes = set()
+
+    async def request_keyframe(peer):
+        try:
+            await peer.call("viewer.refresh", {}, timeout=2)
+        except (ConnectionError, RuntimeError, TimeoutError):
+            pass  # Retried while frames still lack a reference.
+
     reader, writer = await asyncio.open_connection(
         config["host"], config["port"], ssl=client_context()
     )
@@ -140,6 +163,10 @@ async def run(config, report):
                     break
                 if time.monotonic() - source.received_at > 5:
                     raise RuntimeError("Camera stopped delivering frames")
+                if source.keyframe_due():
+                    task = asyncio.create_task(request_keyframe(peer))
+                    keyframes.add(task)
+                    task.add_done_callback(keyframes.discard)
                 if source.frames:
                     for path, attribute in ((display_request, "display"), (zoom_request, "zoom")):
                         if path.exists() and path.stat().st_mtime_ns != request_versions.get(path):

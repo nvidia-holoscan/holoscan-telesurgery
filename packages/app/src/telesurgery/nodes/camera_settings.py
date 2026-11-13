@@ -6,6 +6,8 @@
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.tokenizer_model import CODEC, token_shape
 
+MIN_MBPS, MAX_MBPS = 0.5, 400
+
 DEFAULTS = {
     key: getattr(Config, key)
     for key in (
@@ -14,7 +16,7 @@ DEFAULTS = {
         "fps",
         "pixel_format",
         "codec",
-        "qp",
+        "bitrate_mbps",
         "jpeg_quality",
         "encoder_preset",
         "receiver",
@@ -40,6 +42,9 @@ def modes(camera):
 
 
 def select(camera, settings=None):
+    if isinstance(settings, dict) and "qp" in settings:
+        # Streams saved before CBR replaced constant QP.
+        settings = {key: value for key, value in settings.items() if key != "qp"}
     if settings is not None and (
         not isinstance(settings, dict) or settings.keys() - DEFAULTS.keys()
     ):
@@ -65,8 +70,9 @@ def select(camera, settings=None):
         raise ValueError("This node does not support the selected codec")
     if selected["codec"] == CODEC:
         token_shape(selected["width"], selected["height"])
-    if type(selected["qp"]) is not int or not 0 <= selected["qp"] <= 51:
-        raise ValueError("Quality (QP) must be an integer from 0 to 51")
+    rate = selected["bitrate_mbps"]
+    if type(rate) not in (int, float) or not MIN_MBPS <= rate <= MAX_MBPS:
+        raise ValueError(f"Bitrate must be from {MIN_MBPS:g} to {MAX_MBPS:g} Mbps")
     if selected["encoder_preset"] not in ("P1", "P3", "P5"):
         raise ValueError("Choose a supported encoder speed")
     if type(selected["jpeg_quality"]) is not int or not 1 <= selected["jpeg_quality"] <= 100:

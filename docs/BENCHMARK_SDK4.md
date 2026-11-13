@@ -750,7 +750,7 @@ Latency is in **milliseconds**. **RES** = resolution; **CC** = codec; **FPS** = 
 ## Method and limits
 
 - Source and receiver both use Holoscan `4.6.0`. Runs collect 60 seconds after a 30-second warmup; 6 earlier configurations retain their longer 10,000-sample runs. Actual durations, sample counts, incomplete timing coverage and frame-loss counters are in the CSV.
-- H.264/H.265 use NVENC P1, ultra-low-latency, QP 24, independent frames, no B frames and no lookahead. nvJPEG quality is 85. Equal QP does not imply equal visual quality.
+- These results predate CBR/IPPP and were recorded with H.264/H.265 on NVENC P1, ultra-low-latency, QP 24, independent frames, no B frames and no lookahead. nvJPEG quality is 85. Equal QP does not imply equal visual quality.
 - BRIO captures YUYV at FHD and MJPEG at QHD/4K. MJPEG decoding inside camera capture precedes the measured buffer boundary. IMX274 uses native sensor modes. Simulation recreates each camera at the requested render resolution.
 - Timing starts when a USB BGR buffer, processed HSB Bayer buffer or simulator RGB buffer is available. Sensor exposure, earlier producer work and physical scanout are excluded. The full path includes frame preparation, encoder queue, encode/pack, source relay/queue, send queue, transport, receive queue, decode/upload and viewer handoff.
 - Percentiles use linear interpolation over at most 10,000 valid samples. Timing excludes the first two seconds after reset; native summaries refresh every five seconds. Browser totals use frames matched by RTP timestamp. Transport uses the receiver's recorded `steady_metrics.delivery_ms` percentiles.

@@ -39,6 +39,12 @@ def _integer(value: object, name: str, low: int, high: int = 2**63 - 1) -> int:
     return value
 
 
+def _boolean(value: object, name: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"invalid {name}")
+    return value
+
+
 @dataclass(frozen=True)
 class VideoHeader:
     sequence: int
@@ -56,6 +62,11 @@ class VideoHeader:
     pack_ns: int = 0
     depth_bytes: int = 0
     codec_profile: str = ""
+    # H.264/H.265 are IPPP: a delta frame decodes only after its predecessor in the same GOP.
+    # Intra-only codecs leave every frame a keyframe, so receivers need no reference tracking.
+    keyframe: bool = True
+    gop: int = 0  # Identifies the IDR this frame descends from.
+    gop_index: int = 0  # 0 for the IDR, then +1 per delta frame.
 
     def encode(self) -> bytes:
         return json.dumps(asdict(self), allow_nan=False, separators=(",", ":")).encode()
@@ -90,6 +101,9 @@ class VideoHeader:
             pack_ns=_integer(doc.get("pack_ns", 0), "packing duration", 0),
             depth_bytes=_integer(doc.get("depth_bytes", 0), "depth size", 0, MAX_DEPTH),
             codec_profile=profile,
+            keyframe=_boolean(doc.get("keyframe", True), "keyframe flag"),
+            gop=_integer(doc.get("gop", 0), "GOP", 0, 2**31 - 1),
+            gop_index=_integer(doc.get("gop_index", 0), "GOP index", 0),
         )
 
 

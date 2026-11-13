@@ -657,13 +657,14 @@ SPDX-License-Identifier: Apache-2.0
                 <details id="stream-encoder">
                     <summary>Encoder settings</summary>
                     <div class="stream-fields">
-                        <label id="stream-qp-field"
-                            >Quality (QP)<input
-                                id="stream-quality"
+                        <label id="stream-bitrate-field"
+                            >Bitrate (Mbps)<input
+                                id="stream-bitrate"
                                 type="number"
-                                min="0"
-                                max="51"
-                                value="24"
+                                min="0.5"
+                                max="400"
+                                step="any"
+                                value="20"
                                 required
                         /></label>
                         <label id="stream-jpeg-field" hidden
@@ -689,8 +690,9 @@ SPDX-License-Identifier: Apache-2.0
                         >
                     </div>
                     <p id="stream-quality-note" class="muted">
-                        Lower QP gives higher quality and uses more bandwidth.
-                        Slower presets use more GPU time.
+                        Higher bitrate gives higher quality and uses more
+                        bandwidth; choose what the network can carry. Slower
+                        presets use more GPU time.
                     </p>
                 </details>
                 <p id="stream-viewing" class="muted"></p>

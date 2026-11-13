@@ -17,7 +17,24 @@ class DirectStreams:
     def __init__(self, app):
         self.app = app
         self.tasks, self.errors = {}, {}
+        self.peers, self.refreshing = {}, set()
         self.lock = asyncio.Lock()
+
+    def refresh(self, camera):
+        """Ask the camera's encoder, via our direct connection, for an IDR."""
+        peer = self.peers.get(camera)
+        if peer is None or peer.closed.is_set():
+            return
+
+        async def request():
+            try:
+                await peer.call("viewer.refresh", {}, timeout=2)
+            except (ConnectionError, RuntimeError, TimeoutError, PermissionError):
+                pass  # The caller retries while it still lacks a keyframe.
+
+        task = asyncio.create_task(request())
+        self.refreshing.add(task)
+        task.add_done_callback(self.refreshing.discard)
 
     async def select(self, cameras):
         async with self.lock:
@@ -67,6 +84,7 @@ class DirectStreams:
                 )
                 peer = Peer(reader, writer, reject, event, clock=self.app.clock).start()
                 await peer.call("viewer.attach", {"ticket": route["ticket"]})
+                self.peers[camera] = peer
                 self.errors.pop(camera, None)
                 await peer.closed.wait()
             except (OSError, RuntimeError, ValueError, TimeoutError) as exc:
@@ -75,6 +93,8 @@ class DirectStreams:
                     LOG.warning("%s: %s", camera, message)
                 self.errors[camera] = message
             finally:
+                if self.peers.get(camera) is peer:
+                    del self.peers[camera]
                 if peer:
                     await peer.close()
                 elif writer:

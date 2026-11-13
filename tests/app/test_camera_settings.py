@@ -115,13 +115,20 @@ def test_usb_modes_keep_format_specific_frame_rates(monkeypatch):
     }
     with pytest.raises(ValueError, match="does not support"):
         select(camera, {"fps": 60})
-    selected = select(camera, {"pixel_format": "MJPG", "fps": 60, "qp": 18, "encoder_preset": "P3"})
+    selected = select(
+        camera, {"pixel_format": "MJPG", "fps": 60, "bitrate_mbps": 12.5, "encoder_preset": "P3"}
+    )
     assert Config(**selected).fps == 60
-    assert selected["qp"] == 18
+    assert selected["bitrate_mbps"] == 12.5
+    # Streams saved while QP was the control keep their other settings.
+    assert select(camera, {"qp": 30, "fps": 60, "pixel_format": "MJPG"})["bitrate_mbps"] == 20.0
     for bad in (
         {"source": "elsewhere"},
-        {"qp": -1},
-        {"qp": 24.5},
+        {"bitrate_mbps": 0},
+        {"bitrate_mbps": 1000},
+        {"bitrate_mbps": "20"},
+        {"bitrate_mbps": True},
+        {"bitrate_mbps": float("nan")},
         {"encoder_preset": "P99"},
     ):
         with pytest.raises(ValueError):
@@ -200,7 +207,7 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
     app.nodes = {"host": {"status": "online", "cameras": [camera]}}
     public = app.inventory()["cameras"][0]
     assert public["modes"] == camera["modes"]
-    assert public["qp"] == 24
+    assert public["bitrate_mbps"] == 20.0
     assert public["encoder_preset"] == "P1"
     assert public["receiver"] == "fusa"
     assert public["receivers"] == ["fusa", "linux"]
@@ -294,7 +301,7 @@ async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, mon
                 "height": 2160,
                 "receiver": receiver,
                 "codec": "nvjpeg",
-                "qp": 18,
+                "bitrate_mbps": 8,
             }
         },
     )
@@ -307,7 +314,7 @@ async def test_saved_camera_settings_survive_discovery_and_restart(tmp_path, mon
             assert len(camera["modes"]) == 2
             assert camera["receiver"] == "linux"
             assert camera["codec"] == "nvjpeg"
-            assert camera["qp"] == 18
+            assert camera["bitrate_mbps"] == 8
         # HSB announcements are intermittent. A retained camera keeps its codec choices.
         monkeypatch.setattr(local, "discover", lambda *args: ([], []))
         await node.refresh()

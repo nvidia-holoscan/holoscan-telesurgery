@@ -4,6 +4,7 @@
 """Real NVIDIA codec tests; these never substitute a software encoder/decoder."""
 
 import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -15,8 +16,13 @@ import pytest
 from telesurgery_core.transport.protocol import VideoHeader
 from telesurgery_core.video.codecs import GpuCodec, create_codec
 from telesurgery_core.video.config import Config
-from telesurgery_core.video.formats import dimensions, h264_dimensions, h265_dimensions
+from telesurgery_core.video.formats import (
+    h264_dimensions,
+    h265_dimensions,
+    video_frame,
+)
 from telesurgery_core.video.model import Frame
+from telesurgery_core.video.reference import MissingReference
 
 pytestmark = pytest.mark.gpu
 
@@ -54,7 +60,7 @@ assert "libnvtiff_ext.so" not in libraries
 
 @pytest.mark.parametrize("codec", ["h264", "h265", "nvjpeg"])
 def test_gpu_colors_timestamps_loss_late_join_and_restart(codec):
-    config = Config(codec=codec, qp=18)
+    config = Config(codec=codec)
     with contextlib.ExitStack() as stack:
         encoder = GpuCodec(config, encode=True)
         stack.callback(encoder.close)
@@ -75,16 +81,38 @@ def test_gpu_colors_timestamps_loss_late_join_and_restart(codec):
             packets.append(packet)
         assert len(packets) == 12
         for header, data in packets:
-            assert dimensions(codec, data) == (320, 240)
+            assert video_frame(codec, data) == (
+                (320, 240) if header.keyframe else None,
+                header.keyframe,
+            )
             assert header.captured_ns == originals[header.sequence][0].captured_ns
             assert header.encode_ns > 0
             assert header.encoder_queue_ns >= 1_000_000
-        # A fresh decoder joins halfway through, skips frames, then sees an
-        # earlier independent frame as on a publisher restart. No reference wait.
+        predicted = codec != "nvjpeg"
+        assert [h.keyframe for h, _ in packets] == [True] + [not predicted] * 11
         decoder = GpuCodec(config, encode=False)
         stack.callback(decoder.close)
         held_frames = []
-        for header, data in (packets[3], packets[7], packets[0]):
+        if predicted:
+            # A decoder joining mid-GOP, or after a dropped frame, must wait for an IDR.
+            for header, data in (packets[3], packets[4]):
+                with pytest.raises(MissingReference):
+                    decoder.decode(header, data)
+            encoder.request_keyframe()
+            sequence = 12
+            pixels = originals[11][1]
+            header = VideoHeader(sequence, time.time_ns(), 320, 240, sim_command_sequence=sequence)
+            originals[sequence] = (header, pixels)
+            packets.append(encoder.encode(Frame(header, pixels)))
+            assert packets[-1][0].keyframe and packets[-1][0].gop != packets[0][0].gop
+            order = (packets[-1], packets[0], packets[1], packets[2])
+            # Skipping packets[3] loses a reference, even though packets[4] arrives next.
+            with pytest.raises(MissingReference):
+                decoder.decode(*packets[4])
+        else:
+            # Independent frames: join halfway, skip, and replay an earlier frame.
+            order = (packets[3], packets[7], packets[0])
+        for header, data in order:
             frame = decoder.decode(header, data)
             expected = originals[header.sequence][1]
             assert np.abs(frame.image.astype(float) - expected).mean() < 4
@@ -121,7 +149,7 @@ def test_h264_rejects_dependent_slices_and_truncated_sps():
 def test_native_camera_resolutions_and_gpu_input(width, height, codec):
     import cupy as cp
 
-    config = Config(codec=codec, qp=18)
+    config = Config(codec=codec)
     with contextlib.ExitStack() as stack:
         encoder = create_codec(config, encode=True)
         stack.callback(encoder.close)
@@ -175,6 +203,63 @@ def test_native_decoder_follows_patient_codec_changes():
         viewer.stop()
 
 
+def test_native_viewer_waits_for_keyframe_and_requests_one():
+    from dataclasses import asdict
+
+    from telesurgery_runtime.application.viewer import ReceiveDecode
+
+    config = Config(codec="h264")
+    encoder = GpuCodec(config, encode=True)
+    viewer = ReceiveDecode()
+    viewer.start()
+    try:
+        pixels = np.full((240, 320, 3), [20, 90, 170], dtype=np.uint8)
+        packets = [
+            encoder.encode(Frame(VideoHeader(i, time.time_ns(), 320, 240), pixels))
+            for i in range(3)
+        ]
+        # Joining mid-GOP: no picture, and one request for an IDR per interval.
+        viewer.put(asdict(packets[1][0]), packets[1][1])
+        assert viewer.compute() is None
+        assert viewer.keyframe_due()
+        assert not viewer.keyframe_due()
+        viewer.put(asdict(packets[2][0]), packets[2][1])
+        assert viewer.compute() is None
+        encoder.request_keyframe()
+        header, data = encoder.encode(Frame(VideoHeader(3, time.time_ns(), 320, 240), pixels))
+        viewer.put(asdict(header), data)
+        np.testing.assert_allclose(viewer.compute()[120, 160].get(), [170, 90, 20], atol=4)
+        assert not viewer.keyframe_due()
+    finally:
+        viewer.stop()
+        encoder.close()
+
+
+def test_camera_worker_encodes_an_idr_when_the_node_asks(tmp_path):
+    from dataclasses import asdict
+
+    from telesurgery_core.video.reference import KEYFRAME_SUFFIX
+    from telesurgery_runtime.application.video import Encode
+
+    config = Config(codec="h264", width=320, height=240)
+    settings = tmp_path / "camera.json"
+    settings.write_text(json.dumps({"camera": asdict(config)}))
+    stage = Encode(config, settings)
+    stage.start()
+    try:
+        pixels = np.full((240, 320, 3), [20, 90, 170], dtype=np.uint8)
+        kinds = []
+        for sequence in range(6):
+            if sequence == 4:
+                settings.with_suffix(KEYFRAME_SUFFIX).touch()
+            header = VideoHeader(sequence, time.time_ns(), 320, 240)
+            kinds.append(stage.compute(Frame(header, pixels))[0].keyframe)
+        assert kinds == [True, False, False, False, True, False]
+        assert not settings.with_suffix(KEYFRAME_SUFFIX).exists()
+    finally:
+        stage.stop()
+
+
 def test_h264_rejects_stock_binding(monkeypatch):
     import PyNvVideoCodec as nvc
 
@@ -192,7 +277,7 @@ def test_native_decode_keeps_owned_rgb_pixels_on_gpu(monkeypatch):
 
     monkeypatch.setattr(cupyx, "empty_pinned", forbidden)
     with contextlib.ExitStack() as stack:
-        encoder = GpuCodec(Config(codec="h264", qp=18), encode=True)
+        encoder = GpuCodec(Config(codec="h264"), encode=True)
         decoder = GpuCodec(Config(codec="h264"), encode=False)
         stack.callback(encoder.close)
         stack.callback(decoder.close)

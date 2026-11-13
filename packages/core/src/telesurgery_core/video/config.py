@@ -15,7 +15,7 @@ class Config:
     pixel_format: str = ""
     codec: str = "h264"
     codec_gpu: int = 0
-    qp: int = 24
+    bitrate_mbps: float = 20.0
     jpeg_quality: int = 85
     encoder_preset: str = "P1"
     hololink: str = "192.168.0.2"

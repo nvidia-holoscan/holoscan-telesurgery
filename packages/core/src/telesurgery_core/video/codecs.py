@@ -10,6 +10,7 @@ so every call selects its CUDA device and enters its owned stream explicitly.
 from __future__ import annotations
 
 import importlib.metadata
+import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -17,9 +18,14 @@ from dataclasses import replace
 import numpy as np
 from telesurgery_core.transport.protocol import MAX_VIDEO, VideoHeader
 from telesurgery_core.video import depth
-from telesurgery_core.video.formats import dimensions
+from telesurgery_core.video.formats import video_frame
 from telesurgery_core.video.gpu import nv12 as _nv12
 from telesurgery_core.video.model import Frame
+from telesurgery_core.video.reference import MissingReference, ReferenceChain
+
+# H.264/H.265 run IPPP with a long GOP. Loss or a new viewer forces an IDR, so the
+# periodic one is only a backstop and the GOP stays long.
+GOP_SECONDS = 10
 
 
 class _CudaBuffer:
@@ -52,6 +58,8 @@ class CodecWorker:
             self.codec = self.executor.submit(create_codec, config, encode=encode).result()
             if encode and config.codec != "raw-bgr8":
                 self.executor.submit(self._warmup, config).result()
+                # Warmup left the encoder mid-GOP; live video must begin with an IDR.
+                self.request_keyframe()
         except BaseException:
             self.executor.shutdown()
             raise
@@ -62,6 +70,12 @@ class CodecWorker:
         header = VideoHeader(0, time.time_ns(), config.width, config.height)
         for _ in range(3):
             self.codec.encode(Frame(header, image))
+
+    def request_keyframe(self):
+        """Make the next encoded frame an IDR; intra-only codecs already satisfy this."""
+        request = getattr(self.codec, "request_keyframe", None)
+        if request is not None:
+            request()
 
     def encode(self, frame):
         return self.executor.submit(self._encode, frame).result()
@@ -109,20 +123,31 @@ def create_codec(config, *, encode):
 
 
 def encoder_options(config, width, height):
-    """Shared application/benchmark settings; no additional NVENC output queue."""
+    """Shared application/benchmark settings; no additional NVENC output queue.
+
+    CBR with a one-frame VBV bounds each frame to its share of the link, so transmit
+    time and latency stay predictable. NVENC reads "bitrate" suffixes as powers of
+    1024, so pass exact bits per second.
+    """
+    bits = round(config.bitrate_mbps * 1_000_000)
+    vbv = max(1, round(bits / config.fps))
+    gop = max(2, round(config.fps * GOP_SECONDS))
     return {
         "codec": "hevc" if config.codec == "h265" else "h264",
         "profile": "main" if config.codec == "h265" else "baseline",
         "preset": config.encoder_preset,
         "tuning_info": "ultra_low_latency",
         "fps": config.fps,
-        "gop": 1,
-        "idrperiod": 1,
+        "gop": gop,
+        "idrperiod": gop,
         "bf": 0,
         "lookahead": 0,
         "repeatspspps": 1,
-        "rc": "constqp",
-        "constqp": config.qp,
+        "rc": "cbr",
+        "bitrate": bits,
+        "maxbitrate": bits,
+        "vbvbufsize": vbv,
+        "vbvinit": vbv,
         "max_res": [width, height],
         "extra_output_delay": 0,
     }
@@ -131,8 +156,9 @@ def encoder_options(config, width, height):
 class GpuCodec:
     """Own either an encoder or decoder and its CUDA stream.
 
-    H.264/H.265 use 8-bit 4:2:0 all-IDR access units with parameter sets. This deliberately
-    permits latest-frame transports, late join, and loss without reference repair.
+    H.264/H.265 use 8-bit 4:2:0 IPPP: an IDR with parameter sets, then predicted frames.
+    Each frame's header carries its GOP position, so receivers detect loss on any
+    latest-frame hop and ask the encoder for a new IDR (request_keyframe).
     The locally built NVIDIA binding exposes extra_output_delay; require zero.
     """
 
@@ -142,6 +168,9 @@ class GpuCodec:
         self.backend = None
         self.dimensions = None
         self.closed = False
+        self.keyframe_requested = True
+        self.gop, self.gop_index = secrets.randbelow(2**30), 0
+        self.chain = ReferenceChain()
         try:
             import cupy as cp
 
@@ -171,6 +200,9 @@ class GpuCodec:
             raise RuntimeError(
                 "GPU codecs require the codecs-cu13 extra, an NVIDIA driver with video support"
             ) from exc
+
+    def request_keyframe(self):
+        self.keyframe_requested = True
 
     def _create_video(self, width, height):
         nvc = self.library
@@ -224,24 +256,51 @@ class GpuCodec:
                 if self.dimensions != (header.width, header.height):
                     raise ValueError("restart the stream to change resolution")
                 pixels = _nv12(self.cp, image)
+                force, self.keyframe_requested = self.keyframe_requested, False
                 # The input remains live until NVENC's asynchronous copy completes.
-                output = self.backend.Encode(_CudaBuffer(pixels))
+                if force:
+                    output = self.backend.Encode(
+                        _CudaBuffer(pixels), int(self.library.NV_ENC_PIC_FLAGS.FORCEIDR)
+                    )
+                else:
+                    output = self.backend.Encode(_CudaBuffer(pixels))
                 if len(output) != 1:
                     raise RuntimeError("NVENC must return one access unit immediately per input")
                 data = output[0]["data"]
-                if dimensions(self.kind, data) != (header.width, header.height):
-                    raise RuntimeError("NVENC did not produce the required independent video frame")
+                size, keyframe = video_frame(self.kind, data)
+                if keyframe:
+                    if size != (header.width, header.height):
+                        raise RuntimeError("NVENC produced an IDR with unexpected dimensions")
+                    self.gop, self.gop_index = (self.gop + 1) % 2**31, 0
+                elif force:
+                    raise RuntimeError("NVENC ignored the forced IDR")
+                else:
+                    self.gop_index += 1
             self.stream.synchronize()
         if not 0 < len(data) <= MAX_VIDEO:
             raise ValueError("encoded video exceeded the frame size limit")
         finished = time.perf_counter_ns()
+        framing = (
+            {"keyframe": keyframe, "gop": self.gop, "gop_index": self.gop_index}
+            if self.kind in {"h264", "h265"}
+            else {}
+        )
         return replace(
             header,
             codec=self.kind,
             encode_ns=finished - started,
             encoder_queue_ns=started - frame.ready_ns if frame.ready_ns else 0,
             encoded_ns=finished,
+            **framing,
         ), data
+
+    def _check_reference(self, header, keyframe, size):
+        """Reject a delta frame whose predecessor was lost; wait for the next IDR."""
+        if not self.chain.accept(header):
+            raise MissingReference("waiting for a keyframe after a lost reference frame")
+        if not keyframe and (self.backend is None or self.dimensions != size):
+            self.chain.reset()
+            raise MissingReference("delta frame does not match the active decoder")
 
     def decode(self, header: VideoHeader, data: bytes, *, on_device=False) -> Frame:
         """Return owned RGB device pixels for display, or BGR host pixels for diagnostics."""
@@ -249,9 +308,14 @@ class GpuCodec:
             raise RuntimeError(
                 f"codec mismatch: patient uses {header.codec}, surgeon expects {self.kind}"
             )
-        size = dimensions(self.kind, data)
-        if len(data) > MAX_VIDEO or size != (header.width, header.height):
+        size, keyframe = video_frame(self.kind, data)
+        if keyframe != header.keyframe:
+            raise ValueError("compressed video does not match its keyframe flag")
+        if len(data) > MAX_VIDEO or size not in (None, (header.width, header.height)):
             raise ValueError("compressed video dimensions do not match the bounded header")
+        size = (header.width, header.height)
+        if self.kind != "nvjpeg":
+            self._check_reference(header, keyframe, size)
         with self.device, self.stream:
             if self.kind == "nvjpeg":
                 image = self.cp.asarray(self.backend.decode(data))
@@ -266,7 +330,8 @@ class GpuCodec:
                 frames = self.backend.Decode(packet)
                 if len(frames) != 1:
                     self.backend = None
-                    raise ValueError("NVDEC did not return exactly one independent frame")
+                    self.chain.reset()
+                    raise ValueError("NVDEC did not return exactly one frame per packet")
                 image = self.cp.from_dlpack(frames[0])
             if image.shape != (header.height, header.width, 3):
                 raise ValueError("decoded video dimensions do not match the header")
@@ -327,7 +392,7 @@ def describe(config, *, encoding=True):
         "version": importlib.metadata.version(package),
         "gpu": config.codec_gpu,
         "cpu_codec_fallback": False,
-        "independent_frames": True,
+        "independent_frames": config.codec == "nvjpeg",
         "encoder_settings": (
             {
                 key: value
