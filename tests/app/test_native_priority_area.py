@@ -85,6 +85,35 @@ async def test_window_starts_with_the_area_and_is_told_only_when_it_changes(wind
 
 
 @pytest.mark.asyncio
+async def test_area_changed_while_a_window_starts_still_reaches_it(windows, monkeypatch):
+    start, started = asyncio.create_subprocess_exec, asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(*args, **kwargs):
+        # The viewer process takes a moment to launch; its settings are already written.
+        started.set()
+        await release.wait()
+        return await start(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", slow)
+    try:
+        windows.regions({"room": BOX})
+        opening = asyncio.create_task(windows.open({"camera": "room"}))
+        await started.wait()
+        windows.regions({"room": LASSO})  # a surgeon redraws while Holoviz is opening
+        release.set()
+        await opening
+        room = directory(windows, "room")
+        assert json.loads((room / "config.json").read_text())["region"] == BOX
+        # The next report delivers the newer area instead of treating it as known.
+        windows.regions({"room": LASSO})
+        assert json.loads((room / "region.json").read_text()) == {"points": LASSO}
+    finally:
+        release.set()
+        await windows.close()
+
+
+@pytest.mark.asyncio
 async def test_still_is_lent_only_by_a_running_window_and_only_while_fresh(windows):
     try:
         with pytest.raises(LookupError, match="not open in Holoviz"):

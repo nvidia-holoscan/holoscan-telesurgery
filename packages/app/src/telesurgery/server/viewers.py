@@ -66,13 +66,16 @@ class NativeViews:
                 raise RuntimeError("Too many native camera windows")
             temporary = tempfile.TemporaryDirectory(prefix="telesurgery-viewer-")
             path = Path(temporary.name) / "config.json"
+            # The window starts with this area; a change reported while it starts is
+            # compared against it and written afterwards.
+            area = self.areas.get(camera)
             path.write_text(
                 json.dumps(
                     {
                         **config,
                         "zoom": self.zooms.get(camera, zoom_settings()),
                         "display": self.displays.get(camera, {}) if config.get("depth") else {},
-                        "region": self.areas.get(camera),
+                        "region": area,
                     }
                 )
             )
@@ -96,7 +99,7 @@ class NativeViews:
                 "process": process,
                 "config": path,
                 "temporary": temporary,
-                "region": self.areas.get(camera),
+                "region": area,
             }
             window = self.windows[camera]
         try:
