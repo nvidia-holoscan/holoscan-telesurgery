@@ -3,7 +3,7 @@
 
 """The surgeon's browser path keeps predicted frames in order."""
 
-from telesurgery_runtime.application.pipeline import Frames
+from telesurgery_runtime.application.pipeline import Deliver, Frames
 
 
 def test_predicted_frames_stay_in_order_and_cameras_take_turns():
@@ -29,3 +29,18 @@ def test_a_keyframe_replaces_the_backlog_and_an_overflow_drops_it():
     for name in ("p4", "p5", "p6", "p7"):
         frames.put("camera", name, keyframe=False)
     assert [frames.compute(), frames.compute()] == ["p7", None]
+
+
+def test_delivery_drains_every_waiting_frame_even_when_a_wake_up_is_dropped():
+    frames, delivered = Frames(), []
+    sink, wake = Deliver(delivered.append, frames), frames.wake
+    assert wake.compute() is None
+    for name, keyframe in (("idr", True), ("p1", False), ("p2", False)):
+        frames.put("camera", name, keyframe)
+    # The graph edge keeps one message: several ticks may reach the sink as one.
+    assert wake.compute() is True and wake.compute() is True
+    sink.compute(True)
+    assert delivered == ["idr", "p1", "p2"] and sink.frames == 3
+    assert wake.compute() is None
+    sink.compute(True)  # A late wake-up finds nothing and is harmless.
+    assert delivered == ["idr", "p1", "p2"]

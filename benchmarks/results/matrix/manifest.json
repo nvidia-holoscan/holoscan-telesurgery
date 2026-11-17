@@ -1112,6 +1112,36 @@
     "configurations": 48,
     "camera_results": 74,
     "changes_during_collection": [],
-    "conditions": "One configuration at a time; other telesurgery streams and simulations stopped. Power and clocks observed, not fixed. SDK 4 remains historical; application code, capture backend and scenes also differ between collections."
+    "conditions": "One configuration at a time; other telesurgery streams and simulations stopped. Power and clocks observed, not fixed. SDK 4 remains historical; application code, capture backend and scenes also differ between collections.",
+    "refreshed_records": "sdk5_encoder_refresh"
+  },
+  "sdk5_encoder_refresh": {
+    "holoscan_version": "5.0.0a3",
+    "measured_date_utc": "2026-11-17",
+    "base_commit": "dd3dd32",
+    "candidate": "feat/nvenc-cbr-ippp",
+    "records": {
+      "h264_h265": {
+        "count": 26,
+        "application_commit": "7c59a57a69dbcdfd9f9e49a5dcf43834b94ab38b",
+        "application_source_sha256": "8985968ae42f0ef8b2d1fdaf661380ff1556f6d4948e8511fc90109caebb0661"
+      },
+      "brio_and_imx274_nvjpeg_bgr8": {
+        "count": 10,
+        "application_commit": "1b1bad93dba8522bd6fcc76abab107e59337d1fd",
+        "application_source_sha256": "94d1c5eb72defe56ceff250ed9b19616c903e8083f14f2d077181b1b64f58385",
+        "note": "The Thor node ran the h264_h265 commit; the workstation ran this one. Neither changes the nvJPEG or BGR8 path."
+      }
+    },
+    "source_hash_scope": "Sorted Python, JavaScript, C/C++/CUDA, CSS and HTML files under packages; UTF-8 path, NUL, bytes, NUL.",
+    "encoder_defaults": "Automatic bitrate limit (10/16/30 Mbit/s at FHD/QHD/4K), one-frame VBV, IPPP, IDR on demand.",
+    "unchanged_records": "Simulation nvJPEG and BGR8 records remain from 2026-10-17.",
+    "capture_sdks": {
+      "workstation": "5.0.0a3",
+      "10.137.144.253": "5.0.0a3",
+      "10.111.19.159": "4.6.0"
+    },
+    "baseline": "encoding_baseline.csv: the same H.264/H.265 configurations with constant QP 24 and independent frames, measured the same day on dd3dd32 (remote hosts on d7fddf6, identical in the video, node, runtime and simulation sources).",
+    "conditions": "One configuration at a time; other telesurgery streams and simulations stopped. DGX Spark simulation at 4K rendered about 6 FPS with uneven frame delivery in some sessions."
   }
 }

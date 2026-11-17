@@ -159,23 +159,43 @@ class Frames:
             self.pending[key] = queue  # Cameras take turns.
             return queue.popleft()
 
+    @property
+    def wake(self):
+        """A source stage that signals waiting frames without removing them."""
+        frames = self
+
+        class Wake:
+            def compute(self):
+                with frames.lock:
+                    return True if any(frames.pending.values()) else None
+
+        return Wake()
+
 
 class Deliver:
-    def __init__(self, callback):
-        self.callback, self.frames = callback, 0
+    """Hand every waiting frame to the callback, in order.
 
-    def compute(self, value):
-        self.callback(value)
-        self.frames += 1
+    The graph edge into this stage keeps one message and may drop an older one, so
+    it only carries a wake-up; the frames themselves stay in ``frames`` until read.
+    """
+
+    def __init__(self, callback, frames):
+        self.callback, self.source, self.frames = callback, frames, 0
+
+    def compute(self, _):
+        while (value := self.source.compute()) is not None:
+            self.callback(value)
+            self.frames += 1
 
 
 class VideoBridge:
     """Independent graph, so browser delivery cannot block robot calls."""
 
     def __init__(self, callback):
-        self.source, self.sink = Frames(), Deliver(callback)
+        self.source = Frames()
+        self.sink = Deliver(callback, self.source)
         self.session = ApplicationSession(
-            backend("pipeline").build("surgeon_video", [self.source, self.sink], 1000)
+            backend("pipeline").build("surgeon_video", [self.source.wake, self.sink], 1000)
         )
 
     def start(self):

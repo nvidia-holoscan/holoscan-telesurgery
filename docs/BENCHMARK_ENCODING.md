@@ -9,7 +9,7 @@ This page compares the former encoder defaults with the current ones on the [SDK
 | | Before (`main` at `dd3dd32`) | After |
 | --- | --- | --- |
 | Rate control | Constant QP 24 | Bitrate limit by resolution: 10 Mbit/s at FHD, 16 at QHD, 30 at 4K |
-| Frames | Every frame an IDR | IPPP, ten-second GOP, IDR on demand |
+| Frames | Every frame an IDR | IPPP, IDR on demand, and one every ten seconds of frames at the configured rate |
 | Recovery | None needed | Frames kept in order; an IDR repairs a viewer that fell behind |
 
 nvJPEG and BGR8 are unchanged and are not compared here.
@@ -28,7 +28,7 @@ Each row of the tables below reads **before → after**. Bitrate is the mean enc
 - **Bandwidth** falls most where the former defaults cost most: the physical cameras, by 62–64% on the BRIO and 59% on the IMX274 at 4K. For the simulation's procedure camera, H.264 changes by −21% to +3%. The MIRA room camera uses 20–60% more with H.264, and about twice as much with H.265 at 4K, because rate control now spends the limit on detail that QP 24 discarded.
 - **Latency** follows frame size. Holoviz P50 is 2–23% lower on the physical cameras and within 4% on the x86 simulation. On the DGX Spark, simulator acquisition time differs by 1–2 ms between sessions and accounts for the changes at FHD and QHD.
 - **Frame size** is bounded. The largest frame is now close to the per-frame share of the limit; before, it followed the scene, up to 295 KiB on the BRIO at 4K.
-- **No refreshed run had a sequence gap, an undecodable frame or a recovery.** Every IDR in them was a periodic one.
+- **No refreshed run had a sequence gap, an undecodable frame or a recovery.** Every IDR in them was a periodic one. The period is 300 frames for a stream configured at 30 FPS, so a simulation that renders 6 FPS sends one about every 47 seconds.
 - **DGX Spark simulation at 4K** renders at about 6 FPS and, in some sessions, delivers frames unevenly. The refreshed H.264 runs show it as a P99 near 270 ms in the acquisition stage; a repeat and an nvJPEG run in a later session showed the same pattern. Those P99 values describe the simulator, not the encoder.
 
 ## Results

@@ -24,6 +24,7 @@ async def test_track_skips_deltas_until_a_keyframe_and_asks_for_one():
     requests = []
     feed = Feed(lambda: requests.append("idr"))
     track = EncodedTrack(feed)
+    track.chain.interval = 3600  # A slow test run must not look like a second request.
 
     async def publish(index, gop=1):
         await feed.put(*packet(index, gop))

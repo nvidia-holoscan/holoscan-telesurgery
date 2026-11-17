@@ -174,13 +174,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, help="directory of QP 24 all-IDR records")
     args = parser.parse_args()
+    current = {key(row): row for row in record_rows(ROOT / "results/matrix")}
     if args.baseline:
+        # Check the candidate records before the stored baseline is replaced.
+        candidate = record_rows(args.baseline)
+        if {key(row) for row in candidate} != current.keys():
+            raise ValueError(f"Baseline records in {args.baseline} do not match results/matrix")
         with BASELINE.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=FIELDS, lineterminator="\n")
             writer.writeheader()
-            writer.writerows(record_rows(args.baseline))
+            writer.writerows(candidate)
     baseline = {key(row): row for row in read(BASELINE)}
-    current = {key(row): row for row in record_rows(ROOT / "results/matrix")}
     if baseline.keys() != current.keys():
         raise ValueError(f"Unmatched results: {sorted(baseline.keys() ^ current.keys())}")
     content = DOCUMENT.read_text()

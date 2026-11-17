@@ -1129,5 +1129,15 @@
     }
   },
   "status": "measured",
-  "finished_utc": "2026-11-17T00:27:28.661888+00:00"
+  "finished_utc": "2026-11-17T00:27:28.661888+00:00",
+  "validation": {
+    "source_name": "imx274-thor",
+    "source": "imx274-thor",
+    "suite": "Encoder defaults refresh",
+    "base_commit": "dd3dd32",
+    "candidate": "feat/nvenc-cbr-ippp",
+    "capture_sdk": "4.6.0",
+    "application_commit": "7c59a57a69dbcdfd9f9e49a5dcf43834b94ab38b",
+    "application_source_sha256": "8985968ae42f0ef8b2d1fdaf661380ff1556f6d4948e8511fc90109caebb0661"
+  }
 }
