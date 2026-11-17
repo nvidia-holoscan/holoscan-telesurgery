@@ -1330,5 +1330,4 @@ H.264 viewing in a visible Chromium browser on the surgeon's x86 workstation. Th
 </details>
 
 </details>
-
 </details>
