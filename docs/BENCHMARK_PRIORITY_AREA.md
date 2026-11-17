@@ -16,6 +16,7 @@ A priority area is a region a surgeon draws on a camera view. The patient-side e
 - **No keyframe** is produced when an area is set, moved or cleared, and frame sizes are as predictable as before: the largest predicted frame was 0.88–1.18 times its share of the limit with an area and 0.96–1.18 times without.
 - **Encode time is unchanged:** 2.1–2.6 ms per FHD frame with and without an area (median difference 0.02 ms). Applying a new area took about 0.5 ms (2.5 ms at most in 108 changes at FHD and 4K) and happens once per change, not per frame.
 - **Without an area the stream is byte-identical** to one from an encoder that cannot take areas.
+- **Live latency is unchanged:** camera-to-viewer P50 and P99 in nine live results from four cameras match `main` without an area and are no higher with one ([live streams](#live-streams)).
 
 ## Results
 
@@ -61,6 +62,27 @@ The default is `standard`. The advanced stream setting `area_strength=strong` as
 | Fixed quality, QP 24 | Quarter | +1.5 to +1.9 → +2.9 to +3.8 dB | unchanged | +63% to +140% |
 
 `standard` is the default because a large area on a starved link costs the rest of the picture up to 2.5 dB already; `strong` takes up to 4.2 dB there.
+
+## Live streams
+
+Camera-to-viewer runs with `scripts/benchmark.py` (60 seconds after a 30-second warmup) on the same day and scenes. Each cell is `main` → this change without an area → this change with an area. The area is a centred box covering 16% of the picture (`--area 0.3,0.3,0.7,0.7`).
+
+| Camera | RES | CC | Viewer | FPS | Mbit/s | P50 (ms) | P99 (ms) |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| x86 · MIRA Procedure | FHD30 | H.264 | Holoviz | 28.5 → 28.7 → 28.8 | 8.1 → 8.2 → 7.0 | 10.87 → 10.69 → 10.30 | 19.78 → 19.50 → 18.53 |
+| x86 · MIRA Room | FHD30 | H.264 | Holoviz | 28.5 → 28.7 → 28.8 | 8.1 → 8.2 → 7.0 | 10.37 → 10.23 → 9.78 | 19.71 → 19.99 → 18.63 |
+| x86 · MIRA Procedure | FHD30 | H.264 | Browser | 27.2 → 27.1 → 27.3 | 8.3 → 8.3 → 7.1 | 36.59 → 37.64 → 36.90 | 60.83 → 59.33 → 57.00 |
+| x86 · MIRA Room | FHD30 | H.264 | Browser | 27.2 → 27.4 → 27.2 | 8.3 → 8.3 → 7.1 | 36.32 → 38.38 → 36.22 | 59.06 → 58.57 → 56.57 |
+| x86 · MIRA Procedure | FHD30 | H.265 | Holoviz | 28.4 → 28.7 → 28.8 | 8.2 → 8.2 → 6.9 | 10.76 → 10.83 → 10.41 | 19.29 → 20.06 → 19.07 |
+| x86 · MIRA Room | FHD30 | H.265 | Holoviz | 28.4 → 28.5 → 28.8 | 8.0 → 8.0 → 6.9 | 10.16 → 10.28 → 9.67 | 20.38 → 20.98 → 19.66 |
+| x86 · Logitech BRIO | FHD30 | H.264 | Holoviz | 29.8 → 29.8 → 29.8 | 8.7 → 8.7 → 8.6 | 6.64 → 6.37 → 6.43 | 11.98 → 11.85 → 11.72 |
+| Thor · IMX274 | FHD60 | H.264 | Holoviz | 59.6 → 59.6 → 59.6 | 9.4 → 9.2 → 8.8 | 16.24 → 16.46 → 16.33 | 19.91 → 20.28 → 19.91 |
+| Thor · IMX274 | 4K60 | H.265 | Holoviz | 59.8 → 59.8 → 59.8 | 4.4–21.6 → 4.4 → 1.7 | 16.07 → 15.99 → 15.67 | 19.85 → 19.93 → 19.99 |
+
+- **Without an area, latency matches `main`** within run-to-run variation: P50 differs by −4% to +6% across the nine results (median +0.7%) and P99 by −3% to +4% (median +0.4%).
+- **With an area, latency is no higher:** P50 changes by −6% to +1% against the same change without one. Frame rates are unchanged, and no run had a sequence gap.
+- **Bitrate falls where the scene uses less than its limit.** These scenes do, so lowering detail outside the area lowers the total: 13–16% on the simulation, 1% on the BRIO, 4% on the IMX274 at FHD.
+- **The IMX274 at 4K H.265 varies between runs of the same code.** Three runs on `main` gave 9.2, 21.6 and 4.4 Mbit/s; three runs of this change without an area gave 4.4 each (the first of each is in the latency columns). Identical frames encode to identical bytes on Thor with and without this change at 4K and FHD in both codecs, so the difference is in the camera's picture between starts, not in the encoder. With an area that stream used 1.7 Mbit/s in one run.
 
 ## Hosts
 
