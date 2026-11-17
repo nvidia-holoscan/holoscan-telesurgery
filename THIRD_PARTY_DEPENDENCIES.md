@@ -15,7 +15,7 @@ The 77 external distributions in `uv.lock` are the union of three distinct selec
 | Component | Version | License / terms | Upstream source | Legal-file location | Distribution role |
 | --- | ---: | --- | --- | --- | --- |
 | `aiohappyeyeballs` | 2.7.1 | PSF-2.0 | [upstream](https://github.com/aio-libs/aiohappyeyeballs) | distribution: `LICENSE` | runtime transitive |
-| `aiohttp` | 3.14.4 | Apache-2.0 AND MIT | [upstream](https://github.com/aio-libs/aiohttp) | distribution: `LICENSE.txt`, `vendor/llhttp/LICENSE` | runtime direct |
+| `aiohttp` | 3.14.5 | Apache-2.0 AND MIT | [upstream](https://github.com/aio-libs/aiohttp) | distribution: `LICENSE.txt`, `vendor/llhttp/LICENSE` | runtime direct |
 | `aioice` | 0.10.2 | BSD-3-Clause | [upstream](https://github.com/aiortc/aioice) | distribution: `LICENSE` | runtime transitive |
 | `aiortc` | 1.15.0 | BSD-3-Clause | [upstream](https://github.com/aiortc/aiortc) | distribution: `LICENSE` | runtime direct |
 | `aiosignal` | 1.4.0 | Apache-2.0 | [upstream](https://github.com/aio-libs/aiosignal) | distribution: `LICENSE` | runtime transitive |
@@ -42,7 +42,7 @@ The 77 external distributions in `uv.lock` are the union of three distinct selec
 | `pylibsrtp` | 1.0.0 | BSD-3-Clause | [upstream](https://github.com/aiortc/pylibsrtp) | distribution: `LICENSE` | runtime transitive |
 | `pynvvideocodec` | 2.2.3 | MIT | [upstream](https://catalog.ngc.nvidia.com/orgs/nvidia/resources/pynvvideocodec) | distribution: `LICENSE.txt`, `NOTICES.txt` | runtime direct |
 | `pyopenssl` | 26.4.0 | Apache-2.0 | [upstream](https://github.com/pyca/pyopenssl) | distribution: `LICENSE` | runtime transitive |
-| `pyrealsense2` | 2.58.4.10922 | Apache-2.0 | [upstream](https://github.com/realsenseai/librealsense) | distribution: `LICENSE` | runtime direct; shared with Franka |
+| `pyrealsense2` | 2.59.1.11053 | Apache-2.0 | [upstream](https://github.com/realsenseai/librealsense) | distribution: `LICENSE` | runtime direct; shared with Franka |
 | `pyyaml` | 6.0.3 | MIT | [upstream](https://github.com/yaml/pyyaml) | distribution: `LICENSE` | runtime direct; shared with Franka and development |
 | `pyzmq` | 27.2.0 | BSD-3-Clause | [upstream](https://github.com/zeromq/pyzmq) | [upstream `LICENSE.md`](https://github.com/zeromq/pyzmq/blob/main/LICENSE.md) | runtime direct; shared with Franka |
 | `ruckig` | 0.19.4 | MIT | [upstream](https://github.com/pantor/ruckig) | [upstream `LICENSE`](https://github.com/pantor/ruckig/blob/main/LICENSE) | runtime direct; shared with Franka |
@@ -51,7 +51,7 @@ The 77 external distributions in `uv.lock` are the union of three distinct selec
 | `trimesh` | 5.1.1 | MIT | [upstream](https://github.com/mikedh/trimesh) | distribution: `LICENSE.md` | runtime direct |
 | `typing-extensions` | 4.16.0 | PSF-2.0 | [upstream](https://github.com/python/typing_extensions) | distribution: `LICENSE` | runtime transitive; shared with development |
 | `websocket-client` | 1.9.2 | Apache-2.0 | [upstream](https://github.com/websocket-client/websocket-client) | distribution: `LICENSE` | runtime direct; shared with Franka |
-| `websockets` | 17.2 | BSD-3-Clause | [upstream](https://github.com/python-websockets/websockets) | distribution: `LICENSE` | runtime direct |
+| `websockets` | 17.3 | BSD-3-Clause | [upstream](https://github.com/python-websockets/websockets) | distribution: `LICENSE` | runtime direct |
 | `yarl` | 1.25.1 | Apache-2.0 | [upstream](https://github.com/aio-libs/yarl) | distribution: `LICENSE`, `NOTICE` | runtime transitive |
 
 ## Optional Franka-only additions
@@ -97,11 +97,11 @@ These packages are not selected by release installation commands.
 | `platformdirs` | 4.12.2 | MIT | [upstream](https://github.com/tox-dev/platformdirs) | distribution: `LICENSE` | development transitive |
 | `playwright` | 1.63.0 | Apache-2.0 | [upstream](https://github.com/microsoft/playwright-python) | [upstream `LICENSE`](https://github.com/microsoft/playwright-python/blob/main/LICENSE) | development direct |
 | `pluggy` | 1.6.0 | MIT | [upstream](https://github.com/pytest-dev/pluggy) | distribution: `LICENSE` | development transitive |
-| `pre-commit` | 4.6.2 | MIT | [upstream](https://github.com/pre-commit/pre-commit) | [upstream `LICENSE`](https://github.com/pre-commit/pre-commit/blob/main/LICENSE) | development direct |
+| `pre-commit` | 4.7.0 | MIT | [upstream](https://github.com/pre-commit/pre-commit) | [upstream `LICENSE`](https://github.com/pre-commit/pre-commit/blob/main/LICENSE) | development direct |
 | `pygments` | 2.21.0 | BSD-2-Clause | [upstream](https://github.com/pygments/pygments) | distribution: `AUTHORS`, `LICENSE` | development transitive |
 | `pytest` | 9.1.1 | MIT | [upstream](https://github.com/pytest-dev/pytest) | distribution: `LICENSE` | development direct |
 | `pytest-asyncio` | 1.4.0 | Apache-2.0 | [upstream](https://github.com/pytest-dev/pytest-asyncio) | distribution: `LICENSE` | development direct |
 | `pytest-xdist` | 3.8.0 | MIT | [upstream](https://github.com/pytest-dev/pytest-xdist) | distribution: `LICENSE` | development direct |
 | `python-discovery` | 1.6.1 | MIT | [upstream](https://github.com/tox-dev/python-discovery) | distribution: `LICENSE` | development transitive |
-| `ruff` | 0.17.0 | MIT | [upstream](https://github.com/astral-sh/ruff) | distribution: `LICENSE` | development direct |
+| `ruff` | 0.17.1 | MIT | [upstream](https://github.com/astral-sh/ruff) | distribution: `LICENSE` | development direct |
 | `virtualenv` | 21.14.1 | MIT | [upstream](https://github.com/pypa/virtualenv) | distribution: `LICENSE`, `THIRD-PARTY-NOTICES.md` | development transitive |

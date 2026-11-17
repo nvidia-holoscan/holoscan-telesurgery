@@ -145,8 +145,8 @@ Version unpinned, requires >=13,<14. SDK 4 build tool.
 Licensed under Apache-2.0 (https://github.com/NVIDIA/cuda-python/blob/main/LICENSE)
 
 aiohttp (https://github.com/aio-libs/aiohttp)
-Version 3.14.4.
-Licensed under Apache-2.0 AND MIT (https://github.com/aio-libs/aiohttp/blob/v3.14.4/LICENSE.txt)
+Version 3.14.5.
+Licensed under Apache-2.0 AND MIT (https://github.com/aio-libs/aiohttp/blob/v3.14.5/LICENSE.txt)
 
 aiortc (https://github.com/aiortc/aiortc)
 Version 1.15.0.
@@ -179,8 +179,8 @@ Version 1.9.2.
 Licensed under Apache-2.0 (https://github.com/websocket-client/websocket-client/blob/v1.9.2/LICENSE)
 
 websockets (https://github.com/python-websockets/websockets)
-Version 17.2.
-Licensed under BSD-3-Clause (https://github.com/python-websockets/websockets/blob/17.2/LICENSE)
+Version 17.3.
+Licensed under BSD-3-Clause (https://github.com/python-websockets/websockets/blob/17.3/LICENSE)
 
 cryptography (https://github.com/pyca/cryptography)
 Version 50.0.2.
@@ -191,7 +191,7 @@ Version 6.0.3.
 Licensed under MIT (https://github.com/yaml/pyyaml/blob/6.0.3/LICENSE)
 
 pyrealsense2 (https://github.com/IntelRealSense/librealsense)
-Version 2.58.4.10922.
+Version 2.59.1.11053.
 Licensed under Apache-2.0 (https://github.com/IntelRealSense/librealsense/blob/master/LICENSE)
 
 uv (https://github.com/astral-sh/uv)
@@ -221,12 +221,12 @@ Version 2.1.2. Development dependency of pytest-xdist.
 Licensed under MIT (https://github.com/pytest-dev/execnet/blob/v2.1.2/LICENSE)
 
 ruff (https://github.com/astral-sh/ruff)
-Version 0.17.0. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.17.0/LICENSE)
+Version 0.17.1. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff/blob/0.17.1/LICENSE)
 
 pre-commit (https://github.com/pre-commit/pre-commit)
-Version 4.6.2. Development dependency.
-Licensed under MIT (https://github.com/pre-commit/pre-commit/blob/v4.6.2/LICENSE)
+Version 4.7.0. Development dependency.
+Licensed under MIT (https://github.com/pre-commit/pre-commit/blob/v4.7.0/LICENSE)
 
 pre-commit-hooks (https://github.com/pre-commit/pre-commit-hooks)
 Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
@@ -234,8 +234,8 @@ Revision v6.0.0. Development dependency.
 Licensed under MIT (https://github.com/pre-commit/pre-commit-hooks/blob/v6.0.0/LICENSE)
 
 ruff-pre-commit (https://github.com/astral-sh/ruff-pre-commit)
-Revision v0.17.0. Development dependency.
-Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.17.0/LICENSE)
+Revision v0.17.1. Development dependency.
+Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/v0.17.1/LICENSE)
 
 shellcheck-py (https://github.com/shellcheck-py/shellcheck-py)
 Copyright (c) 2019 Ryan Rhee

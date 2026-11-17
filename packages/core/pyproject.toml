@@ -10,7 +10,7 @@ name = "telesurgery-core"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = ["numpy>=2.5.4,<3", "opencv-python-headless>=4.10,<6", "pyzmq>=26,<28", "websocket-client>=1.8,<2", "cryptography>=50,<51", "pyyaml>=6,<7", "pyrealsense2==2.58.4.10922; sys_platform == 'linux'"]
+dependencies = ["numpy>=2.5.4,<3", "opencv-python-headless>=4.10,<6", "pyzmq>=26,<28", "websocket-client>=1.8,<2", "cryptography>=50,<51", "pyyaml>=6,<7", "pyrealsense2==2.59.1.11053; sys_platform == 'linux'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telesurgery_core"]
