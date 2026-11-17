@@ -120,19 +120,25 @@ def test_outline_is_visible_at_camera_resolutions(width, height):
         stream.close()
 
 
-def test_still_is_lent_while_asked_without_the_outline_and_stops_when_the_asking_stops(tmp_path):
+# The small picture is lent whole (no reduction), which must still be a copy.
+@pytest.mark.parametrize(
+    "width,height,still_size", [(1920, 1080, (360, 640)), (640, 480, (480, 640))]
+)
+def test_still_is_lent_while_asked_without_the_outline_and_stops_when_the_asking_stops(
+    tmp_path, width, height, still_size
+):
     from telesurgery_runtime.application.viewer import (
         STILL_REQUEST_SECONDS,
         Stills,
         still_wanted,
     )
 
-    stream = Stream("h264", 1920, 1080)
+    stream = Stream("h264", width, height)
     still, request = tmp_path / "preview.jpg", tmp_path / "preview-request"
     try:
         viewer = stream.viewer
         viewer.stills = Stills(still)
-        viewer.outline = (1920, 1080, *region.outline(BOX, 1920, 1080))
+        viewer.outline = (width, height, *region.outline(BOX, width, height))
         # Nobody asked: frames are shown and no still is produced.
         assert not still_wanted(request)
         for _ in range(3):
@@ -151,9 +157,14 @@ def test_still_is_lent_while_asked_without_the_outline_and_stops_when_the_asking
         picture = cv2.imread(str(still))
         # The full picture, small, in its own colours: the outline is not burned in, because
         # the dashboard draws its own over the still.
-        assert picture.shape == (360, 640, 3)
-        np.testing.assert_allclose(picture[180, 320], BGR, atol=8)
-        np.testing.assert_allclose(picture[round(0.3 * 360), 320], BGR, atol=8)
+        rows, columns = still_size
+        assert picture.shape == (rows, columns, 3)
+        np.testing.assert_allclose(picture[rows // 2, columns // 2], BGR, atol=8)
+        # Along the area's top edge and at its corner, where the outline would be.
+        for row, column in ((0.3, 0.5), (0.3, 0.3), (0.5, 0.7)):
+            np.testing.assert_allclose(
+                picture[round(row * rows), round(column * columns)], BGR, atol=8
+            )
         # Paced: no more than about four a second however fast frames arrive.
         assert viewer.stills.written <= elapsed / Stills.INTERVAL + 1
         # The outline is still in the picture Holoviz shows.

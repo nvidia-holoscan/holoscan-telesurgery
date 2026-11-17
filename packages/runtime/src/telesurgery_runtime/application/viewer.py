@@ -70,7 +70,9 @@ class Stills:
 
         step = -(-max(image.shape[:2]) // self.SIDE)
         with cp.cuda.Device(image.device.id):
-            small = cp.ascontiguousarray(image[::step, ::step])
+            # Always a copy, also when the picture is already small: the outline is
+            # painted into the frame itself next, and the still must not carry it.
+            small = image[::step, ::step].copy()
             # The copy is only queued, on the decoder's stream. The worker reads it on
             # another stream, so it waits for this marker first.
             copied = cp.cuda.Event()

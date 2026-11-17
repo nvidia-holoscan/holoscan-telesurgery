@@ -603,13 +603,18 @@ async def test_holoviz_card_lends_a_still_picture_to_draw_on():
         await expect(still).to_be_visible()
         assert len(regions(actions)) == 2
 
-        # Hiding the picture stops the requests; Clear needs no picture.
+        # Hiding the picture stops the requests and puts an armed tool down, so the next
+        # status refresh does not open it again. Clear needs no picture.
+        await lasso.click()
+        await expect(lasso).to_have_attribute("aria-pressed", "true")
         await card.get_by_role("button", name="Hide picture", exact=True).click()
         await expect(still).to_be_hidden()
+        await expect(lasso).to_have_attribute("aria-pressed", "false")
         await page.wait_for_timeout(500)
         quiet = stills(actions)
         await page.wait_for_timeout(1200)
         assert stills(actions) == quiet
+        await expect(still).to_be_hidden()
         await clear.click()
         await expect(card.locator(".region-status")).to_be_hidden()
         assert regions(actions)[2] == {"id": "room:wide", "points": None}

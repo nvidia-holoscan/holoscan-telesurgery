@@ -240,6 +240,8 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
             if (!busy) current = camera;
             draw();
         },
+        // Put the drawing tool down, as Esc does.
+        cancel,
         stop() {
             watch.disconnect();
             resize.disconnect();
@@ -266,7 +268,8 @@ export function nativePriorityArea(camera) {
     image.draggable = false;
     stage.append(image, element("p", "Waiting for the picture from Holoviz…", "region-still-waiting"));
     viewport.append(stage);
-    const hide = button("Hide picture", () => open(false), "text-link region-still-hide");
+    // An armed tool would reopen the picture at the next status refresh: put it down too.
+    const hide = button("Hide picture", () => { area.cancel(); open(false); }, "text-link region-still-hide");
     hide.hidden = true;
 
     const next = (delay) => {
