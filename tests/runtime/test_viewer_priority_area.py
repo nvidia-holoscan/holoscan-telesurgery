@@ -125,7 +125,7 @@ def test_outline_is_visible_at_camera_resolutions(width, height):
     "width,height,still_size", [(1920, 1080, (360, 640)), (640, 480, (480, 640))]
 )
 def test_still_is_lent_while_asked_without_the_outline_and_stops_when_the_asking_stops(
-    tmp_path, width, height, still_size
+    tmp_path, monkeypatch, width, height, still_size
 ):
     from telesurgery_runtime.application.viewer import (
         STILL_REQUEST_SECONDS,
@@ -133,6 +133,14 @@ def test_still_is_lent_while_asked_without_the_outline_and_stops_when_the_asking
         still_wanted,
     )
 
+    write = Stills._write
+
+    def late(self, small, copied):
+        # Read the lent picture only after its frame has been outlined and shown.
+        time.sleep(0.05)
+        write(self, small, copied)
+
+    monkeypatch.setattr(Stills, "_write", late)
     stream = Stream("h264", width, height)
     still, request = tmp_path / "preview.jpg", tmp_path / "preview-request"
     try:
