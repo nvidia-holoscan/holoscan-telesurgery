@@ -195,7 +195,20 @@ Camera-to-viewer runs with `scripts/benchmark.py` (60 seconds after a 30-second 
 
 ## Hosts
 
-The same encoder path was run on each host with synthetic moving texture at 640×480, FHD and 4K, H.264 and H.265, using what is now the `subtle` strength. On all three an area raised quality inside it, lowered it outside, produced no keyframe and left encode time unchanged. Without an area, an encoder that can take one produced byte-identical streams to one that cannot, at FHD and 4K in both codecs on each host. The `strong` measurements on this page are from the x86 workstation; the bitrate change that `strong` adds is covered by the GPU tests in `tests/runtime/test_gpu_codecs.py`.
+The default `strong` strength was run on the DGX Spark and Jetson AGX Thor through the same encoder path: one FHD30 stream of moving texture with fresh noise in every frame, 60 frames without an area, 60 with a box covering 16% of the picture and 60 after clearing it.
+
+| Host | CC | Mbit/s: no area → area → cleared | Inside (dB) | Rest of the picture (dB) |
+| --- | --- | --- | --- | --- |
+| DGX Spark | H.264 | 8.9 → 3.3 → 8.8 | 31.0 → 31.0 → 31.0 | 31.0 → 28.7 → 31.0 |
+| DGX Spark | H.265 | 9.5 → 3.3 → 9.4 | 31.1 → 31.1 → 31.1 | 31.1 → 29.7 → 31.1 |
+| Jetson AGX Thor | H.264 | 8.9 → 3.3 → 8.8 | 31.0 → 31.0 → 31.0 | 31.0 → 28.2 → 31.0 |
+| Jetson AGX Thor | H.265 | 9.0 → 3.3 → 9.1 | 30.9 → 30.9 → 30.9 | 30.9 → 29.6 → 30.9 |
+
+- **The bitrate lands on the planned third of the limit** (3.28 Mbit/s for this area) on both hosts and returns to the full rate when the area is cleared.
+- **The only keyframe in each run is the first frame.**
+- **The area keeps its quality while the rest of the picture gives up 1.3 to 2.8 dB** on this content, against 5 to 8 dB on the clips above. This texture is noise the encoder cannot predict, so it says how the encoder behaves on each host, not how a camera picture looks.
+
+Earlier runs on each host used what is now the `subtle` strength, with synthetic moving texture at 640×480, FHD and 4K in both codecs. On all three an area raised quality inside it, lowered it outside, produced no keyframe and left encode time unchanged. Without an area, an encoder that can take one produced byte-identical streams to one that cannot, at FHD and 4K in both codecs on each host.
 
 | Host | GPU | Driver |
 | --- | --- | --- |
