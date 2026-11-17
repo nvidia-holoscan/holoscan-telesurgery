@@ -50,7 +50,8 @@ def region_supported():
         try:
             pixels = np.zeros((height, width, 3), dtype=np.uint8)
             encoder.encode(Frame(VideoHeader(0, time.time_ns(), width, height), pixels))
-            return bool(getattr(encoder, "supports_region", False))
+            if getattr(encoder, "supports_region", False):
+                return True
         except (OSError, RuntimeError, ValueError):
             continue
         finally:

@@ -70,6 +70,7 @@ class Encode:
         # Priority area: the node's request, and the encoder it was last applied to.
         self.region_stamp, self.region_request = None, (None, None)
         self.region_codec = self.region_holder = None
+        self.region_retry = 0.0
 
     def _error(self, message=""):
         if self.settings_path:
@@ -123,7 +124,7 @@ class Encode:
         if stamp != self.region_stamp:
             self.region_stamp, self.region_request = stamp, region.read_request(path)
             self.region_codec = None
-        if self.region_codec is self.codec:
+        if self.region_codec is self.codec or time.monotonic() < self.region_retry:
             return
         self.region_codec = self.codec
         revision, points = self.region_request
@@ -144,13 +145,18 @@ class Encode:
             self.region_holder = None
             with contextlib.suppress(Exception):
                 self.codec.set_region(None)
-        region.write_status(
-            self.settings_path.with_suffix(region.STATUS_SUFFIX),
-            supported,
-            region.unavailable(self.config.codec, self.config.encoder_extra),
-            revision,
-            error,
-        )
+        try:
+            region.write_status(
+                self.settings_path.with_suffix(region.STATUS_SUFFIX),
+                supported,
+                region.unavailable(self.config.codec, self.config.encoder_extra),
+                revision,
+                error,
+            )
+        except OSError:
+            # Video continues. The node has no answer yet, so apply and report again.
+            logging.exception("Priority area status could not be written")
+            self.region_codec, self.region_retry = None, time.monotonic() + 1
 
     def compute(self, frame):
         self._refresh()

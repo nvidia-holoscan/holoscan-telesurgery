@@ -303,6 +303,11 @@ class LocalNode:
                             "check that the camera is delivering frames"
                         )
                     await asyncio.sleep(0.02)
+            except asyncio.CancelledError:
+                # A dropped connection cancels this call: its caller gets no reply, so the
+                # change must not stay in effect.
+                self._request_region(key, previous)
+                raise
             finally:
                 self.region_waiting.discard(key)
             if status.get("error"):

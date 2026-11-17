@@ -11,7 +11,7 @@ A priority area is a region a surgeon draws on a camera view. The patient-side e
 | Fixed quality (QP 24), freehand area of 5% | +1.3 to +1.7 dB | unchanged | +2% to +3% |
 | Fixed quality (QP 24), area of a quarter | +1.5 to +1.9 dB | unchanged | +23% to +48% |
 
-- **With a bitrate limit, quality moves; bandwidth does not grow.** Rate control holds the stream at its limit, so what the area gains the rest of the picture gives up. A small area gains most and costs the rest least.
+- **With a bitrate limit, quality moves; bandwidth does not grow.** Rate control aims at the same limit with and without an area, so what the area gains the rest of the picture gives up. A small area gains most and costs the rest least. The limit is a target, not a hard cap: at 2 Mbit/s the endoscopy clip needs 2.6–2.7 Mbit/s without an area and 2.5 with one.
 - **With fixed quality, the rest of the picture keeps the chosen QP** and the area is encoded more finely, which costs bandwidth in proportion to its size.
 - **No keyframe** is produced when an area is set, moved or cleared, and frame sizes are as predictable as before: the largest predicted frame was 0.88–1.18 times its share of the limit with an area and 0.96–1.18 times without.
 - **Encode time is unchanged:** 2.1–2.6 ms per FHD frame with and without an area (median difference 0.02 ms). Applying a new area took about 0.5 ms (2.5 ms at most in 108 changes at FHD and 4K) and happens once per change, not per frame.

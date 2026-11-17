@@ -22,6 +22,7 @@ import shutil
 import sys
 import urllib.request
 import zipfile
+from pathlib import Path
 
 from dependencies import ROOT, run
 
@@ -181,6 +182,8 @@ void PyNvEncoder::SetPolicyMap(py::object policy)
     const uint32_t height = static_cast<uint32_t>(map.shape(0));
     const uint32_t width = static_cast<uint32_t>(map.shape(1));
     const size_t bytes = size_t(width) * height;
+    // Allocated before any work is queued; a failed conversion leaves the active map intact.
+    std::vector<int8_t> packed(state.packed.size());
     CUDA_DRVAPI_CALL(cuCtxPushCurrent(state.context));
     try {
         if (bytes > state.policyBytes) {
@@ -215,13 +218,14 @@ void PyNvEncoder::SetPolicyMap(py::object policy)
             cuStreamSynchronize(state.stream);
             PYNVVC_THROW_ERROR(status.message, NV_ENC_ERR_GENERIC);
         }
-        // Convert into a scratch copy so a failed download leaves the active map intact.
-        std::vector<int8_t> packed(state.packed.size());
         CUDA_DRVAPI_CALL(
             cuMemcpyDtoHAsync(packed.data(), state.delta, packed.size(), state.stream));
         CUDA_DRVAPI_CALL(cuStreamSynchronize(state.stream));
         state.packed.swap(packed);
     } catch (...) {
+        // Queued transfers read the caller's array and write the scratch copy: finish
+        // them before either is released.
+        cuStreamSynchronize(state.stream);
         cuCtxPopCurrent(NULL);
         throw;
     }
@@ -375,9 +379,13 @@ def build_wheel(args):
     build = ROOT / "build/codec"
     build.mkdir(parents=True, exist_ok=True)
     stamp = build / "build-options.txt"
-    # The converter sources are part of the build: editing one rebuilds the wheel.
+    # The converter sources and the patches in this file are part of the build: editing
+    # either rebuilds the wheel.
     converter = hashlib.sha256(
-        b"".join((CONVERTER / name).read_bytes() for name in CONVERTER_FILES)
+        b"".join(
+            path.read_bytes()
+            for path in (Path(__file__), *(CONVERTER / name for name in CONVERTER_FILES))
+        )
     ).hexdigest()[:16]
     options = (
         f"{VERSION}:{sys.version_info[:2]}:{os.uname().machine}:{args.cuda_architectures}"

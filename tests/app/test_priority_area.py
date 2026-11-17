@@ -432,6 +432,52 @@ async def test_a_stream_without_frames_does_not_claim_an_area(room, monkeypatch)
     assert region.read_request(request)[1] == BOX
 
 
+@pytest.mark.asyncio
+async def test_a_cancelled_change_restores_the_previous_area(room):
+    await room.start()
+    await room.node.set_region("scope", BOX, "Dr. Rivera")
+    await room.stop_frames()  # nothing confirms the next change
+    change = asyncio.create_task(room.node.set_region("scope", LASSO, "Dr. Chen"))
+    await asyncio.sleep(0.1)
+    # The node's connection drops: the caller never hears back.
+    change.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await change
+    assert room.node.regions["scope"]["points"] == BOX
+    assert room.node.regions["scope"]["by"] == "Dr. Rivera"
+    request = room.node.workers["scope"]["settings"].with_suffix(region.REQUEST_SUFFIX)
+    assert region.read_request(request)[1] == BOX
+    assert not room.node.region_waiting
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_streaming_and_reports_again_when_its_status_cannot_be_written(
+    tmp_path, monkeypatch
+):
+    path = settings_file(tmp_path)
+    stage = video.Encode(Config(codec="h264"), path)
+    stage.start()
+    write, failures = region.write_status, []
+
+    def full_disk(*args):
+        failures.append(args)
+        raise OSError("No space left on device")
+
+    try:
+        region.write_request(path.with_suffix(region.REQUEST_SUFFIX), 1, BOX)
+        monkeypatch.setattr(region, "write_status", full_disk)
+        assert stage.compute(FRAME) == (FRAME.header, b"frame")
+        assert stage.compute(FRAME) == (FRAME.header, b"frame")
+        assert len(failures) == 1 and status(path) == {}  # not retried on every frame
+        monkeypatch.setattr(region, "write_status", write)
+        stage.region_retry = 0
+        stage.compute(FRAME)
+        assert status(path) == {"supported": True, "blocked": "", "revision": 1, "error": ""}
+        assert np.array_equal(stage.codec.areas[-1], region.mask(BOX))
+    finally:
+        stage.stop()
+
+
 def patient_with(tmp_path, node, *, surgeons=(("lead", "Dr. Rivera", True),)):
     app = Application("patient", tmp_path / "patient")
     calls = []
