@@ -78,7 +78,9 @@ def status(path):
 async def swap_encoder(stage, path, codec):
     """Change the stream's codec as the node does, and wait for the worker's new encoder."""
     before = stage.codec
-    path.write_text(json.dumps({"camera": {"codec": codec}}))
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"camera": {"codec": codec}}))
+    temporary.replace(path)
     stage.check_at = 0
     async with asyncio.timeout(5):
         while stage.codec is before:

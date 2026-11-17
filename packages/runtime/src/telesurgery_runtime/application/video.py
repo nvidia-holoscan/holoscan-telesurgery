@@ -87,7 +87,9 @@ class Encode:
     def _refresh(self):
         if self.settings_path and time.monotonic() >= self.check_at:
             self.check_at = time.monotonic() + 0.25
-            stamp = self.settings_path.stat().st_mtime_ns
+            # The node replaces the file, so its identity changes even when two writes
+            # share a timestamp (kernels with coarse file times, such as Jetson's).
+            stamp = region.stamp(self.settings_path)
             if stamp != self.settings_stamp:
                 self.requested = Config(**json.loads(self.settings_path.read_text())["camera"])
                 self.settings_stamp = stamp

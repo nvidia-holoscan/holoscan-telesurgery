@@ -16,6 +16,7 @@ import pytest
 from telesurgery.nodes.camera_settings import modes, select
 from telesurgery_core.adapters import v4l2
 from telesurgery_core.configuration import save
+from telesurgery_core.video import region
 from telesurgery_core.video.config import Config
 
 
@@ -265,17 +266,18 @@ async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restar
         assert node.inventory()["cameras"][0]["codec"] == "h264"
         error.write_text(f"Could not prepare {failed_codec}; continuing h264")
         # A direct API retry must not depend on inventory having observed the error.
-        stamp = active["settings"].stat().st_mtime_ns
+        # The worker notices a replaced file even when two writes share a timestamp.
+        stamp = region.stamp(active["settings"])
         await node.start_camera("sensor", {"codec": failed_codec})
-        assert active["settings"].stat().st_mtime_ns != stamp
+        assert region.stamp(active["settings"]) != stamp
         camera = node.inventory()["cameras"][0]
         assert camera["status"] == "live" and camera["error"] == ""
         assert camera["encoding_error"] == error.read_text()
         assert camera["codec"] == "h264"  # A failed native-only codec must not hide browser video.
         # Retry identical settings must notify the encoder without restarting capture.
-        stamp = active["settings"].stat().st_mtime_ns
+        stamp = region.stamp(active["settings"])
         await node.start_camera("sensor", {"codec": failed_codec})
-        assert active["settings"].stat().st_mtime_ns != stamp
+        assert region.stamp(active["settings"]) != stamp
         await node.start_camera("sensor", {"codec": "h264"})
         assert node.workers["sensor"] is active
         assert active["process"].returncode is None
