@@ -113,6 +113,13 @@ class LocalNode:
 
     async def refresh(self):
         cameras, robots = await asyncio.to_thread(discover, self.directory, self.simulation)
+        present = cameras or self.seen_hsb or self.workers
+        codecs = await asyncio.to_thread(supported_codecs) if present else []
+        capable = bool(set(codecs) & set(region.VIDEO_CODECS)) and await asyncio.to_thread(
+            region_supported
+        )
+        # Nothing below waits: a stream changed during this refresh always finds its
+        # camera with the settings it is running with, never a half-built entry.
         names = load(self.directory / "names.yaml")
         now = time.monotonic()
         for item in cameras:
@@ -136,10 +143,9 @@ class LocalNode:
         self.cameras = {
             key: {**item, "name": names.get(key, item["name"])} for key, item in discovered.items()
         }
-        codecs = await asyncio.to_thread(supported_codecs) if self.cameras else []
-        self.region_capable = bool(
-            set(codecs) & set(region.VIDEO_CODECS)
-        ) and await asyncio.to_thread(region_supported)
+        if not self.cameras:
+            codecs = []
+        self.region_capable = capable and bool(self.cameras)
         for key, camera in self.cameras.items():
             camera["codecs"] = codecs
             if camera.get("codec", Config.codec) not in codecs and codecs:

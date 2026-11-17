@@ -232,6 +232,65 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stream_changed_during_a_refresh_finds_its_camera_settings(tmp_path, monkeypatch):
+    import threading
+
+    from telesurgery.nodes import local
+
+    create_process = asyncio.create_subprocess_exec
+
+    async def worker(*args, **kwargs):
+        return await create_process(sys.executable, "-c", "import time; time.sleep(60)", **kwargs)
+
+    def discover(*args):
+        camera = {
+            "id": "sensor",
+            "name": "Camera",
+            "kind": "synthetic",
+            "source": "synthetic",
+            "width": 1280,
+            "height": 720,
+            "fps": 30,
+        }
+        return [camera], []
+
+    probing = threading.Event()
+    probing.set()
+
+    def codecs():
+        # The node's codec probe runs on another thread; discovery can be slow too.
+        probing.wait(5)
+        return ["h264", "nvjpeg"]
+
+    monkeypatch.setattr(local.asyncio, "create_subprocess_exec", worker)
+    monkeypatch.setattr(local, "discover", discover)
+    monkeypatch.setattr(local, "supported_codecs", codecs)
+    monkeypatch.setattr(local, "region_supported", lambda: False)
+    node = local.LocalNode(tmp_path, None)
+    try:
+        await node.refresh()
+        await node.start_camera("sensor", {"fps": 30})
+        node.workers["sensor"].update(updated=time.monotonic(), frames=1, active_codec="h264")
+        probing.clear()
+        refreshing = asyncio.create_task(node.refresh())
+        await asyncio.sleep(0.05)
+        assert not refreshing.done()
+        # Mid-refresh, the camera still carries the settings its stream runs with, so an
+        # encoding change is not mistaken for a capture change.
+        await node.start_camera("sensor", {"codec": "nvjpeg"})
+        probing.set()
+        await refreshing
+        # The change reached the running worker, and the finished refresh keeps it.
+        settings = json.loads(node.workers["sensor"]["settings"].read_text())
+        assert settings["camera"]["codec"] == "nvjpeg"
+        assert node.cameras["sensor"]["codec"] == "nvjpeg"
+        assert node.workers["sensor"]["process"].returncode is None
+    finally:
+        probing.set()
+        await node.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failed_codec", ["surgical-tokenizer", "nvjpeg"])
 async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restart(
     tmp_path, monkeypatch, failed_codec
