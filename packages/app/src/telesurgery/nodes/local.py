@@ -28,9 +28,13 @@ from telesurgery_core.diagnostics.logs import read_log
 from telesurgery_core.hsb import discover as discover_hsb
 from telesurgery_core.transport.protocol import MAX_FRAME, decode_video
 from telesurgery_core.transport.rpc import RpcClient
-from telesurgery_core.video.capabilities import supported_codecs
+from telesurgery_core.video import region
+from telesurgery_core.video.capabilities import region_supported, supported_codecs
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.reference import KEYFRAME_SUFFIX
+
+# A live stream confirms a priority area within a frame; allow for a slow one.
+REGION_CONFIRM_SECONDS = 1.5
 
 
 async def _terminate(process):
@@ -101,6 +105,10 @@ class LocalNode:
         self.mutation = asyncio.Lock()
         self.settings_path = self.directory / "streams.yaml"
         self.settings = load(self.settings_path)
+        # Priority areas live in memory only: a node restart returns to uniform quality.
+        self.regions, self.region_errors = {}, {}
+        self.region_revision = 0
+        self.region_capable = False
 
     async def refresh(self):
         cameras, robots = await asyncio.to_thread(discover, self.directory, self.simulation)
@@ -128,6 +136,9 @@ class LocalNode:
             key: {**item, "name": names.get(key, item["name"])} for key, item in discovered.items()
         }
         codecs = await asyncio.to_thread(supported_codecs) if self.cameras else []
+        self.region_capable = bool(
+            set(codecs) & set(region.VIDEO_CODECS)
+        ) and await asyncio.to_thread(region_supported)
         for key, camera in self.cameras.items():
             camera["codecs"] = codecs
             if camera.get("codec", Config.codec) not in codecs and codecs:
@@ -178,6 +189,7 @@ class LocalNode:
                     "status": status,
                     "error": error,
                     "encoding_error": worker["encoding_error"] if worker else "",
+                    **self._region_state(key, camera, worker),
                     **(
                         {"codec": worker["active_codec"]}
                         if worker and "active_codec" in worker
@@ -191,6 +203,103 @@ class LocalNode:
             "cameras": cameras,
             "robots": list(self.robots.values()),
         }
+
+    def _region_state(self, key, camera, worker):
+        """What a camera reports about its priority area.
+
+        region_supported: this camera's encoder can take an area at all.
+        region_unavailable: why it cannot be used right now, although supported.
+        region / region_by: the area the encoder confirmed, and who chose it.
+        """
+        status = (
+            region.read_status(worker["settings"].with_suffix(region.STATUS_SUFFIX))
+            if worker
+            else {}
+        )
+        saved = self.regions.get(key)
+        if saved and status.get("error") and status.get("revision") == saved["revision"]:
+            # The encoder refused it: return to uniform quality rather than show an
+            # outline the picture does not follow.
+            self.region_errors[key] = status["error"]
+            self._request_region(key, None)
+            saved = None
+        # A running encoder whose settings allow an area, and which still cannot take
+        # one, knows better than the node's probe.
+        refused = status.get("supported") is False and status.get("blocked") == ""
+        supported = self.region_capable and not refused
+        reason = ""
+        if supported:
+            # The active encoder's settings first: a pending change has not taken over yet.
+            reason = status.get("blocked") or region.unavailable(
+                camera.get("codec", Config.codec), camera.get("encoder_extra", "")
+            )
+            if not reason and key in self.region_errors:
+                reason = "the encoder could not apply it; restart the stream to try again"
+        applied = bool(
+            saved and supported and not reason and status.get("revision") == saved["revision"]
+        )
+        return {
+            "region_supported": supported,
+            "region_unavailable": reason,
+            "region": saved["points"] if applied else None,
+            "region_by": saved["by"] if applied else "",
+        }
+
+    def _request_region(self, key, saved):
+        """Record a camera's area (None clears it) and hand it to a running worker."""
+        self.region_revision += 1
+        if saved is None:
+            self.regions.pop(key, None)
+        else:
+            saved = self.regions[key] = {**saved, "revision": self.region_revision}
+        worker = self.workers.get(key)
+        if worker:
+            region.write_request(
+                worker["settings"].with_suffix(region.REQUEST_SUFFIX),
+                self.region_revision,
+                saved["points"] if saved else None,
+            )
+        return self.region_revision
+
+    async def set_region(self, key, points, by=""):
+        """Concentrate a camera's picture quality in one area; None returns to uniform."""
+        async with self.mutation:
+            if key not in self.cameras:
+                raise ValueError("Camera is unavailable")
+            if points is None:
+                if key in self.regions:
+                    self._request_region(key, None)
+                return
+            points = region.validate(points)
+            if not isinstance(by, str) or len(by) > 80:
+                raise ValueError("Invalid name")
+            worker = self.workers.get(key)
+            state = self._region_state(key, self.cameras[key], worker)
+            if not state["region_supported"]:
+                raise ValueError("This camera's encoder cannot use a priority area")
+            if state["region_unavailable"]:
+                raise ValueError(f"Priority area unavailable: {state['region_unavailable']}")
+            if worker is None or worker.get("error"):
+                raise ValueError("Start the stream before choosing a priority area")
+            previous = self.regions.get(key)
+            revision = self._request_region(key, {"points": points, "by": by})
+            path = worker["settings"].with_suffix(region.STATUS_SUFFIX)
+            deadline = time.monotonic() + REGION_CONFIRM_SECONDS
+            # The worker applies it on its next frame; answer once the encoder has it.
+            while (status := region.read_status(path)).get("revision") != revision:
+                if time.monotonic() >= deadline or self.workers.get(key) is not worker:
+                    self._request_region(key, previous)
+                    raise TimeoutError(
+                        "The stream did not confirm the priority area; "
+                        "check that the camera is delivering frames"
+                    )
+                await asyncio.sleep(0.02)
+            if status.get("error"):
+                self.region_errors[key] = status["error"]
+                self._request_region(key, None)
+                raise RuntimeError(
+                    f"The encoder could not apply the priority area: {status['error']}"
+                )
 
     async def rename(self, key, name):
         if key not in self.cameras or not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
@@ -222,6 +331,16 @@ class LocalNode:
                 raise ValueError("Camera is unavailable")
             camera = self.cameras[key]
             selected = select(camera, settings)
+            follows = selected["codec"] in region.VIDEO_CODECS
+            if (
+                key in self.regions
+                and follows
+                and region.unavailable(selected["codec"], selected["encoder_extra"])
+            ):
+                raise ValueError(
+                    "Clear the priority area before turning on adaptive quantization "
+                    "(aq, temporalaq)"
+                )
             if key in self.workers:
                 if not self.workers[key].get("error"):
                     changed = {k for k in selected if selected[k] != camera.get(k, "")}
@@ -235,6 +354,9 @@ class LocalNode:
                         "encoder_extra",
                     }:
                         raise ValueError("Stop this stream before changing its capture settings")
+                    if key in self.regions and not follows:
+                        # The new format cannot follow an area; do not keep one it ignores.
+                        self._request_region(key, None)
                     path = self.workers[key]["settings"]
                     if changed or path.with_suffix(".error").exists():
                         document = json.loads(path.read_text())
@@ -245,8 +367,11 @@ class LocalNode:
                         self.settings[key] = selected
                         save(self.settings_path, self.settings)
                         camera.update(selected)
+                        self.region_errors.pop(key, None)
                     return
                 await self._stop(key)
+            if key in self.regions and not follows:
+                self._request_region(key, None)
             if camera.get("control_uri"):
 
                 def configure():
@@ -277,6 +402,15 @@ class LocalNode:
             endpoint = f"ipc://{self.temp.name}/{slug}.sock"
             settings = Path(self.temp.name) / f"{slug}.json"
             settings.with_suffix(".error").unlink(missing_ok=True)
+            settings.with_suffix(region.STATUS_SUFFIX).unlink(missing_ok=True)
+            self.region_errors.pop(key, None)
+            if saved := self.regions.get(key):
+                # A restarted stream keeps the area chosen for this camera.
+                region.write_request(
+                    settings.with_suffix(region.REQUEST_SUFFIX), saved["revision"], saved["points"]
+                )
+            else:
+                settings.with_suffix(region.REQUEST_SUFFIX).unlink(missing_ok=True)
             settings.write_text(
                 json.dumps(
                     {
@@ -379,7 +513,8 @@ class LocalNode:
                     )
                 finally:
                     worker["socket"].close()
-                    worker["settings"].with_suffix(".error").unlink(missing_ok=True)
+                    for suffix in (".error", region.REQUEST_SUFFIX, region.STATUS_SUFFIX):
+                        worker["settings"].with_suffix(suffix).unlink(missing_ok=True)
 
         # Cancellation during node disconnect must not orphan a camera/socket;
         # an open socket would also block context termination indefinitely.

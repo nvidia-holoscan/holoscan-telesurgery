@@ -29,6 +29,7 @@ import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
 import { setThemeRole, controllerAppearance } from "./theme.js";
 import { viewZoom, cameraZoom } from "./view-zoom.js";
+import { priorityArea, nativePriorityArea } from "./view-region.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -349,7 +350,9 @@ async function openVideo(camera) {
         timing: frameTiming(peer, video),
         depth: depthView(peer, video, stage, caption, camera, state.view_displays?.[camera.id]),
         zoom: viewZoom(camera, { viewport, stage, surface, initial: state.view_zooms?.[camera.id] }),
+        area: priorityArea(camera, { viewport, stage, surface, caption }),
     });
+    tiles.get(camera.id).area.update(camera, state);
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
     };
@@ -404,6 +407,7 @@ function closeVideo(id) {
     item.timing.stop();
     item.depth.stop();
     item.zoom.stop();
+    item.area.stop();
     item.peer.close();
     item.tile.remove();
 }
@@ -933,6 +937,7 @@ function renderCurrent() {
         if (tiles.has(camera.id)) {
             tiles.get(camera.id).title.textContent = camera.name;
             tiles.get(camera.id).title.title = camera.name;
+            tiles.get(camera.id).area.update(camera, state);
         } else openVideo(camera);
     }
     const nativeCameras = cameras.filter(
@@ -944,6 +949,8 @@ function renderCurrent() {
             c.id,
             c.name,
             state.native_views[c.id].status,
+            c.region_supported && c.region ? c.region_by || "" : null,
+            isPatient || Boolean(state.session?.robot),
         ]),
         () => {
             $("#native-views").replaceChildren();
@@ -962,6 +969,8 @@ function renderCurrent() {
                     tile,
                     state.native_views[camera.id].display,
                 );
+                const area = nativePriorityArea(camera, state, refresh);
+                if (area) tile.append(area);
                 const controls = element("div", undefined, "actions");
                 const metrics = button(
                     "Metrics",

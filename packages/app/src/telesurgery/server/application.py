@@ -35,6 +35,7 @@ from telesurgery_core.diagnostics.benchmark import Samples
 from telesurgery_core.diagnostics.clock import Clock
 from telesurgery_core.transport.peer import Peer
 from telesurgery_core.transport.tls import client_context, pin_peer, server_context
+from telesurgery_core.video import region
 from telesurgery_runtime.application.pipeline import Executor, VideoBridge
 from telesurgery_runtime.backends.sdk import require_sdk
 
@@ -254,6 +255,15 @@ class Application:
             peer.clear_frames()
             await self._close_viewers(peer.id, cameras - set(selected))
             return True
+        if method == "camera.region":
+            # One encoded stream serves every viewer, so only a surgeon admitted
+            # with control may redistribute its quality; viewers see the result.
+            surgeon = self.access.surgeons[peer.id]
+            if not surgeon.robot:
+                raise PermissionError("View-only access cannot change the priority area")
+            if params.get("id") not in self.peers[peer.id]["selected"]:
+                raise PermissionError("Select the camera before choosing a priority area")
+            return await self._set_region(params["id"], params.get("points"), surgeon.name)
         if method in {"replay.join", "replay.poll", "replay.cancel"}:
             async with self.control_lock:
                 await self.run(lambda: self.access.require(peer.id, robot=True))
@@ -505,6 +515,10 @@ class Application:
                             "depth_source",
                             "depth_fps",
                             "camera_zoom",
+                            "region_supported",
+                            "region_unavailable",
+                            "region",
+                            "region_by",
                         }
                     }
                 )
@@ -562,6 +576,25 @@ class Application:
                         "before resetting."
                     )
         return ""
+
+    async def _set_region(self, camera, points, by):
+        """Ask a camera's node for a priority area (None clears it); return its new state."""
+        if not isinstance(camera, str) or camera not in {
+            item["id"] for item in self.inventory()["cameras"]
+        }:
+            raise ValueError("Camera is unavailable")
+        if points is not None:
+            points = region.validate(points)
+        node, device = camera.split(":", 1)
+        result = await self.node_call(
+            node, "camera.region", {"id": device, "points": points, "by": by}
+        )
+        self.nodes[node].update(result)
+        state = next(item for item in result["cameras"] if item["id"] == device)
+        return {
+            key: state.get(key)
+            for key in ("region_supported", "region_unavailable", "region", "region_by")
+        }
 
     async def node_call(self, key, method, params=None):
         for peer_id, node_id in self.peer_nodes.items():
@@ -1137,6 +1170,17 @@ class Application:
                 return True
             if not self.remote or self.remote.closed.is_set():
                 raise ConnectionError("Connect to a patient first")
+            if method == "camera.region":
+                if not self.remote_status.get("robot"):
+                    raise PermissionError("View-only access cannot change the priority area")
+                state = await self.remote.call(
+                    "camera.region", {"id": params["id"], "points": params.get("points")}
+                )
+                # Show the confirmed area now; the next status poll carries it too.
+                for camera in self.remote_status.get("cameras", []):
+                    if camera["id"] == params["id"]:
+                        camera.update(state)
+                return state
             if method in {"view", "view.hide"}:
                 selected = set(params["cameras"])
                 if method == "view.hide":
@@ -1368,6 +1412,10 @@ class Application:
             if method == "camera.zoom":
                 return next(c["camera_zoom"] for c in result["cameras"] if c["id"] == device)
             return True
+        if method == "camera.region":
+            return await self._set_region(
+                params.get("id"), params.get("points"), "the patient dashboard"
+            )
         if method in {"node.approve", "node.reject"}:
             return await self.node_registry.decide(
                 params["id"],

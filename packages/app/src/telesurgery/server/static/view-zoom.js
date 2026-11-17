@@ -91,6 +91,8 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
     if (viewport) {
         area = button("Select area", () => {
             selecting = !selecting;
+            // Only one drag tool owns the picture at a time.
+            if (selecting) viewport.dispatchEvent(new CustomEvent("view-tool", { detail: "zoom" }));
             panel.hidePopover();
             draw();
             viewport.focus({ preventScroll: true });
@@ -238,6 +240,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
         }, true);
         listen("dblclick", event => {
             if (!root.contains(event.target)) { event.preventDefault(); update({ scale: 1, x: 0.5, y: 0.5 }); }
+        });
+        listen("view-tool", event => {
+            if (event.detail !== "zoom" && selecting) { selecting = false; gesture = null; selection.hidden = true; draw(); }
         });
         listen("keydown", event => {
             if (root.contains(event.target)) return;
