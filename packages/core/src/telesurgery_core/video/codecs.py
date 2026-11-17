@@ -532,4 +532,6 @@ def probe(config):
             "round_trip": "passed",
             "probe_dimensions": [width, height],
             "first_frame_immediate": True,
+            # False means surgeons are not offered priority areas: rerun setup.sh.
+            "priority_area": bool(getattr(encoder, "supports_region", False)),
         }

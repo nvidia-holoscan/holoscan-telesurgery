@@ -632,8 +632,11 @@ def test_priority_area_fits_camera_resolutions(width, height, codec):
         decoder.close()
 
 
-def test_node_reports_priority_area_support_from_the_real_encoder():
+def test_node_and_doctor_report_priority_area_support_from_the_real_encoder():
     from telesurgery_core.video.capabilities import region_supported
+    from telesurgery_core.video.codecs import probe
 
     region_supported.cache_clear()
     assert region_supported() is True
+    assert probe(Config(codec="h264"))["priority_area"] is True
+    assert probe(Config(codec="nvjpeg"))["priority_area"] is False
