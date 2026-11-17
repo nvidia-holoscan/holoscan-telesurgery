@@ -242,7 +242,11 @@ class LocalNode:
             if not reason and key in self.region_errors:
                 reason = "the encoder could not apply it; restart the stream to try again"
         applied = bool(
-            saved and supported and not reason and status.get("revision") == saved["revision"]
+            saved
+            and supported
+            and not reason
+            and status.get("revision") == saved["revision"]
+            and not status.get("error")  # refused: the encoder does not have it
         )
         return {
             "region_supported": supported,

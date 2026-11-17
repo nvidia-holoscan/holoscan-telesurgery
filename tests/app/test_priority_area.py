@@ -399,10 +399,12 @@ async def test_a_status_poll_during_a_refused_change_does_not_bring_back_the_old
     await room.node.set_region("scope", BOX, "Dr. Rivera")
     encoder.refuse = "NVENC rejected the map"
 
+    shown = []
+
     async def poll():
         # Dashboards ask for status while the change is still waiting for the encoder.
         while True:
-            room.camera()
+            shown.append(room.camera()["region"])
             await asyncio.sleep(0.001)
 
     polling = asyncio.create_task(poll())
@@ -417,6 +419,8 @@ async def test_a_status_poll_during_a_refused_change_does_not_bring_back_the_old
     await room.until(lambda: room.stage.codec.areas[-1] is None)
     assert "scope" not in room.node.regions
     assert room.area()["region"] is None and room.area()["region_unavailable"]
+    # No view was shown the outline the encoder refused.
+    assert LASSO not in shown
 
 
 @pytest.mark.asyncio

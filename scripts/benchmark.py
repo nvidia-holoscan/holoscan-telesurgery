@@ -242,14 +242,17 @@ async def run(args):
         finally:
             report["finished_utc"] = datetime.now(UTC).isoformat()
             for key in args.camera:
-                try:
-                    await surgeon.action("view.close", camera=key)
-                    if args.area:
-                        # The node keeps an area across stream restarts; do not leave one.
-                        await patient.action("camera.region", id=key, points=None)
-                    await patient.action("camera.stop", id=key)
-                except (RuntimeError, aiohttp.ClientError, TimeoutError):
-                    pass
+                steps = [(surgeon, "view.close", {"camera": key})]
+                if args.area:
+                    # The node keeps an area across stream restarts; do not leave one.
+                    steps.append((patient, "camera.region", {"id": key, "points": None}))
+                steps.append((patient, "camera.stop", {"id": key}))
+                for dashboard, name, params in steps:
+                    # One failed step must not skip the ones after it.
+                    try:
+                        await dashboard.action(name, **params)
+                    except (RuntimeError, aiohttp.ClientError, TimeoutError):
+                        pass
 
             write_report(args.output, report)
 
