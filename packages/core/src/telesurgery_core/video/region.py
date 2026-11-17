@@ -70,9 +70,10 @@ def outline(points, width, height):
     """Pixels of the area's outline in a width x height picture: (halo, line).
 
     Both are sorted flat indices (row * width + column) for the native viewer, which
-    has no overlay layer and paints them into each frame. The line is about 2 pixels
-    per 1080 picture lines and the dark halo around it keeps it visible on any content,
-    as on the dashboard.
+    has no overlay layer and paints them into each frame. The window opens at 720 lines
+    and scales the picture to fit, so the line is 2 pixels at that size (3 at 1080 lines,
+    6 at 2160), as wide as the dashboard draws it. The dark halo around it keeps it
+    visible on any content.
     """
     polygon = np.asarray(points, dtype=np.float64) * (width, height)
     columns, rows = [], []
@@ -86,8 +87,8 @@ def outline(points, width, height):
     # Each pixel of the path once, however many samples fell in it.
     path = np.unique(rows * width + columns)
     rows, columns = path // width, path % width
-    line = max(2, round(height / 540))
-    halo = line + 2 * max(1, round(height / 1080))
+    line = max(2, round(height / 360))
+    halo = line + 2 * max(1, round(height / 720))
     return _band(columns, rows, halo, width, height), _band(columns, rows, line, width, height)
 
 

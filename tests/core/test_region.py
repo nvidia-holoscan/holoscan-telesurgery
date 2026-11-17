@@ -129,7 +129,10 @@ def test_request_and_status_files_are_replaced_whole(tmp_path):
     }
 
 
-@pytest.mark.parametrize("width,height,line,halo", [(1920, 1080, 2, 4), (3840, 2160, 4, 8)])
+@pytest.mark.parametrize(
+    "width,height,line,halo",
+    [(1280, 720, 2, 4), (1920, 1080, 3, 7), (3840, 2160, 6, 12)],
+)
 def test_outline_is_a_line_with_a_halo_scaled_to_the_picture(width, height, line, halo):
     box = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]
     dark, bright = region.outline(box, width, height)

@@ -113,9 +113,9 @@ def test_outline_is_visible_at_camera_resolutions(width, height):
         stream.viewer.outline = (width, height, halo, line)
         image = stream.show()
         assert (colours(image, line) == region.OUTLINE_LINE).all()
-        # About 2 picture lines per 1080, so it survives scaling to a smaller window.
+        # Two lines once the picture is scaled to the 720-line window Holoviz opens with.
         column = image[: height // 2, width // 2]
-        assert (column == region.OUTLINE_LINE).all(axis=1).sum() == height // 540
+        assert (column == region.OUTLINE_LINE).all(axis=1).sum() == height // 360
     finally:
         stream.close()
 
