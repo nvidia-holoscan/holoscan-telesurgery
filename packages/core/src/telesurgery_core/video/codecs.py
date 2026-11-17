@@ -312,7 +312,14 @@ class GpuCodec:
         if self.supports_region and self.backend is not None:
             with self.device, self.stream:
                 self.backend.SetPolicyMap(policy)
-                self._set_rate(self.backend, rate)
+                if not self._set_rate(self.backend, rate):
+                    # The encoder kept a cut meant for an area that is gone or has grown,
+                    # which would starve the whole picture. The next frame starts a new
+                    # encoder at the bitrate limit, with an IDR.
+                    self.backend.EndEncode()
+                    self.stream.synchronize()
+                    self.backend = None
+                    self.keyframe_requested = True
         self.region, self.region_rate = policy, rate
 
     def _set_rate(self, backend, rate):
@@ -321,14 +328,15 @@ class GpuCodec:
         The rate buffer keeps its size, so no frame may be larger than the limit already
         allowed. Scaled with the bitrate, each IDR would be coded so coarsely that the whole
         picture, the area included, blurs for a third of a second.
+        Returns False when NVENC refused and the encoder is left with less than it should have.
         """
         options = encoder_options(self.config, *self.dimensions)
         if "bitrate" not in options:
-            return
+            return True
         floor = AREA_FLOOR * automatic_bitrate(*self.dimensions) * 1_000_000
         rate = min(1.0, max(rate, floor / options["bitrate"]))
         if rate == self.rate:
-            return
+            return True
         try:
             params = backend.GetEncodeReconfigureParams()
             params.averageBitrate = round(options["bitrate"] * rate)
@@ -337,12 +345,13 @@ class GpuCodec:
             if not backend.Reconfigure(params):
                 raise RuntimeError("NVENC refused the new bitrate")
         except Exception:
-            # The area itself is applied; only the bandwidth saving is lost.
             logging.warning(
                 "Could not change the encoder's bitrate for a priority area", exc_info=True
             )
-        else:
-            self.rate = rate
+            # A refused cut only loses the bandwidth saving; the area itself is applied.
+            return rate < self.rate
+        self.rate = rate
+        return True
 
     def _create_encoder(self, width, height):
         nvc = self.library

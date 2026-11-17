@@ -571,28 +571,62 @@ def test_priority_area_survives_an_encoder_that_refuses_a_new_bitrate(caplog):
     from telesurgery_core.video.region import mask
 
     class Refusing:
+        """The real encoder, except that it refuses bitrate changes while `refuse` is set."""
+
         def __init__(self, backend):
-            self.backend = backend
+            self.backend, self.refuse = backend, True
 
         def __getattr__(self, name):
             return getattr(self.backend, name)
 
         def Reconfigure(self, params):
-            return False
+            return False if self.refuse else self.backend.Reconfigure(params)
 
     pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)
+    frames = iter(range(1, 100))
+
+    def encode(encoder):
+        index = next(frames)
+        return encoder.encode(Frame(VideoHeader(index, index + 1, 640, 480), pixels))
+
     encoder = GpuCodec(Config(codec="h264", width=640, height=480, fps=30), encode=True)
     try:
         encoder.encode(Frame(VideoHeader(0, 1, 640, 480), pixels))
-        encoder.backend = Refusing(encoder.backend)
+        backend = encoder.backend = Refusing(encoder.backend)
+        # A refused cut: the area is applied at the bandwidth the stream had.
         with caplog.at_level("WARNING"):
             encoder.set_region(mask(AREA))
-        # The area is applied at the bandwidth the stream had, and streaming continues.
         assert "bitrate for a priority area" in caplog.text
         assert encoder.region is not None and encoder.rate == 1.0
-        assert encoder.encode(Frame(VideoHeader(1, 2, 640, 480), pixels))[1]
+        header, data = encode(encoder)
+        assert data and not header.keyframe and encoder.backend is backend
         encoder.set_region(None)
-        assert encoder.region is None and encoder.rate == 1.0
+        assert encoder.region is None and encoder.rate == 1.0 and encoder.backend is backend
+
+        # A cut that was applied but cannot be undone must not starve the picture: the
+        # encoder is replaced, and its first frame is an IDR at the full bitrate.
+        backend.refuse = False
+        encoder.set_region(mask(AREA))
+        assert encoder.rate < 0.5 and not encode(encoder)[0].keyframe
+        backend.refuse = True
+        encoder.set_region(None)
+        assert encoder.backend is None and encoder.region is None
+        header, data = encode(encoder)
+        assert data and header.keyframe
+        assert encoder.backend is not backend and encoder.rate == 1.0
+        assert encoder.supports_region and not encode(encoder)[0].keyframe
+
+        # The same when the area grows and the larger share is refused.
+        small = [[x * 0.5, y * 0.5] for x, y in AREA]
+        encoder.set_region(mask(small))
+        lowered = encoder.rate
+        backend = encoder.backend = Refusing(encoder.backend)
+        encoder.set_region(mask(AREA))
+        assert encoder.backend is None
+        header, data = encode(encoder)
+        # The new encoder starts with the larger area and its own share of the limit.
+        assert header.keyframe and encoder.region is not None
+        assert lowered < encoder.rate < 1.0
     finally:
         encoder.close()
 
