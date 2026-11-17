@@ -90,8 +90,8 @@ OPTIONS = {
     "gop_seconds": (_number(1, 60), "Seconds between periodic IDR frames (default 10)"),
     "area_strength": (
         _choice("strong", "subtle"),
-        "Priority area: strong (default) softens the rest of the picture and saves bandwidth; "
-        "subtle moves quality at the same bandwidth",
+        "Priority area: strong (default) softens the rest of the picture and, with a bitrate "
+        "limit, lowers the bitrate; subtle takes less from the rest and does not lower it",
     ),
 }
 

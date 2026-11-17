@@ -46,7 +46,7 @@ GOP_SECONDS = 10
 # area gains 2 to 3 dB for under 0.5 dB outside.
 # Constant QP has no rate control to rebalance. "subtle" leaves the rest at the chosen QP
 # and the area costs bandwidth; "strong" also coarsens the rest by 8, which saves
-# bandwidth for an area under half the picture.
+# bandwidth for a small area and about breaks even at a quarter of the picture.
 AREA_POLICY = {"strong": (2, 4), "subtle": (1, 3)}  # inside, outside
 AREA_POLICY_CQP = {"strong": (1, 4), "subtle": (1, 0)}
 AREA_REST_RATE = 0.2
