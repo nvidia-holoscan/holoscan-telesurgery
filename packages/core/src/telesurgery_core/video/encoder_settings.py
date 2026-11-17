@@ -88,6 +88,10 @@ OPTIONS = {
     "qmax": (_integer(MIN_QP, MAX_QP), "Highest QP rate control may use (lower keeps quality)"),
     "vbv_frames": (_number(0.5, 8), "Rate buffer size in frames of data (default 1)"),
     "gop_seconds": (_number(1, 60), "Seconds between periodic IDR frames (default 10)"),
+    "area_strength": (
+        _choice("standard", "strong"),
+        "How much quality a priority area takes from the rest of the picture (default standard)",
+    ),
 }
 
 

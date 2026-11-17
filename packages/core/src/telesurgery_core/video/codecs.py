@@ -10,6 +10,7 @@ so every call selects its CUDA device and enters its owned stream explicitly.
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,15 @@ from telesurgery_core.video.reference import MissingReference, ReferenceChain
 # H.264/H.265 run IPPP with a long GOP. Loss or a new viewer forces an IDR, so the
 # periodic one is only a backstop and the GOP stays long.
 GOP_SECONDS = 10
+# Priority area: NVIDIA's converter (native/cae) takes one policy per map cell: 0 Neutral,
+# 1 Protect and 2 ProtectStrong quantize more finely, 3 Deprioritize more coarsely.
+# With a bitrate limit the rest of the picture is deprioritized: rate control holds the
+# bitrate, so quality moves into the area instead of bandwidth being added (standard
+# measured +2 to +3 dB inside a small area for under 0.5 dB outside).
+# Constant QP has no rate control to rebalance, and deprioritizing would lower the quality
+# the operator fixed, so the rest stays neutral and the area costs some bandwidth.
+AREA_INSIDE = {"standard": 1, "strong": 2}
+AREA_OUTSIDE = {"cqp": 0}  # other rate controls: 3
 
 
 class _CudaBuffer:
@@ -77,6 +87,19 @@ class CodecWorker:
         request = getattr(self.codec, "request_keyframe", None)
         if request is not None:
             request()
+
+    @property
+    def supports_region(self):
+        """True when this encoder can concentrate quality in a priority area."""
+        return bool(getattr(self.codec, "supports_region", False))
+
+    def set_region(self, mask):
+        """Apply a priority area (telesurgery_core.video.region.mask), or None to clear it."""
+        apply = getattr(self.codec, "set_region", None)
+        if apply is not None:
+            self.executor.submit(apply, mask).result()
+        elif mask is not None:
+            raise RuntimeError("This encoder cannot use a priority area")
 
     def encode(self, frame):
         return self.executor.submit(self._encode, frame).result()
@@ -186,6 +209,7 @@ class GpuCodec:
         self.keyframe_requested = True
         self.gop, self.gop_index = secrets.randbelow(2**30), 0
         self.chain = ReferenceChain()
+        self.region = None  # policy map of the active priority area
         try:
             import cupy as cp
 
@@ -219,6 +243,70 @@ class GpuCodec:
     def request_keyframe(self):
         self.keyframe_requested = True
 
+    # True once an H.264/H.265 encoder exists that accepts a priority area. The encoder is
+    # created on the first frame, so read it after that.
+    supports_region = False
+
+    def set_region(self, mask):
+        """Concentrate quality where mask (uint8 cells, 1 inside) is set; None restores uniform.
+
+        The area takes effect on the next frame without an IDR. Before the first frame
+        there is no encoder yet: the area is kept and applied when one is created.
+        """
+        video = self.encoding and self.kind in {"h264", "h265"}
+        if mask is None:
+            policy = None
+        elif not video or (self.backend is not None and not self.supports_region):
+            raise RuntimeError("This encoder cannot use a priority area")
+        else:
+            cells = np.asarray(mask)
+            if cells.ndim != 2 or not cells.size:
+                raise ValueError("A priority area mask is a two-dimensional grid")
+            strength = parse_extra(self.config.encoder_extra).get("area_strength", "standard")
+            inside = AREA_INSIDE[strength]
+            outside = AREA_OUTSIDE.get(self.config.rate_control, 3)
+            policy = np.where(cells != 0, inside, outside).astype(np.uint8)
+        if self.supports_region and self.backend is not None:
+            with self.device, self.stream:
+                self.backend.SetPolicyMap(policy)
+        self.region = policy
+
+    def _create_encoder(self, width, height):
+        nvc = self.library
+        options = encoder_options(self.config, width, height)
+
+        def create(**extra):
+            return nvc.CreateEncoder(
+                width,
+                height,
+                "NV12",
+                False,
+                gpu_id=self.config.codec_gpu,
+                cudastream=self.stream.ptr,
+                **options,
+                **extra,
+            )
+
+        self.supports_region = False
+        # NVENC's delta-QP map excludes its own adaptive quantization. Arming the map costs
+        # nothing: without an area the stream is byte-identical.
+        if getattr(nvc, "telesurgery_policy_map_patch", None) == 1 and not (
+            {"aq", "temporalaq"} & options.keys()
+        ):
+            try:
+                backend = create(qp_policy_map=1)
+                self.supports_region = bool(backend.SupportsPolicyMap())
+            except Exception:
+                logging.warning(
+                    "NVENC refused priority areas for this stream; continuing without them",
+                    exc_info=True,
+                )
+            else:
+                if self.region is not None and self.supports_region:
+                    backend.SetPolicyMap(self.region)
+                return backend
+        return create()
+
     def _create_video(self, width, height):
         nvc = self.library
         self.dimensions = (width, height)
@@ -235,15 +323,7 @@ class GpuCodec:
                 raise ValueError(
                     f"{self.kind} dimensions {width}x{height} exceed this GPU's NVENC limits"
                 )
-            self.backend = nvc.CreateEncoder(
-                width,
-                height,
-                "NV12",
-                False,
-                gpu_id=self.config.codec_gpu,
-                cudastream=self.stream.ptr,
-                **encoder_options(self.config, width, height),
-            )
+            self.backend = self._create_encoder(width, height)
         else:
             self.backend = nvc.CreateDecoder(
                 gpuid=self.config.codec_gpu,

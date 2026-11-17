@@ -54,6 +54,11 @@ def test_advanced_settings_reach_the_encoder():
     assert options["gop"] == options["idrperiod"] == 150
     # The binding enables temporal AQ for any value, so "off" must omit the key.
     assert "temporalaq" not in encoder_options(Config(encoder_extra="temporalaq=off"), 1920, 1080)
+    # The priority area's strength is applied by the codec, not passed to NVENC.
+    assert parse_extra("area_strength=strong") == {"area_strength": "strong"}
+    assert "area_strength" not in encoder_options(
+        Config(encoder_extra="area_strength=strong"), 1920, 1080
+    )
 
 
 @pytest.mark.parametrize("key", sorted(PROTECTED))
@@ -77,6 +82,7 @@ def test_pipeline_settings_cannot_be_overridden(key):
         "qmax=60",
         "vbv_frames=0",
         "gop_seconds=nan",
+        "area_strength=maximum",
         "x" * 600,
     ],
 )
