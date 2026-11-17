@@ -137,7 +137,12 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
                             if codec in {"raw-bgr8", "surgical-tokenizer"}
                             else {"jpeg_quality": 92}
                             if codec == "nvjpeg"
-                            else {"bitrate_mbps": 12.5, "encoder_preset": "P3"}
+                            else {
+                                "rate_control": "cbr",
+                                "bitrate_mbps": 12.5,
+                                "encoder_preset": "P3",
+                                "encoder_extra": "",
+                            }
                         ),
                     },
                 },
@@ -159,6 +164,115 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
             await expect(page.get_by_label("Resolution", exact=True)).to_have_value(
                 "1920x1080" if codec == "surgical-tokenizer" else "3840x2160"
             )
+            assert not errors
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
+    static = Path(__file__).parents[2] / "packages/app/src/telesurgery/server/static"
+    camera = {
+        "id": "host:camera",
+        "node": "host",
+        "name": "IMX274",
+        "kind": "HSB",
+        "width": 1920,
+        "height": 1080,
+        "fps": 60,
+        "pixel_format": "",
+        "status": "stopped",
+        "codecs": ["h264", "h265", "nvjpeg"],
+        "modes": [
+            {"width": 1280, "height": 720, "fps": [60]},
+            {"width": 1920, "height": 1080, "fps": [60]},
+            {"width": 3840, "height": 2160, "fps": [60]},
+        ],
+    }
+    state = {
+        "role": "patient",
+        "sdk": "5",
+        "nodes": [{"id": "host", "name": "Workstation", "status": "online"}],
+        "cameras": [camera],
+        "robots": [],
+        "surgeons": [],
+        "endpoint_port": 7447,
+    }
+    actions, errors = [], []
+
+    async def route(request):
+        path = request.request.url.removeprefix("http://localhost:8777/")
+        if path == "api/status":
+            await request.fulfill(json=state)
+        elif path == "api/action":
+            body = json.loads(request.request.post_data)
+            actions.append(body)
+            if body["action"] == "camera.start":
+                camera.update(body["params"]["settings"])
+                camera["status"] = "live"
+            else:
+                camera["status"] = "stopped"
+            await request.fulfill(json={"result": True})
+        else:
+            await request.fulfill(path=static / (path.removeprefix("static/") or "index.html"))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page(viewport={"width": 1440, "height": 960})
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.route("http://localhost:8777/**", route)
+            await page.goto("http://localhost:8777/#node/host")
+            await page.get_by_role("button", name="Stream settings", exact=True).click()
+            await page.get_by_text("Encoder settings", exact=True).click()
+            rate = page.get_by_label("Rate control", exact=True)
+            bitrate = page.get_by_label("Bitrate (Mbps)", exact=True)
+            quality = page.get_by_label("QP (lower is sharper)", exact=True)
+            await expect(rate).to_have_value("cbr")
+            # No bitrate chosen: the limit follows the resolution.
+            await expect(bitrate).to_have_value("")
+            await expect(bitrate).to_have_attribute("placeholder", "Automatic · 10")
+            await page.get_by_label("Resolution", exact=True).select_option("3840x2160")
+            await expect(bitrate).to_have_attribute("placeholder", "Automatic · 30")
+            await page.get_by_label("Resolution", exact=True).select_option("1280x720")
+            await expect(bitrate).to_have_attribute("placeholder", "Automatic · 5")
+            await expect(quality).not_to_be_visible()
+            await expect(page.locator("#stream-extra")).not_to_be_visible()
+            await page.get_by_role("button", name="Start stream", exact=True).click()
+            await expect(page.get_by_role("dialog", name="Start stream")).not_to_be_visible()
+            settings = actions[-1]["params"]["settings"]
+            assert settings["rate_control"] == "cbr" and settings["bitrate_mbps"] == 0
+            assert settings["encoder_extra"] == "" and "qp" not in settings
+
+            # Fixed quality replaces the bitrate with a QP; advanced settings are free text.
+            await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_visible()
+            await page.get_by_role("button", name="Stream settings", exact=True).click()
+            await page.get_by_text("Encoder settings", exact=True).click()
+            await rate.select_option("cqp")
+            await expect(bitrate).not_to_be_visible()
+            await quality.fill("28")
+            await page.get_by_text("Advanced", exact=True).click()
+            await page.locator("#stream-extra").fill("aq=8\ngop_seconds=5")
+            await page.get_by_role("button", name="Apply encoding", exact=True).click()
+            await expect(page.get_by_role("dialog", name="Change encoding")).not_to_be_visible()
+            settings = actions[-1]["params"]["settings"]
+            assert settings["rate_control"] == "cqp" and settings["qp"] == 28
+            assert settings["encoder_extra"] == "aq=8\ngop_seconds=5"
+            assert "bitrate_mbps" not in settings
+
+            # The dialog reopens with the stream's settings, advanced section included.
+            await page.get_by_role("button", name="Stream settings", exact=True).click()
+            await page.get_by_text("Encoder settings", exact=True).click()
+            await expect(rate).to_have_value("cqp")
+            await expect(quality).to_have_value("28")
+            await expect(page.locator("#stream-extra")).to_have_value("aq=8\ngop_seconds=5")
+            await rate.select_option("vbr")
+            await expect(quality).not_to_be_visible()
+            await bitrate.fill("8")
+            await expect(page.locator("#stream-quality-note")).to_contain_text("twice as much")
+            await page.get_by_role("button", name="Apply encoding", exact=True).click()
+            settings = actions[-1]["params"]["settings"]
+            assert settings["rate_control"] == "vbr" and settings["bitrate_mbps"] == 8
             assert not errors
         finally:
             await browser.close()

@@ -9,7 +9,9 @@ import json
 import os
 import signal
 import time
+from collections import deque
 from pathlib import Path
+from threading import Lock
 
 from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.diagnostics.clock import Clock
@@ -23,14 +25,17 @@ from telesurgery_core.video.depth import render
 from telesurgery_core.video.reference import MissingReference, ReferenceChain
 from telesurgery_core.video.view import crop
 from telesurgery_core.video.view import settings as zoom_settings
-from telesurgery_runtime.application.pipeline import Frames
 from telesurgery_runtime.application.vulkan import check as check_vulkan
 from telesurgery_runtime.backends.sdk import backend, require_sdk
+
+# Predicted frames that arrived while the viewer was busy are decoded in order, so a
+# short stall costs no keyframe. A longer backlog is dropped and repaired by an IDR.
+BACKLOG = 8
 
 
 class ReceiveDecode:
     def __init__(self, depth_enabled=False):
-        self.pending, self.benchmark = Frames(), Benchmark()
+        self.pending, self.lock, self.benchmark = deque(), Lock(), Benchmark()
         self.frames = 0
         self.received_at = time.monotonic()
         self.trace = None
@@ -38,7 +43,7 @@ class ReceiveDecode:
         self.display = {"mode": "color", "distance": 2.0, "opacity": 0.4}
         self.zoom = zoom_settings()
         self.waiting = ReferenceChain()  # Only paces keyframe requests.
-        self.wants_keyframe = False
+        self.wants_keyframe, self.waiting_since = False, 0.0
 
     def keyframe_due(self):
         """True once per interval while predicted frames lack their reference."""
@@ -54,20 +59,34 @@ class ReceiveDecode:
         if timing:
             self.benchmark.delivery(timing)
         received = timing["received_ns"] if timing else time.monotonic_ns()
-        self.pending.put("video", (header, data, received, timing.get("trace") if timing else None))
+        with self.lock:
+            # A keyframe needs nothing before it; intra-only codecs keep only the newest.
+            if header.keyframe or len(self.pending) >= BACKLOG:
+                self.pending.clear()
+            self.pending.append((header, data, received, timing.get("trace") if timing else None))
 
     def start(self):
         self.decoder, self.codec = None, None
         self.decoder_key = None
 
     def compute(self):
-        packet = self.pending.compute()
-        if packet is None:
+        with self.lock:
+            packets = list(self.pending)
+            self.pending.clear()
+        if not packets:
             return None
+        image = None
+        for index, packet in enumerate(packets):
+            # Only the newest frame is shown; earlier ones advance the decoder.
+            image = self._decode(packet, show=index == len(packets) - 1)
+        return image
+
+    def _decode(self, packet, *, show):
         stamp = time.perf_counter()
         header, data, received, trace = packet
-        trace = mark(trace, "receiver_queue_ms")
-        self.benchmark.add("receiver_queue_ms", (time.monotonic_ns() - received) / 1e6)
+        if show:
+            trace = mark(trace, "receiver_queue_ms")
+            self.benchmark.add("receiver_queue_ms", (time.monotonic_ns() - received) / 1e6)
         key = header.codec, header.codec_profile, header.width, header.height
         if getattr(self, "decoder_key", None) != key:
             if self.decoder:
@@ -82,9 +101,17 @@ class ReceiveDecode:
             frame = self.decoder.decode_device(header, data)
         except MissingReference:
             # Loss or a late join: drop deltas until an IDR arrives and ask for one.
-            self.wants_keyframe = True
+            if not self.wants_keyframe:
+                self.wants_keyframe, self.waiting_since = True, time.monotonic()
+            self.benchmark.add("undecodable_frames", 1)
             return None
-        self.wants_keyframe = False
+        if self.wants_keyframe:
+            # The picture was frozen for this long; the count is the number of recoveries.
+            self.benchmark.add("keyframe_wait_ms", (time.monotonic() - self.waiting_since) * 1000)
+            self.wants_keyframe = False
+        if not show:
+            self.benchmark.add("caught_up_frames", 1)
+            return None
         stage = "unpack_ms" if header.codec == "raw-bgr8" else "decode_ms"
         self.trace = mark(trace, stage)
         self.decoded_ns = time.monotonic_ns()

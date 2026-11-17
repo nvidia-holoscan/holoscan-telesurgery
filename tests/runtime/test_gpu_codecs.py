@@ -6,6 +6,7 @@
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -235,6 +236,48 @@ def test_native_viewer_waits_for_keyframe_and_requests_one():
         encoder.close()
 
 
+def test_native_viewer_decodes_a_short_backlog_in_order_without_a_keyframe():
+    from dataclasses import asdict
+
+    from telesurgery_runtime.application.viewer import BACKLOG, ReceiveDecode
+
+    encoder = GpuCodec(Config(codec="h264"), encode=True)
+    viewer = ReceiveDecode()
+    viewer.start()
+    try:
+
+        def send(index):
+            pixels = np.full((240, 320, 3), [20 + index * 10, 90, 170], dtype=np.uint8)
+            header, data = encoder.encode(
+                Frame(VideoHeader(index, time.time_ns(), 320, 240), pixels)
+            )
+            viewer.put(asdict(header), data)
+
+        send(0)
+        assert viewer.compute() is not None
+        # The viewer was busy while three predicted frames arrived: all are decoded,
+        # the newest is shown, and no keyframe is needed.
+        for index in (1, 2, 3):
+            send(index)
+        np.testing.assert_allclose(viewer.compute()[120, 160].get(), [170, 90, 50], atol=4)
+        assert not viewer.keyframe_due()
+        report = viewer.benchmark.report()["metrics"]
+        assert report["caught_up_frames"]["count"] == 2 and "undecodable_frames" not in report
+        # A backlog too long to be worth decoding is dropped and repaired by an IDR.
+        for index in range(4, 4 + BACKLOG + 1):
+            send(index)
+        assert viewer.compute() is None
+        assert viewer.keyframe_due()
+        encoder.request_keyframe()
+        send(40)
+        send(41)
+        np.testing.assert_allclose(viewer.compute()[120, 160].get(), [170, 90, 174], atol=4)
+        assert viewer.benchmark.report()["metrics"]["keyframe_wait_ms"]["count"] == 1
+    finally:
+        viewer.stop()
+        encoder.close()
+
+
 def test_camera_worker_encodes_an_idr_when_the_node_asks(tmp_path):
     from dataclasses import asdict
 
@@ -258,6 +301,85 @@ def test_camera_worker_encodes_an_idr_when_the_node_asks(tmp_path):
         assert not settings.with_suffix(KEYFRAME_SUFFIX).exists()
     finally:
         stage.stop()
+
+
+def _encode_moving_noise(config, frames=45):
+    """Sizes, keyframe flags and bytes for textured content that moves every frame."""
+    rng = np.random.default_rng(7)
+    # Coarse blocks with fine grain: detailed, but not incompressible like white noise.
+    blocks = np.kron(rng.integers(0, 256, (68, 88, 3), dtype=np.uint8), np.ones((8, 8, 1)))
+    texture = (blocks + rng.integers(-12, 13, blocks.shape)).clip(0, 255).astype(np.uint8)
+    encoder = GpuCodec(config, encode=True)
+    decoder = GpuCodec(config, encode=False)
+    try:
+        packets = []
+        for index in range(frames):
+            shift = index % 64
+            pixels = np.ascontiguousarray(texture[shift : shift + 480, shift : shift + 640])
+            header, data = encoder.encode(Frame(VideoHeader(index, index + 1, 640, 480), pixels))
+            assert decoder.decode(header, data).image.shape == (480, 640, 3)
+            packets.append((len(data), header.keyframe, data))
+        return packets
+    finally:
+        encoder.close()
+        decoder.close()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_rate_control_modes_and_advanced_settings_change_real_nvenc_output(codec):
+    def run(**settings):
+        return _encode_moving_noise(Config(codec=codec, width=640, height=480, fps=30, **settings))
+
+    budget = 2_000_000 / 30 / 8
+    cbr = run(rate_control="cbr", bitrate_mbps=2)
+    sizes = [size for size, _, _ in cbr]
+    # Constant bitrate holds predicted frames to their share of the link. NVENC lets an
+    # IDR of detailed content exceed it and repays the excess over the next frames.
+    assert max(sizes[1:]) <= budget * 1.25
+    assert sizes[0] <= budget * 3
+    assert budget * 0.4 <= np.mean(sizes[5:]) <= budget * 1.1
+    assert [keyframe for _, keyframe, _ in cbr] == [True] + [False] * 44
+
+    vbr = run(rate_control="vbr", bitrate_mbps=2)
+    assert np.mean([size for size, _, _ in vbr][5:]) <= budget * 1.5
+
+    # Constant QP has no budget: a lower QP spends several times the bits.
+    sharp = run(rate_control="cqp", qp=20)
+    soft = run(rate_control="cqp", qp=40)
+    assert np.mean([size for size, _, _ in sharp]) > 3 * np.mean([size for size, _, _ in soft])
+    assert [keyframe for _, keyframe, _ in sharp] == [True] + [False] * 44
+
+    # A QP ceiling overrides a budget that is too small for this content.
+    starved = run(bitrate_mbps=0.5)
+    capped = run(bitrate_mbps=0.5, encoder_extra="qmax=30")
+    assert np.mean([size for size, _, _ in capped]) > 1.5 * np.mean(
+        [size for size, _, _ in starved]
+    )
+
+    # gop_seconds moves the periodic IDR; the other keys change the bitstream.
+    tuned = run(bitrate_mbps=2, encoder_extra="gop_seconds=1\naq=8\ntemporalaq=on\nvbv_frames=2")
+    assert [index for index, (_, keyframe, _) in enumerate(tuned) if keyframe] == [0, 30]
+    assert [data for _, _, data in tuned[:30]] != [data for _, _, data in cbr[:30]]
+    assert run(bitrate_mbps=2, encoder_extra="multipass=qres")[5][2] != cbr[5][2]
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_easy_scenes_use_less_than_the_bitrate_limit_and_carry_no_filler(codec):
+    # NVENC's own CBR mode pads every H.264 frame to the budget with filler NAL units.
+    config = Config(codec=codec, width=640, height=480, fps=30, bitrate_mbps=4)
+    encoder = GpuCodec(config, encode=True)
+    try:
+        pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)
+        sizes = []
+        for index in range(30):
+            _, data = encoder.encode(Frame(VideoHeader(index, index + 1, 640, 480), pixels))
+            units = [unit for unit in re.split(b"\x00\x00\x00?\x01", data) if unit]
+            kinds = [u[0] & 31 if codec == "h264" else u[0] >> 1 & 63 for u in units]
+            assert (12 if codec == "h264" else 38) not in kinds  # Filler data.
+            sizes.append(len(data))
+        assert max(sizes[1:]) < 4_000_000 / 30 / 8 / 10
+    finally:
+        encoder.close()
 
 
 def test_h264_rejects_stock_binding(monkeypatch):

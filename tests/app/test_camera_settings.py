@@ -120,16 +120,30 @@ def test_usb_modes_keep_format_specific_frame_rates(monkeypatch):
     )
     assert Config(**selected).fps == 60
     assert selected["bitrate_mbps"] == 12.5
-    # Streams saved while QP was the control keep their other settings.
-    assert select(camera, {"qp": 30, "fps": 60, "pixel_format": "MJPG"})["bitrate_mbps"] == 20.0
+    # Streams saved while QP was the only control move to the constant-bitrate default;
+    # constant QP is now an explicit rate-control choice.
+    legacy = select(camera, {"qp": 30, "fps": 60, "pixel_format": "MJPG"})
+    assert (legacy["rate_control"], legacy["qp"]) == ("cbr", 30)
+    fixed = select(camera, {"rate_control": "cqp", "qp": 28, "fps": 60, "pixel_format": "MJPG"})
+    assert (fixed["rate_control"], fixed["qp"], fixed["bitrate_mbps"]) == ("cqp", 28, 0)
+    advanced = select(camera, {"fps": 60, "pixel_format": "MJPG", "encoder_extra": "aq=8"})
+    assert advanced["rate_control"] == "cbr" and advanced["encoder_extra"] == "aq=8"
     for bad in (
         {"source": "elsewhere"},
-        {"bitrate_mbps": 0},
+        {"bitrate_mbps": 0.2},
+        {"bitrate_mbps": -1},
         {"bitrate_mbps": 1000},
         {"bitrate_mbps": "20"},
         {"bitrate_mbps": True},
         {"bitrate_mbps": float("nan")},
         {"encoder_preset": "P99"},
+        {"rate_control": "abr"},
+        {"rate_control": "cqp", "qp": 5},
+        {"rate_control": "cqp", "qp": 24.5},
+        {"encoder_extra": "bf=2"},
+        {"encoder_extra": "aq_strenght=8"},
+        {"encoder_extra": "aq"},
+        {"encoder_extra": 5},
     ):
         with pytest.raises(ValueError):
             select(camera, bad)
@@ -207,7 +221,8 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
     app.nodes = {"host": {"status": "online", "cameras": [camera]}}
     public = app.inventory()["cameras"][0]
     assert public["modes"] == camera["modes"]
-    assert public["bitrate_mbps"] == 20.0
+    assert public["bitrate_mbps"] == 0  # Automatic: chosen for the resolution.
+    assert (public["rate_control"], public["qp"], public["encoder_extra"]) == ("cbr", 24, "")
     assert public["encoder_preset"] == "P1"
     assert public["receiver"] == "fusa"
     assert public["receivers"] == ["fusa", "linux"]

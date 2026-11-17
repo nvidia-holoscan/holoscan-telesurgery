@@ -74,7 +74,7 @@ class Benchmark:
         with self._lock:
             self.steady_samples = {}
             self.samples = {}
-            self.frames = self.sequence_gaps = self.sequence_resets = 0
+            self.frames = self.sequence_gaps = self.sequence_resets = self.keyframes = 0
             self.first_at = self.last_at = None
             self.last_sequence = None
             self.max_sim_command_sequence = -1
@@ -108,6 +108,7 @@ class Benchmark:
                 self.first_sim_command_sequence = header.sim_command_sequence
             previous, self.last_at = self.last_at, now
             self.frames += 1
+            self.keyframes += int(header.keyframe)
             if self.last_sequence is not None:
                 gap = header.sequence - self.last_sequence - 1
                 self.sequence_gaps += max(0, gap)
@@ -162,6 +163,8 @@ class Benchmark:
                 "fps": (self.frames - 1) / elapsed if elapsed else 0,
                 "sequence_gaps": self.sequence_gaps,
                 "sequence_resets": self.sequence_resets,
+                # H.264/H.265 IDR frames: one per GOP, plus one per recovery or new viewer.
+                "keyframes": self.keyframes,
                 "delivery_status": self.delivery_status,
                 "delivery_clock_error_ms": self.delivery_clock_error_ms,
                 "first_sim_command_sequence": self.first_sim_command_sequence,

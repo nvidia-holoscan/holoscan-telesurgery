@@ -2250,6 +2250,26 @@ dialog form > .actions {
     font-size: 13px;
     line-height: 1.6;
 }
+#stream-advanced {
+    margin-top: 16px;
+}
+#stream-advanced summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+#stream-advanced textarea {
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--theme-border, #e1e6dc);
+    border-radius: 6px;
+    background: inherit;
+    color: inherit;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+}
 dialog h2 {
     font-size: 18px;
 }

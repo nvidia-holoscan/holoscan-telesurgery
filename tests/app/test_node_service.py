@@ -9,7 +9,7 @@ import secrets
 import signal
 import ssl
 import stat
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -326,6 +326,7 @@ async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
     from telesurgery.nodes.video import VideoEndpoint
     from telesurgery_core.diagnostics.clock import Clock
     from telesurgery_core.transport.peer import Peer
+    from telesurgery_core.transport.protocol import VideoHeader
     from telesurgery_core.transport.tls import client_context
 
     endpoint = VideoEndpoint(tmp_path, Clock())
@@ -336,10 +337,13 @@ async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
         async def reject(*args):
             raise PermissionError("No inbound commands")
 
+        async def event(*args):
+            pass
+
         reader, writer = await asyncio.open_connection(
             "127.0.0.1", endpoint.address["port"], ssl=client_context()
         )
-        peers.append(Peer(reader, writer, reject).start())
+        peers.append(Peer(reader, writer, reject, event).start())
         return peers[-1]
 
     try:
@@ -354,13 +358,90 @@ async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
         await viewer.call("viewer.attach", {"ticket": ticket})
         assert requested == ["one"]  # A new viewer cannot decode deltas until an IDR.
         await viewer.call("viewer.refresh", {})
-        assert requested == ["one"]  # Coalesced with the request just made.
+        assert requested == ["one"]  # Shares the IDR that was just requested.
+        endpoint.publish("one", asdict(VideoHeader(0, 1, 32, 32, gop=1)), b"idr", None)
         await asyncio.sleep(0.15)
+        assert requested == ["one"]  # That IDR arrived, so the second request is met.
         await viewer.call("viewer.refresh", {})
         assert requested == ["one", "one"]
+        # A request inside the window with no IDR since is delayed, never dropped.
+        await viewer.call("viewer.refresh", {})
+        assert requested == ["one", "one"]
+        await asyncio.sleep(0.15)
+        assert requested == ["one", "one", "one"]
     finally:
         for peer in peers:
             await peer.close()
+        await endpoint.close()
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_that_falls_behind_keeps_decodable_frames_and_gets_an_idr(tmp_path):
+    from telesurgery.nodes.video import VideoEndpoint
+    from telesurgery_core.diagnostics.clock import Clock
+    from telesurgery_core.transport.peer import Peer
+    from telesurgery_core.transport.protocol import VideoHeader
+    from telesurgery_core.transport.tls import client_context
+
+    endpoint = VideoEndpoint(tmp_path, Clock())
+    requested, received = [], []
+    endpoint.refresh = requested.append
+
+    async def reject(*args):
+        raise PermissionError("No inbound commands")
+
+    async def event(peer, name, params, payload):
+        received.append((params["header"]["gop"], params["header"]["gop_index"]))
+
+    def frame(gop, index):
+        header = VideoHeader(gop * 100 + index, 1, 32, 32, keyframe=index == 0, gop=gop)
+        endpoint.publish("one", asdict(replace(header, gop_index=index)), b"frame", None)
+
+    await endpoint.start(0)
+    reader, writer = await asyncio.open_connection(
+        "127.0.0.1", endpoint.address["port"], ssl=client_context()
+    )
+    viewer = Peer(reader, writer, reject, event).start()
+    try:
+        ticket = await endpoint.control("video.ticket", {"camera": "one", "id": "node:one"})
+        await viewer.call("viewer.attach", {"ticket": ticket["ticket"]})
+        frame(1, 0)
+        await until(lambda: received == [(1, 0)])
+        await asyncio.sleep(0.15)
+        requested.clear()
+        # Three frames arrive before the connection sends one: only the first still
+        # decodes, so the others are withheld and an IDR is requested at once.
+        frame(1, 1)
+        frame(1, 2)
+        frame(1, 3)
+        assert requested == ["one"]
+        await asyncio.sleep(0.05)
+        frame(1, 4)  # Still waiting: no delta is sent until the IDR.
+        frame(2, 0)
+        frame(2, 1)  # The IDR is unsent, so this delta would be undecodable too.
+        await until(lambda: received[-1] == (2, 0))
+        assert received == [(1, 0), (1, 1), (2, 0)]
+        report = await endpoint.control("video.metrics", {"camera": "one"})
+        assert report["one"]["metrics"]["withheld_frames"]["count"] == 4
+        assert report["one"]["keyframes"] == 2
+        # A frame lost before the node reaches no viewer: its successors are held back.
+        await asyncio.sleep(0.15)
+        requested.clear()
+        frame(2, 3)
+        frame(2, 4)
+        assert requested == ["one"]
+        frame(3, 0)
+        await until(lambda: received[-1] == (3, 0))
+        assert received == [(1, 0), (1, 1), (2, 0), (3, 0)]
+        # Intra-only streams keep the previous behaviour: the newest frame replaces.
+        received.clear()
+        for index in range(3):
+            endpoint.publish("one", asdict(VideoHeader(900 + index, 1, 32, 32)), b"jpeg", None)
+        await until(lambda: received)
+        await asyncio.sleep(0.05)
+        assert len(received) == 1
+    finally:
+        await viewer.close()
         await endpoint.close()
 
 

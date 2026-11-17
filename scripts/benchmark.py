@@ -93,8 +93,11 @@ async def run(args):
             "codec": args.codec,
             "fps": args.fps,
             "pixel_format": args.pixel_format,
-            "bitrate_mbps": Config.bitrate_mbps,
-            "encoder_preset": "P1",
+            "rate_control": args.rate_control,
+            "bitrate_mbps": args.bitrate,
+            "qp": args.qp,
+            "encoder_preset": args.preset,
+            "encoder_extra": args.encoder_extra,
             "jpeg_quality": 85,
         },
         "sampling": "Timed collection after warmup; actual valid counts are recorded",
@@ -252,6 +255,15 @@ def main():
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--pixel-format", default="")
     parser.add_argument("--codec", choices=["h264", "h265", "nvjpeg", "raw-bgr8"], default="h264")
+    parser.add_argument(
+        "--rate-control", choices=["cbr", "vbr", "cqp"], default=Config.rate_control
+    )
+    parser.add_argument(
+        "--bitrate", type=float, default=Config.bitrate_mbps, help="Mbps; 0 picks one for the size"
+    )
+    parser.add_argument("--qp", type=int, default=Config.qp)
+    parser.add_argument("--preset", choices=["P1", "P3", "P5"], default=Config.encoder_preset)
+    parser.add_argument("--encoder-extra", default="", help="key=value lines, e.g. 'aq=8'")
     parser.add_argument("--receiver", choices=["holoviz", "webrtc"], default="holoviz")
     parser.add_argument("--seconds", type=float, default=60)
     parser.add_argument("--warmup", type=float, default=30)

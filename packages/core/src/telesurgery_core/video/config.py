@@ -15,9 +15,12 @@ class Config:
     pixel_format: str = ""
     codec: str = "h264"
     codec_gpu: int = 0
-    bitrate_mbps: float = 20.0
+    rate_control: str = "cbr"
+    bitrate_mbps: float = 0  # 0 selects a limit for the resolution (encoder_settings).
+    qp: int = 24
     jpeg_quality: int = 85
     encoder_preset: str = "P1"
+    encoder_extra: str = ""
     hololink: str = "192.168.0.2"
     expander: int = 0
     skip_reset: bool = False

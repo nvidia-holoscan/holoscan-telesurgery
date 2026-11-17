@@ -18,6 +18,7 @@ from dataclasses import replace
 import numpy as np
 from telesurgery_core.transport.protocol import MAX_VIDEO, VideoHeader
 from telesurgery_core.video import depth
+from telesurgery_core.video.encoder_settings import bitrate, parse_extra, validate
 from telesurgery_core.video.formats import video_frame
 from telesurgery_core.video.gpu import nv12 as _nv12
 from telesurgery_core.video.model import Frame
@@ -125,14 +126,18 @@ def create_codec(config, *, encode):
 def encoder_options(config, width, height):
     """Shared application/benchmark settings; no additional NVENC output queue.
 
-    CBR with a one-frame VBV bounds each frame to its share of the link, so transmit
-    time and latency stay predictable. NVENC reads "bitrate" suffixes as powers of
-    1024, so pass exact bits per second.
+    "cbr" (default) limits every predicted frame to its share of the link (bitrate /
+    fps), so transmit time and latency stay predictable; easy scenes use less. It is
+    NVENC's VBR mode with the peak equal to the average and a one-frame buffer:
+    NVENC's own CBR mode produces the same pictures, then pads H.264 frames to the
+    full budget with filler data (over 40% of a simulation stream).
+    "vbr" lets hard frames use up to twice the average. "cqp" holds quality constant
+    and lets frame size, including each IDR, vary.
+    NVENC reads "bitrate" suffixes as powers of 1024, so pass exact bits per second.
     """
-    bits = round(config.bitrate_mbps * 1_000_000)
-    vbv = max(1, round(bits / config.fps))
-    gop = max(2, round(config.fps * GOP_SECONDS))
-    return {
+    extra = parse_extra(config.encoder_extra)
+    gop = max(2, round(config.fps * extra.get("gop_seconds", GOP_SECONDS)))
+    options = {
         "codec": "hevc" if config.codec == "h265" else "h264",
         "profile": "main" if config.codec == "h265" else "baseline",
         "preset": config.encoder_preset,
@@ -143,14 +148,23 @@ def encoder_options(config, width, height):
         "bf": 0,
         "lookahead": 0,
         "repeatspspps": 1,
-        "rc": "cbr",
-        "bitrate": bits,
-        "maxbitrate": bits,
-        "vbvbufsize": vbv,
-        "vbvinit": vbv,
         "max_res": [width, height],
         "extra_output_delay": 0,
     }
+    validate(config.rate_control, config.bitrate_mbps, config.qp)
+    if config.rate_control == "cqp":
+        options.update(rc="constqp", constqp=str(config.qp))
+    else:
+        bits = round(bitrate(config, width, height) * 1_000_000)
+        peak = bits * 2 if config.rate_control == "vbr" else bits
+        vbv = max(1, round(peak / config.fps * extra.get("vbv_frames", 1)))
+        options.update(rc="vbr", bitrate=bits, maxbitrate=peak, vbvbufsize=vbv, vbvinit=vbv)
+    for key in ("aq", "multipass", "qmax"):
+        if key in extra:
+            options[key] = str(extra[key])
+    if extra.get("temporalaq"):  # the binding enables it for any value
+        options["temporalaq"] = "1"
+    return options
 
 
 class GpuCodec:
@@ -316,6 +330,14 @@ class GpuCodec:
         size = (header.width, header.height)
         if self.kind != "nvjpeg":
             self._check_reference(header, keyframe, size)
+        try:
+            return self._decode(header, data, size, on_device)
+        except Exception:
+            # The decoder may not hold this frame; later deltas must wait for an IDR.
+            self.chain.reset()
+            raise
+
+    def _decode(self, header, data, size, on_device):
         with self.device, self.stream:
             if self.kind == "nvjpeg":
                 image = self.cp.asarray(self.backend.decode(data))
@@ -330,7 +352,6 @@ class GpuCodec:
                 frames = self.backend.Decode(packet)
                 if len(frames) != 1:
                     self.backend = None
-                    self.chain.reset()
                     raise ValueError("NVDEC did not return exactly one frame per packet")
                 image = self.cp.from_dlpack(frames[0])
             if image.shape != (header.height, header.width, 3):

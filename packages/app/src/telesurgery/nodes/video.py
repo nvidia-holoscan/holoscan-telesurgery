@@ -12,8 +12,9 @@ from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.transport.peer import Peer
 from telesurgery_core.transport.protocol import VideoHeader
 from telesurgery_core.transport.tls import server_context
+from telesurgery_core.video.reference import ReferenceChain
 
-# One IDR serves every viewer that asked within this window.
+# At most one forced IDR per camera in this window, however many viewers ask.
 KEYFRAME_COALESCE = 0.1
 
 
@@ -25,7 +26,10 @@ class VideoEndpoint:
         self.peers, self.connections = set(), set()
         self.server = None
         self.refresh = lambda camera: None  # Set by the node: force an IDR for this camera.
-        self.refreshed = {}
+        # Per camera: last forced IDR, latest request, last IDR published, pending retry.
+        self.refreshed, self.asked, self.keyframes, self.deferred = {}, {}, {}, {}
+        self.waiting = set()  # Viewers (peer ids) that need an IDR before further deltas.
+        self.chains = {}  # Per camera: continuity of the frames its worker delivers.
 
     async def start(self, port=7449):
         self.server = await asyncio.start_server(
@@ -83,11 +87,26 @@ class VideoEndpoint:
         return True
 
     def keyframe(self, camera):
-        """Force an IDR, coalescing requests from several viewers that lost the same frame."""
+        """Force an IDR for a viewer that cannot decode.
+
+        Viewers that lost the same frame share one IDR. A request inside the window
+        is retried when the window ends, unless an IDR has been published since.
+        """
         now = time.monotonic()
-        if now - self.refreshed.get(camera, -1.0) >= KEYFRAME_COALESCE:
+        self.asked[camera] = now
+        wait = self.refreshed.get(camera, -1.0) + KEYFRAME_COALESCE - now
+        if wait <= 0:
             self.refreshed[camera] = now
             self.refresh(camera)
+        elif camera not in self.deferred:
+            self.deferred[camera] = asyncio.get_running_loop().call_later(
+                wait, self._retry_keyframe, camera
+            )
+
+    def _retry_keyframe(self, camera):
+        self.deferred.pop(camera, None)
+        if self.asked.get(camera, 0.0) > self.keyframes.get(camera, 0.0):
+            self.keyframe(camera)
 
     async def _accept(self, reader, writer):
         if len(self.peers) >= 64:
@@ -107,6 +126,7 @@ class VideoEndpoint:
                     await peer.closed.wait()
         finally:
             self.viewers.pop(peer.id, None)
+            self.waiting.discard(peer.id)
             await peer.close()
             self.peers.discard(peer)
             self.connections.discard(task)
@@ -124,9 +144,28 @@ class VideoEndpoint:
         parsed = VideoHeader(**header)
         metrics.observe(parsed)
         metrics.encoded(parsed, payload)
+        if parsed.keyframe:
+            self.keyframes[camera] = time.monotonic()
+        if not self.chains.setdefault(camera, ReferenceChain()).accept(parsed):
+            # A frame was lost between the encoder and this node, so no viewer can
+            # decode this one. Ask now instead of waiting for each viewer to notice.
+            metrics.add("withheld_frames", 1)
+            self.keyframe(camera)
+            return
         for peer in self.peers:
             ticket = self.viewers.get(peer.id)
             if ticket and ticket["camera"] == camera and not peer.closed.is_set():
+                if parsed.keyframe:
+                    self.waiting.discard(peer.id)  # Replaces whatever is still unsent.
+                elif peer.id in self.waiting or camera in peer.frames:
+                    # This viewer is behind: the frame before this one is unsent or was
+                    # skipped. Keep the queued frame, which still decodes, withhold
+                    # deltas that cannot, and get the viewer a new IDR. A slow link
+                    # then shows IDRs at the rate it can carry instead of freezing.
+                    self.waiting.add(peer.id)
+                    metrics.add("withheld_frames", 1)
+                    self.keyframe(camera)
+                    continue
                 peer.event(
                     "video",
                     {"camera": ticket["id"], "header": header, "trace": trace},
@@ -150,6 +189,9 @@ class VideoEndpoint:
         if self.server:
             self.server.close()
         self.tickets.clear()
+        for timer in self.deferred.values():
+            timer.cancel()
+        self.deferred.clear()
         for peer in list(self.peers):
             await peer.close()
         await asyncio.gather(*self.connections, return_exceptions=True)

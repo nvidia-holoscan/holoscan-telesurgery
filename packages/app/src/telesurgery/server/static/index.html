@@ -657,6 +657,16 @@ SPDX-License-Identifier: Apache-2.0
                 <details id="stream-encoder">
                     <summary>Encoder settings</summary>
                     <div class="stream-fields">
+                        <label id="stream-rate-field"
+                            >Rate control<select
+                                id="stream-rate"
+                                aria-label="Rate control"
+                            >
+                                <option value="cbr">Bitrate limit</option>
+                                <option value="vbr">Average bitrate</option>
+                                <option value="cqp">Fixed quality · QP</option>
+                            </select></label
+                        >
                         <label id="stream-bitrate-field"
                             >Bitrate (Mbps)<input
                                 id="stream-bitrate"
@@ -664,7 +674,16 @@ SPDX-License-Identifier: Apache-2.0
                                 min="0.5"
                                 max="400"
                                 step="any"
-                                value="20"
+                                placeholder="Automatic"
+                        /></label>
+                        <label id="stream-qp-field" hidden
+                            >QP (lower is sharper)<input
+                                id="stream-qp"
+                                type="number"
+                                min="10"
+                                max="51"
+                                step="1"
+                                value="24"
                                 required
                         /></label>
                         <label id="stream-jpeg-field" hidden
@@ -689,6 +708,22 @@ SPDX-License-Identifier: Apache-2.0
                             </select></label
                         >
                     </div>
+                    <details id="stream-advanced">
+                        <summary>Advanced</summary>
+                        <label
+                            >Encoder settings (one key=value per line)<textarea
+                                id="stream-extra"
+                                rows="3"
+                                maxlength="512"
+                                spellcheck="false"
+                                placeholder="aq=8&#10;temporalaq=on&#10;multipass=qres&#10;qmax=40&#10;vbv_frames=2&#10;gop_seconds=5"
+                            ></textarea>
+                        </label>
+                        <p class="muted">
+                            Keys: aq, temporalaq, multipass, qmax, vbv_frames,
+                            gop_seconds. Unknown or unsafe keys are rejected.
+                        </p>
+                    </details>
                     <p id="stream-quality-note" class="muted">
                         Higher bitrate gives higher quality and uses more
                         bandwidth; choose what the network can carry. Slower

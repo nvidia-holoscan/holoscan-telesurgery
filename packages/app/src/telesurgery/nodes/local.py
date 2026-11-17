@@ -225,7 +225,15 @@ class LocalNode:
             if key in self.workers:
                 if not self.workers[key].get("error"):
                     changed = {k for k in selected if selected[k] != camera.get(k, "")}
-                    if changed - {"codec", "bitrate_mbps", "jpeg_quality", "encoder_preset"}:
+                    if changed - {
+                        "codec",
+                        "rate_control",
+                        "bitrate_mbps",
+                        "qp",
+                        "jpeg_quality",
+                        "encoder_preset",
+                        "encoder_extra",
+                    }:
                         raise ValueError("Stop this stream before changing its capture settings")
                     path = self.workers[key]["settings"]
                     if changed or path.with_suffix(".error").exists():

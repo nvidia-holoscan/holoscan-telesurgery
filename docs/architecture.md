@@ -56,12 +56,22 @@ H.264 browser viewing forwards encoded packets into WebRTC without re-encoding. 
 | HSB IMX274 | GPU acquisition, optical-black correction, white balance, demosaic and sRGB transfer |
 | USB | V4L2 capture; CPU pixels uploaded for GPU encoding. MJPEG capture also requires decoding |
 | Isaac Sim | GPU rendering, then CPU RGB readback and local IPC before GPU encoding |
-| H.264 / H.265 | NVENC encoding (CBR, one-frame VBV, IPPP); NVDEC in the native viewer |
+| H.264 / H.265 | NVENC encoding (bitrate-limited, one-frame VBV, IPPP); NVDEC in the native viewer |
 | nvJPEG | GPU JPEG encoding and decoding |
 | BGR8 | No codec. Packing may download GPU pixels; the native viewer uploads and converts BGR to RGB |
 | Surgical Neural Tokenizer (trial) | Public Cosmos-Tokenizer-Surg model, TensorRT encoding/decoding, packed uint16 tokens at 720p or 1080p |
 
-H.264 and H.265 run constant bitrate, with a VBV of one frame's budget (bitrate ÷ FPS), so a frame's transmit time is bounded. Each stream's bitrate is set in Mbps. Frames are IPPP: an IDR, then predicted frames for a ten-second GOP. Every frame header carries its GOP and position in it. Any hop may drop frames to stay current, so a receiver that sees a gap discards predicted frames and asks for an IDR. The request goes to the node's video endpoint (`viewer.refresh`), which signals the camera worker. A newly attached viewer or browser triggers one too, and a browser's picture-loss request is forwarded the same way. Neither the rate control nor the GOP structure is user-configurable. nvJPEG, BGR8 and tokenizer frames remain independent.
+H.264 and H.265 are bitrate-limited by default. No predicted frame is larger than its share of the limit (bitrate ÷ FPS), so a frame's transmit time is bounded, and an easy scene uses less than the limit. Each stream's limit is set in Mbps; left unset, it follows the resolution (5 Mbps to 720p, 10 to 1080p, 16 to 1440p, 30 above). The stream dialog also offers an average bitrate that lets hard frames use up to twice as much, and a fixed QP that holds quality and lets frame size vary. NVENC's own CBR mode is not used: it produces the same pictures, then pads each H.264 frame to the full budget with filler data.
+
+Frames are IPPP: an IDR, then predicted frames for a ten-second GOP. Every frame header carries its GOP and position in it. A predicted frame is only useful after the frame before it, so each hop keeps frames in order while it can and repairs the stream with an IDR when it cannot:
+
+- The node withholds predicted frames from a viewer whose connection has fallen behind, keeps the last frame that viewer can still decode, and forces an IDR. A link slower than the stream therefore shows IDRs at the rate it can carry. A frame lost before the node is handled the same way for every viewer.
+- The native viewer and the browser track decode or forward a short backlog (eight frames) in order. A longer one is dropped, and the viewer asks the node for an IDR (`viewer.refresh`).
+- A newly attached viewer or browser triggers an IDR, and a browser's picture-loss or full-intra request is forwarded the same way.
+
+Requests for one camera share an IDR and are limited to one per 100 ms. An IDR reaches every viewer of that camera. Reports count IDRs (`keyframes`), frames the node withheld, and each recovery's duration in the viewer (`keyframe_wait_ms`). nvJPEG, BGR8 and tokenizer frames remain independent.
+
+Advanced encoder settings are `key=value` lines in the stream dialog, the API (`encoder_extra`) and `scripts/benchmark.py --encoder-extra`: `aq`, `temporalaq`, `multipass`, `qmax`, `vbv_frames` and `gop_seconds`. Unknown keys, and keys the pipeline depends on such as B-frames or lookahead, are rejected. Add a key in `telesurgery_core/video/encoder_settings.py`.
 
 Same-host video still uses IPC/TLS, not shared memory. Frame ownership is preserved until CUDA work completes. SDK 4 uses an EventBasedScheduler; SDK 5 uses graph partitions and latest-message queues.
 
