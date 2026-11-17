@@ -109,6 +109,7 @@ class LocalNode:
         self.regions, self.region_errors = {}, {}
         self.region_revision = 0
         self.region_capable = False
+        self.region_waiting = set()  # cameras whose set_region call is awaiting the encoder
 
     async def refresh(self):
         cameras, robots = await asyncio.to_thread(discover, self.directory, self.simulation)
@@ -217,7 +218,12 @@ class LocalNode:
             else {}
         )
         saved = self.regions.get(key)
-        if saved and status.get("error") and status.get("revision") == saved["revision"]:
+        if (
+            saved
+            and key not in self.region_waiting  # that call reports and cleans up its own failure
+            and status.get("error")
+            and status.get("revision") == saved["revision"]
+        ):
             # The encoder refused it: return to uniform quality rather than show an
             # outline the picture does not follow.
             self.region_errors[key] = status["error"]
@@ -285,15 +291,20 @@ class LocalNode:
             revision = self._request_region(key, {"points": points, "by": by})
             path = worker["settings"].with_suffix(region.STATUS_SUFFIX)
             deadline = time.monotonic() + REGION_CONFIRM_SECONDS
-            # The worker applies it on its next frame; answer once the encoder has it.
-            while (status := region.read_status(path)).get("revision") != revision:
-                if time.monotonic() >= deadline or self.workers.get(key) is not worker:
-                    self._request_region(key, previous)
-                    raise TimeoutError(
-                        "The stream did not confirm the priority area; "
-                        "check that the camera is delivering frames"
-                    )
-                await asyncio.sleep(0.02)
+            # A status poll must not answer the encoder's reply before this call reads it.
+            self.region_waiting.add(key)
+            try:
+                # The worker applies it on its next frame; answer once the encoder has it.
+                while (status := region.read_status(path)).get("revision") != revision:
+                    if time.monotonic() >= deadline or self.workers.get(key) is not worker:
+                        self._request_region(key, previous)
+                        raise TimeoutError(
+                            "The stream did not confirm the priority area; "
+                            "check that the camera is delivering frames"
+                        )
+                    await asyncio.sleep(0.02)
+            finally:
+                self.region_waiting.discard(key)
             if status.get("error"):
                 self.region_errors[key] = status["error"]
                 self._request_region(key, None)

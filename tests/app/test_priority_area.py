@@ -390,6 +390,34 @@ async def test_encoder_refusal_returns_to_uniform_quality_and_says_so(room, enco
 
 
 @pytest.mark.asyncio
+async def test_a_status_poll_during_a_refused_change_does_not_bring_back_the_old_area(
+    room, encoder
+):
+    await room.start()
+    await room.node.set_region("scope", BOX, "Dr. Rivera")
+    encoder.refuse = "NVENC rejected the map"
+
+    async def poll():
+        # Dashboards ask for status while the change is still waiting for the encoder.
+        while True:
+            room.camera()
+            await asyncio.sleep(0.001)
+
+    polling = asyncio.create_task(poll())
+    try:
+        with pytest.raises(RuntimeError, match="could not apply the priority area"):
+            await room.node.set_region("scope", LASSO, "Dr. Chen")
+    finally:
+        polling.cancel()
+        await asyncio.gather(polling, return_exceptions=True)
+    # The failure reaches the caller, and the previous area is not quietly restored
+    # behind a view that no longer shows it.
+    await room.until(lambda: room.stage.codec.areas[-1] is None)
+    assert "scope" not in room.node.regions
+    assert room.area()["region"] is None and room.area()["region_unavailable"]
+
+
+@pytest.mark.asyncio
 async def test_a_stream_without_frames_does_not_claim_an_area(room, monkeypatch):
     await room.start()
     await room.node.set_region("scope", BOX, "Dr. Rivera")
