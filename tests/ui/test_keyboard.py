@@ -114,7 +114,8 @@ async def test_keyboard_mapping_permission_and_robot_switch(kind):
                 moves = [c for c in calls if c["action"] == "robot.move"]
                 command = moves[-1]["params"]["command"]
                 distance = command["left"][0]
-                assert 0.076 <= distance <= 0.16
+                # The distance is a sum of float steps, which can land a rounding above.
+                assert 0.076 <= distance <= 0.16 + 1e-9
                 assert command == {"left": [distance, 0, 0, 0], "right": [distance, 0, 0, 0]}
                 await page.keyboard.up("q")
                 await page.clock.run_for(150)
