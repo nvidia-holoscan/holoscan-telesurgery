@@ -55,9 +55,36 @@ def test_advanced_settings_reach_the_encoder():
     # The binding enables temporal AQ for any value, so "off" must omit the key.
     assert "temporalaq" not in encoder_options(Config(encoder_extra="temporalaq=off"), 1920, 1080)
     # The priority area's strength is applied by the codec, not passed to NVENC.
+    assert parse_extra("area_strength=subtle") == {"area_strength": "subtle"}
     assert parse_extra("area_strength=strong") == {"area_strength": "strong"}
     assert "area_strength" not in encoder_options(
-        Config(encoder_extra="area_strength=strong"), 1920, 1080
+        Config(encoder_extra="area_strength=subtle"), 1920, 1080
+    )
+
+
+def test_priority_area_plan_for_each_strength_and_rate_control():
+    import numpy as np
+    from telesurgery_core.video.codecs import area_plan
+
+    quarter = np.zeros((160, 285), dtype=np.uint8)
+    quarter[:80, :] = 1
+    quarter[:, 143:] = 0  # 80 rows of 143 columns: a quarter of the grid
+    share = quarter.mean()
+    # Default: the area 16 QP finer than the rest, which keeps a fifth of its bitrate.
+    inside, outside, rate = area_plan(Config(), quarter)
+    assert (inside, outside) == (2, 4)
+    assert rate == pytest.approx(share + (1 - share) * 0.2) and 0.39 < rate < 0.41
+    assert area_plan(Config(rate_control="vbr"), quarter) == (inside, outside, rate)
+    # A larger area leaves less to save; the whole picture saves nothing.
+    assert area_plan(Config(), np.ones((160, 285), dtype=np.uint8)) == (2, 4, 1.0)
+    # Subtle never changes the bitrate.
+    assert area_plan(Config(encoder_extra="area_strength=subtle"), quarter) == (1, 3, 1.0)
+    # Constant QP has no bitrate to change.
+    assert area_plan(Config(rate_control="cqp"), quarter) == (1, 4, 1.0)
+    assert area_plan(Config(rate_control="cqp", encoder_extra="area_strength=subtle"), quarter) == (
+        1,
+        0,
+        1.0,
     )
 
 
@@ -83,6 +110,7 @@ def test_pipeline_settings_cannot_be_overridden(key):
         "vbv_frames=0",
         "gop_seconds=nan",
         "area_strength=maximum",
+        "area_strength=standard",
         "x" * 600,
     ],
 )

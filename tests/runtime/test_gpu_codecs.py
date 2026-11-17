@@ -456,6 +456,7 @@ def _encode_with_area(config, events=None, frames=45):
         return {
             "packets": packets,
             "supported": encoder.supports_region,
+            "rate": encoder.rate,  # share of the bitrate limit in use at the end
             "bytes": float(np.mean([size for size, _, _ in packets[10:]])),
             "inside": quality[0],
             "outside": quality[1],
@@ -467,37 +468,82 @@ def _encode_with_area(config, events=None, frames=45):
 
 @pytest.mark.parametrize("codec", ["h264", "h265"])
 @pytest.mark.parametrize("rate_control", ["cbr", "vbr"])
-def test_priority_area_moves_quality_into_the_area_at_the_same_bitrate(codec, rate_control):
+def test_priority_area_softens_the_rest_of_the_picture_and_saves_bandwidth(codec, rate_control):
+    from telesurgery_core.video.region import mask
+
+    def run(events=None, frames=45, **settings):
+        config = Config(
+            codec=codec, width=640, height=480, fps=30, rate_control=rate_control, **settings
+        )
+        return _encode_with_area(config, events, frames)
+
+    # The default strength, on a stream with bandwidth to spare (the limit is 5 Mbit/s).
+    plain = run()
+    assert plain["supported"]
+    area = run({0: mask(AREA)})
+    # The encoder is given a third of the limit: the 16% inside the area keeps its share and
+    # the rest a fifth of its own. The area holds its quality and the rest is coarser.
+    assert area["rate"] == pytest.approx(0.16 + 0.84 * 0.2, abs=0.01) and plain["rate"] == 1
+    assert area["inside"] > plain["inside"] - 0.3
+    assert area["outside"] < plain["outside"] - 0.6
+    assert area["bytes"] < plain["bytes"] * 0.8
+    assert [keyframe for _, keyframe, _ in area["packets"]] == [True] + [False] * 44
+
+    # Drawn, moved and cleared mid-stream: no IDR, earlier frames untouched, and the
+    # bitrate returns once the area is gone.
+    moved = [[x * 0.5, y * 0.5] for x, y in AREA]
+    plain = run(frames=75)
+    changed = run({15: mask(AREA), 25: mask(moved), 35: None}, frames=75)
+    assert [keyframe for _, keyframe, _ in changed["packets"]] == [True] + [False] * 74
+    assert changed["packets"][:15] == plain["packets"][:15]
+    assert changed["rate"] == 1
+
+    def size(result, first, last):
+        return float(np.mean([length for length, _, _ in result["packets"][first:last]]))
+
+    assert size(changed, 18, 35) < size(plain, 18, 35) * 0.85
+    assert size(changed, 55, 75) > size(plain, 55, 75) * 0.85
+
+    # A stream already short of bandwidth is not cut further: quality moves into the area.
+    plain = run(bitrate_mbps=1)
+    starved = run({0: mask(AREA)}, bitrate_mbps=1)
+    assert starved["rate"] == 1
+    assert starved["inside"] > plain["inside"] + 0.8
+    assert starved["outside"] < plain["outside"] - 0.5
+    assert abs(starved["bytes"] / plain["bytes"] - 1) < 0.15
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+@pytest.mark.parametrize("rate_control", ["cbr", "vbr"])
+def test_subtle_priority_area_moves_quality_at_the_same_bitrate(codec, rate_control):
     from telesurgery_core.video.region import mask
 
     def run(events=None, **settings):
         config = Config(
-            codec=codec, width=640, height=480, fps=30, rate_control=rate_control, **settings
+            codec=codec,
+            width=640,
+            height=480,
+            fps=30,
+            rate_control=rate_control,
+            encoder_extra="area_strength=subtle",
+            **settings,
         )
         return _encode_with_area(config, events)
 
-    plain = run(bitrate_mbps=1)
-    assert plain["supported"]
-    area = run({0: mask(AREA)}, bitrate_mbps=1)
-    # Quality moves from outside the area to inside it; the stream keeps its bitrate.
-    assert area["inside"] > plain["inside"] + 0.6
-    assert plain["outside"] - 1.5 < area["outside"] < plain["outside"]
-    assert abs(area["bytes"] / plain["bytes"] - 1) < 0.1
-    assert [keyframe for _, keyframe, _ in area["packets"]] == [True] + [False] * 44
-
-    strong = run({0: mask(AREA)}, bitrate_mbps=1, encoder_extra="area_strength=strong")
-    assert strong["inside"] > area["inside"] and strong["outside"] < area["outside"]
-
-    # An area drawn, moved and cleared mid-stream needs no IDR and leaves earlier frames alone.
-    moved = [[x * 0.5, y * 0.5] for x, y in AREA]
-    changed = run({15: mask(AREA), 25: mask(moved), 35: None}, bitrate_mbps=1)
-    assert [keyframe for _, keyframe, _ in changed["packets"]] == [True] + [False] * 44
-    assert changed["packets"][:15] == plain["packets"][:15]
-    assert changed["packets"][15:25] != plain["packets"][15:25]
+    # Short of bandwidth, and the automatic 5 Mbit/s where there is less to gain.
+    for limit, gain in ((1, 0.6), (0, 0.1)):
+        plain = run(bitrate_mbps=limit)
+        area = run({0: mask(AREA)}, bitrate_mbps=limit)
+        # Quality moves from outside the area to inside it; the stream keeps its bitrate.
+        assert area["rate"] == 1
+        assert area["inside"] > plain["inside"] + gain
+        assert plain["outside"] - 1.5 < area["outside"] < plain["outside"]
+        assert abs(area["bytes"] / plain["bytes"] - 1) < 0.1
+        assert [keyframe for _, keyframe, _ in area["packets"]] == [True] + [False] * 44
 
 
 @pytest.mark.parametrize("codec", ["h264", "h265"])
-def test_priority_area_with_constant_qp_keeps_the_rest_of_the_picture(codec):
+def test_priority_area_with_constant_qp(codec):
     from telesurgery_core.video.region import mask
 
     def run(events=None, **settings):
@@ -507,15 +553,48 @@ def test_priority_area_with_constant_qp_keeps_the_rest_of_the_picture(codec):
         return _encode_with_area(config, events)
 
     plain = run()
+    # No rate control rebalances the picture. The default makes the area finer and the rest
+    # coarser by fixed steps, which saves bandwidth for an area this size.
     area = run({0: mask(AREA)})
-    # No rate control rebalances the picture: outside keeps the chosen QP, and the finer
-    # area costs bandwidth.
     assert area["inside"] > plain["inside"] + 0.3
-    assert abs(area["outside"] - plain["outside"]) < 0.1
-    assert plain["bytes"] * 1.02 < area["bytes"] < plain["bytes"] * 1.4
-    strong = run({0: mask(AREA)}, encoder_extra="area_strength=strong")
-    assert strong["inside"] > area["inside"] + 0.15 and strong["bytes"] > area["bytes"]
-    assert abs(strong["outside"] - plain["outside"]) < 0.1
+    assert area["outside"] < plain["outside"] - 0.5
+    assert area["bytes"] < plain["bytes"] * 0.9
+    assert area["rate"] == 1
+    # Subtle leaves the rest at the chosen QP, and the finer area costs bandwidth.
+    subtle = run({0: mask(AREA)}, encoder_extra="area_strength=subtle")
+    assert subtle["inside"] > plain["inside"] + 0.3
+    assert abs(subtle["outside"] - plain["outside"]) < 0.1
+    assert plain["bytes"] * 1.02 < subtle["bytes"] < plain["bytes"] * 1.4
+
+
+def test_priority_area_survives_an_encoder_that_refuses_a_new_bitrate(caplog):
+    from telesurgery_core.video.region import mask
+
+    class Refusing:
+        def __init__(self, backend):
+            self.backend = backend
+
+        def __getattr__(self, name):
+            return getattr(self.backend, name)
+
+        def Reconfigure(self, params):
+            return False
+
+    pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)
+    encoder = GpuCodec(Config(codec="h264", width=640, height=480, fps=30), encode=True)
+    try:
+        encoder.encode(Frame(VideoHeader(0, 1, 640, 480), pixels))
+        encoder.backend = Refusing(encoder.backend)
+        with caplog.at_level("WARNING"):
+            encoder.set_region(mask(AREA))
+        # The area is applied at the bandwidth the stream had, and streaming continues.
+        assert "bitrate for a priority area" in caplog.text
+        assert encoder.region is not None and encoder.rate == 1.0
+        assert encoder.encode(Frame(VideoHeader(1, 2, 640, 480), pixels))[1]
+        encoder.set_region(None)
+        assert encoder.region is None and encoder.rate == 1.0
+    finally:
+        encoder.close()
 
 
 @pytest.mark.parametrize("codec", ["h264", "h265"])

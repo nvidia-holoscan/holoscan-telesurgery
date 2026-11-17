@@ -89,8 +89,9 @@ OPTIONS = {
     "vbv_frames": (_number(0.5, 8), "Rate buffer size in frames of data (default 1)"),
     "gop_seconds": (_number(1, 60), "Seconds between periodic IDR frames (default 10)"),
     "area_strength": (
-        _choice("standard", "strong"),
-        "How much quality a priority area takes from the rest of the picture (default standard)",
+        _choice("strong", "subtle"),
+        "Priority area: strong (default) softens the rest of the picture and saves bandwidth; "
+        "subtle moves quality at the same bandwidth",
     ),
 }
 
