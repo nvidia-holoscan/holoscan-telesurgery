@@ -25,10 +25,10 @@ def test_bridge_delivers_bursts_in_order_through_the_sdk_graph():
                 header = {"keyframe": index == 0, "gop": burst, "gop_index": index}
                 bridge.put("camera", header, b"frame")
                 expected.append((burst, index))
-            time.sleep(0.01)
-        deadline = time.monotonic() + 10
-        while len(delivered) < len(expected) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert [(h["gop"], h["gop_index"]) for _, h, _, _ in delivered] == expected
+            # The next burst starts with a keyframe, which replaces anything still waiting.
+            deadline = time.monotonic() + 10
+            while len(delivered) < len(expected) and time.monotonic() < deadline:
+                time.sleep(0.001)
+            assert [(h["gop"], h["gop_index"]) for _, h, _, _ in delivered] == expected
     finally:
         bridge.close()
