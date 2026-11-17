@@ -8,6 +8,8 @@ import { element, button, action, notice } from "./ui.js";
 const SVG = "http://www.w3.org/2000/svg";
 const MAX_POINTS = 64;
 const MIN_SHARE = 0.005;
+// A new area is framed to fill up to this much of the view, in the zoom slider's steps of 1/20.
+const FILL = 0.8, STEPS = 20;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const round = (value) => Math.round(value * 10000) / 10000;
 
@@ -46,10 +48,18 @@ function extent(points) {
 }
 const who = (camera) => camera.region_by ? ` set by ${camera.region_by}` : "";
 const allowed = (state) => state.role === "patient" || Boolean(state.session?.robot);
+const near = (a, b) => ["scale", "x", "y"].every(key => Math.abs(a[key] - b[key]) < 1e-6);
 
-// native: the tools sit on a card, not over a picture. changed: told the armed tool after each draw.
-export function priorityArea(camera, { viewport, stage, surface, caption, native = false, changed }) {
+// zoom: the view's zoom control. Its bar carries the tools, and the viewer's own new area
+// frames the view. side: whether the view shows depth beside the picture.
+// changed: told the armed tool after each draw.
+export function priorityArea(camera, {
+    viewport, stage, surface, caption, zoom, changed, side = () => stage.dataset.depth === "side",
+}) {
     let current = camera, permitted = false, mode = null, gesture = null, pending, busy = false;
+    // source: the camera last handed over. superseded: one from before the viewer's own change.
+    // framed: the view put on the viewer's area, and the one to return to.
+    let source = camera, superseded = null, framed = null;
     const overlay = document.createElementNS(SVG, "svg");
     overlay.setAttribute("class", "region-overlay");
     overlay.setAttribute("viewBox", "0 0 1 1");
@@ -64,10 +74,9 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
     });
     stage.append(overlay);
 
-    const tools = element("div", undefined, `view-region${native ? " native-region" : ""}`);
+    const tools = element("div", undefined, "view-region");
     tools.setAttribute("role", "group");
     tools.setAttribute("aria-label", `${camera.name} priority area`);
-    const label = element("span", "Priority area", "region-label");
     const arm = (name) => () => {
         mode = mode === name ? null : name;
         gesture = null;
@@ -81,8 +90,17 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
     const box = button("Draw a box", arm("box"), "region-tool icon-button", "area-box");
     const lasso = button("Draw freehand", arm("lasso"), "region-tool icon-button", "area-lasso");
     const clear = button("Clear priority area", () => save(null), "region-tool icon-button", "area-clear");
-    tools.append(label, box, lasso, clear);
-    surface.append(tools);
+    tools.append(box, lasso, clear);
+    // One bar per view: the area tools lead the zoom controls. Clear comes and goes at the end
+    // the bar grows from, so the drawing tools never move under the pointer: the left over a
+    // picture, where the bar is held at the right, and the right on a Holoviz card.
+    function attach(control) {
+        zoom = control;
+        if (zoom.element.classList.contains("native-zoom")) tools.append(clear);
+        else tools.prepend(clear);
+        zoom.element.prepend(tools);
+        draw();
+    }
     const instruction = element("div", "", "zoom-instruction region-instruction");
     instruction.hidden = true;
     viewport.append(instruction);
@@ -114,12 +132,15 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
         overlay.dataset.state = gesture ? "drawing" : pending !== undefined ? "saving" : "active";
         overlay.toggleAttribute("hidden", !shape?.length);
         tools.hidden = !supported;
+        zoom?.element.setAttribute("aria-label", `${camera.name} view ${supported ? "tools" : "zoom"}`);
         for (const [control, name, text] of [[box, "box", "Draw a box"], [lasso, "lasso", "Draw freehand"]]) {
             control.disabled = Boolean(reason) || busy;
             control.setAttribute("aria-pressed", String(mode === name));
             control.title = reason || `${text} around the priority area`;
         }
-        clear.disabled = !permitted || busy || !current.region;
+        // Clear takes room in the bar only while there is an area to clear.
+        clear.hidden = !current.region;
+        clear.disabled = !permitted || busy;
         clear.title = permitted ? "Clear priority area" : reason;
         if (mode) viewport.dataset.region = mode;
         else delete viewport.dataset.region;
@@ -135,20 +156,47 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
         status.hidden = !text;
         changed?.(mode);
     }
+    // Frame the viewer's own new area, remembering the view to return to.
+    function frame(shape) {
+        if (!zoom) return;
+        // Beside depth, the picture is the left half of the view.
+        const half = side() ? 0.5 : 1;
+        const xs = shape.map(p => p[0] * half), ys = shape.map(p => p[1]);
+        const left = Math.min(...xs), top = Math.min(...ys);
+        const width = Math.max(...xs) - left, height = Math.max(...ys) - top;
+        const before = framed && near(zoom.view(), framed.view) ? framed.before : zoom.view();
+        const scale = Math.floor(FILL / Math.max(width, height) * STEPS + 1e-6) / STEPS;
+        zoom.set({ scale, x: left + width / 2, y: top + height / 2 });
+        framed = { before, view: zoom.view() };
+    }
+    // The area is gone: return to the earlier view, unless the viewer has moved since.
+    function release() {
+        if (!framed) return;
+        const { before, view } = framed;
+        framed = null;
+        if (zoom && near(zoom.view(), view)) zoom.set(before);
+    }
     async function save(shape) {
         if (busy) return;
         busy = true;
         pending = shape;
         draw();
+        const clearing = document.activeElement === clear;
         try {
             const result = await action("camera.region", { id: camera.id, points: shape });
             current = { ...current, ...result };
+            // A re-render from the status fetched before this change must not undo it.
+            superseded = source;
+            if (!current.region) release();
+            else if (shape) frame(current.region);
         } catch (error) {
             notice(error);
         } finally {
             busy = false;
             pending = undefined;
             draw();
+            // Clear leaves the bar with the area; keep the keyboard on the tools.
+            if (clearing && clear.hidden) box.focus();
         }
     }
     function locate(event) {
@@ -204,6 +252,13 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
         mode = null;
         save(shape);
     }
+    function escape(event) {
+        if (event.key !== "Escape" || !(mode || gesture)) return;
+        const tool = cancel();
+        (tool === "lasso" ? lasso : box).focus();
+        event.preventDefault();
+        event.stopPropagation();
+    }
     // Capture so an armed tool, not view pan or zoom selection, receives the drag.
     const listeners = [
         [viewport, "pointerdown", down, true],
@@ -212,13 +267,9 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
         [viewport, "pointercancel", up, true],
         [viewport, "dblclick", event => { if (mode) event.stopImmediatePropagation(); }, true],
         [viewport, "view-tool", event => { if (event.detail !== "region" && mode) cancel(); }, false],
-        [surface, "keydown", event => {
-            if (event.key !== "Escape" || !(mode || gesture)) return;
-            const tool = cancel();
-            (tool === "lasso" ? lasso : box).focus();
-            event.preventDefault();
-            event.stopPropagation();
-        }, true],
+        [surface, "keydown", escape, true],
+        // On a Holoviz card the bar is outside the picture's block.
+        [tools, "keydown", escape, true],
     ];
     for (const [target, name, callback, capture] of listeners) target.addEventListener(name, callback, capture);
     // The outline keeps a constant width on screen while the view is zoomed.
@@ -232,14 +283,22 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
     watch.observe(stage, { attributes: true, attributeFilter: ["style", "data-depth"] });
     const resize = new ResizeObserver(scale);
     resize.observe(stage);
-    draw();
+    if (zoom) attach(zoom);
+    else draw();
     return {
         // Called with each status refresh; a request in flight keeps its own picture.
         update(camera, state) {
             permitted = allowed(state);
-            if (!busy) current = camera;
+            source = camera;
+            if (!busy && camera !== superseded) {
+                current = camera;
+                superseded = null;
+                if (!(current.region_supported && current.region)) release();
+            }
             draw();
         },
+        // A Holoviz card builds a new zoom bar each time it is redrawn.
+        attach,
         // Put the drawing tool down, as Esc does.
         cancel,
         stop() {
@@ -247,6 +306,7 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
             resize.disconnect();
             for (const [target, name, callback, capture] of listeners) target.removeEventListener(name, callback, capture);
             delete viewport.dataset.region;
+            tools.remove();
         },
     };
 }
@@ -255,7 +315,7 @@ export function priorityArea(camera, { viewport, stage, surface, caption, native
 // drawing tool opens a still picture lent by the Holoviz window, refreshed while it is open.
 const STILL_MS = 350;
 export function nativePriorityArea(camera) {
-    let shown = false, timer;
+    let shown = false, timer, beside = false;
     const root = element("div", undefined, "region-native");
     const viewport = element("div", undefined, "region-still");
     viewport.tabIndex = 0;
@@ -295,17 +355,21 @@ export function nativePriorityArea(camera) {
         }
     }
     const area = priorityArea(camera, {
-        viewport, stage, surface: root, caption: root, native: true,
+        viewport, stage, surface: root, caption: root,
         changed: (mode) => { if (mode) open(true); },
+        side: () => beside,
     });
-    // priorityArea added the tools and the status line; the picture belongs between them.
+    // priorityArea added the status line; the picture belongs above it.
     root.insertBefore(viewport, root.querySelector(".region-status"));
     root.insertBefore(hide, root.querySelector(".region-status"));
     return {
         element: root,
+        // The tools join the card's zoom bar, which also zooms the Holoviz window to a new area.
+        attach: area.attach,
         update(camera, state) {
             root.hidden = !camera.region_supported;
             if (root.hidden) open(false);
+            beside = state.native_views?.[camera.id]?.display?.mode === "side";
             // The still is stretched to the camera's shape, whatever size Holoviz lends.
             if (camera.width > 0 && camera.height > 0)
                 stage.style.aspectRatio = `${camera.width} / ${camera.height}`;

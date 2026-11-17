@@ -3,6 +3,7 @@
 
 """A surgeon draws a priority area on the picture; every viewer sees its outline."""
 
+import asyncio
 import json
 import math
 from contextlib import asynccontextmanager
@@ -165,6 +166,37 @@ def stills(actions):
     return sum(a["action"] == "native-preview" for a in actions)
 
 
+def zooms(actions):
+    return [a["params"] for a in actions if a["action"] == "view.zoom"]
+
+
+async def eventually(page, check, timeout=3000):
+    """Wait for something the page does shortly after, such as a debounced request."""
+    for _ in range(timeout // 50):
+        if check():
+            return
+        await page.wait_for_timeout(50)
+    assert check()
+
+
+async def in_view(page):
+    """The outline's box within the visible view, as fractions: left, top, right, bottom."""
+    return await page.evaluate(
+        """() => {
+            const view = document.querySelector('.view-viewport').getBoundingClientRect();
+            const line = document.querySelector('.region-line').getBoundingClientRect();
+            return [(line.left - view.left) / view.width, (line.top - view.top) / view.height,
+                (line.right - view.left) / view.width, (line.bottom - view.top) / view.height];
+        }"""
+    )
+
+
+def framing(width, height):
+    """The zoom label once a new area of this size (fractions of the view) is framed."""
+    scale = min(4, max(1, math.floor(0.8 / max(width, height) * 20 + 1e-6) / 20))
+    return f"{round(scale, 2):g}×"
+
+
 @pytest.mark.asyncio
 async def test_controlling_surgeon_draws_a_box_or_a_lasso_and_clears_it():
     state = surgeon([camera()])
@@ -173,11 +205,25 @@ async def test_controlling_surgeon_draws_a_box_or_a_lasso_and_clears_it():
         box = tools.get_by_role("button", name="Draw a box")
         lasso = tools.get_by_role("button", name="Draw freehand")
         clear = tools.get_by_role("button", name="Clear priority area")
+        level = page.locator(".zoom-level")
         await expect(tools).to_be_visible()
-        await expect(tools.get_by_text("Priority area", exact=True)).to_be_visible()
+        # One bar on the picture: the area tools lead the zoom controls, without a text label.
+        bar = page.get_by_role("group", name="Endoscope view tools")
+        assert await page.locator(".view-surface > .view-zoom").count() == 1
+        assert await page.locator(".view-surface > .view-region").count() == 0
+        assert await bar.get_by_role("button").all_inner_texts() == [
+            "Draw a box",
+            "Draw freehand",
+            "Zoom out",
+            "1×",
+            "Zoom in",
+        ]
+        assert await tools.locator(":scope > :not(button)").count() == 0
+        await expect(page.get_by_text("Priority area", exact=True)).to_have_count(0)
         await expect(box).to_be_enabled()
         await expect(lasso).to_be_enabled()
-        await expect(clear).to_be_disabled()  # nothing to clear yet
+        await expect(clear).to_be_hidden()  # nothing to clear yet
+        idle = [await box.bounding_box(), await lasso.bounding_box()]
         await expect(page.locator(".region-overlay")).to_be_hidden()
         await expect(page.locator(".region-status")).to_be_hidden()
         # An unarmed drag on the picture draws nothing.
@@ -207,6 +253,19 @@ async def test_controlling_surgeon_draws_a_box_or_a_lasso_and_clears_it():
         await expect(page.locator(".region-status")).to_have_text(
             "Priority area set by Dr. Rivera: picture detail is concentrated inside the outline."
         )
+        # Clear joins the bar at its far end, so the drawing tools stay where they were.
+        assert await bar.get_by_role("button").all_inner_texts() == [
+            "Clear priority area",
+            "Draw a box",
+            "Draw freehand",
+            "Zoom out",
+            framing(0.4, 0.5),
+            "Zoom in",
+        ]
+        assert [await box.bounding_box(), await lasso.bounding_box()] == idle
+        # The viewer's own area now fills most of their view.
+        await expect(level).to_have_text(framing(0.4, 0.5))
+        assert await in_view(page) == pytest.approx([0.18, 0.1, 0.82, 0.9], abs=0.01)
 
         # Freehand: one stroke around the structure, closed and simplified for the encoder.
         await lasso.click()
@@ -235,12 +294,14 @@ async def test_controlling_surgeon_draws_a_box_or_a_lasso_and_clears_it():
         assert await outline(page) == pytest.approx(
             [0.6 - radius / frame["width"], 0.2, 0.6 + radius / frame["width"], 0.8], abs=0.01
         )
+        await expect(level).to_have_text(framing(2 * radius / frame["width"], 0.6))
 
-        # One click clears it for everyone.
+        # One click clears it for everyone, and the view returns to where it was.
         await clear.click()
         await expect(page.locator(".region-overlay")).to_be_hidden()
         await expect(page.locator(".region-status")).to_be_hidden()
-        await expect(clear).to_be_disabled()
+        await expect(clear).to_be_hidden()
+        await expect(level).to_have_text("1×")
         assert regions(actions)[2] == {"id": "room:scope", "points": None}
         assert state["session"]["cameras"][0]["region"] is None
 
@@ -260,6 +321,13 @@ async def test_escape_cancels_and_slips_are_not_sent():
         await expect(box).to_be_focused()
         assert "solid" in await box.evaluate("e => getComputedStyle(e).outlineStyle")
         await page.keyboard.press("Tab")
+        await expect(lasso).to_be_focused()
+        # The area tools come before zoom in the bar; Esc with nothing armed leaves focus alone.
+        await page.keyboard.press("Escape")
+        await expect(lasso).to_be_focused()
+        await page.keyboard.press("Tab")  # Zoom out is disabled at 1×
+        await expect(page.locator(".zoom-level")).to_be_focused()
+        await page.keyboard.press("Shift+Tab")
         await expect(lasso).to_be_focused()
 
         # Esc in the middle of a stroke abandons it.
@@ -289,6 +357,122 @@ async def test_escape_cancels_and_slips_are_not_sent():
 
 
 @pytest.mark.asyncio
+async def test_own_area_frames_the_view_and_its_end_returns_the_view():
+    state = surgeon([camera()])
+    scope = state["session"]["cameras"][0]
+    async with dashboard(state) as (page, actions, _):
+        level = page.locator(".zoom-level")
+        box = page.get_by_role("button", name="Draw a box")
+        clear = page.get_by_role("button", name="Clear priority area")
+        zoom_in = page.get_by_role("button", name="Zoom in", exact=True)
+
+        async def draw(start, end):
+            sent = len(regions(actions))
+            await box.click()
+            await drag(page, start, end)
+            await expect(page.locator(".region-overlay")).to_have_attribute("data-state", "active")
+            assert len(regions(actions)) == sent + 1
+
+        async def sent_view(**expected):
+            await eventually(
+                page,
+                lambda: (
+                    zooms(actions)
+                    and zooms(actions)[-1] == pytest.approx({"camera": "room:scope", **expected})
+                ),
+            )
+
+        # The viewer starts from a view of their own.
+        await zoom_in.click()
+        await zoom_in.click()
+        await expect(level).to_have_text("1.5×")
+        # Their new area is centred and fills four fifths of the view (zoom stops at 4×).
+        await draw((0.4, 0.3), (0.6, 0.5))
+        await expect(level).to_have_text("4×")
+        assert await in_view(page) == pytest.approx([0.1, 0.1, 0.9, 0.9], abs=0.01)
+        await sent_view(scale=4, x=0.5, y=0.4)
+        # A new area while framed is framed in turn...
+        await draw((0.4, 0.3), (0.5, 0.4))
+        await expect(level).to_have_text("4×")
+        assert await in_view(page) == pytest.approx([0.3, 0.3, 0.7, 0.7], abs=0.01)
+        await sent_view(scale=4, x=0.45, y=0.35)
+        # ...and clearing returns to the view from before the first one. Clear leaves the bar,
+        # so the keyboard moves to the first tool.
+        await clear.focus()
+        await page.keyboard.press("Enter")
+        await expect(level).to_have_text("1.5×")
+        await sent_view(scale=1.5, x=0.5, y=0.5)
+        await expect(clear).to_be_hidden()
+        await expect(box).to_be_focused()
+
+        # A viewer who moved after the framing keeps the view they chose.
+        await draw((0.3, 0.3), (0.7, 0.7))
+        await expect(level).to_have_text("2×")
+        await page.get_by_role("button", name="Zoom out", exact=True).click()
+        await expect(level).to_have_text("1.75×")
+        await clear.click()
+        await expect(page.locator(".region-overlay")).to_be_hidden()
+        await expect(level).to_have_text("1.75×")
+
+        # Someone else clearing the area also returns the view.
+        await draw((0.3, 0.3), (0.7, 0.7))
+        await expect(level).to_have_text("2×")
+        scope.update(region=None, region_by="")
+        await expect(page.locator(".region-overlay")).to_be_hidden()
+        await expect(level).to_have_text("1.75×")
+        # Someone else's area never moves this view, when it appears or when it goes.
+        scope.update(region=BOX, region_by="Dr. Chen")
+        await expect(page.locator(".region-status")).to_contain_text("set by Dr. Chen")
+        await expect(level).to_have_text("1.75×")
+        scope.update(region=None, region_by="")
+        await expect(page.locator(".region-overlay")).to_be_hidden()
+        await expect(level).to_have_text("1.75×")
+
+
+@pytest.mark.asyncio
+async def test_a_redraw_from_an_earlier_status_does_not_undo_a_new_area():
+    patient = {
+        "role": "patient",
+        "sdk": "5.0",
+        "endpoint_port": 7447,
+        "nodes": [{"id": "room", "name": "Operating room", "status": "online"}],
+        "cameras": [camera(), camera(id="room:wide", name="Room camera")],
+        "robots": [],
+        "surgeons": [],
+        "native_views": {},
+    }
+    async with dashboard(patient, ready="#equipment-rows tr") as (page, actions, _):
+        preview = page.locator("#equipment-rows").get_by_role("button", name="Preview", exact=True)
+        await preview.first.click()
+        await expect(page.locator(".video-tile")).to_have_count(1)
+        scope = page.locator(".video-tile").first
+        # No newer status reaches the page until it is released.
+        held = asyncio.Event()
+
+        async def hold(route):
+            await held.wait()
+            await route.fallback()
+
+        await page.route("http://localhost:8777/api/status", hold)
+        await page.get_by_role("button", name="Draw a box").click()
+        await drag(page, (0.3, 0.3), (0.7, 0.7))
+        await expect(scope.locator(".region-overlay")).to_have_attribute("data-state", "active")
+        await expect(scope.locator(".zoom-level")).to_have_text("2×")
+        # Opening another preview redraws the page from the status fetched before the area.
+        await preview.first.click()
+        await expect(page.locator(".video-tile")).to_have_count(2)
+        await page.wait_for_timeout(200)
+        await expect(scope.locator(".region-overlay")).to_be_visible()
+        await expect(scope.get_by_role("button", name="Clear priority area")).to_be_visible()
+        await expect(scope.locator(".zoom-level")).to_have_text("2×")
+        held.set()
+        await page.wait_for_timeout(1200)
+        await expect(scope.locator(".region-overlay")).to_be_visible()
+        await expect(scope.locator(".zoom-level")).to_have_text("2×")
+        assert len(regions(actions)) == 1
+
+
+@pytest.mark.asyncio
 async def test_view_only_session_sees_the_area_but_cannot_change_it():
     state = surgeon([camera(region=BOX, region_by="Dr. Rivera")], robot=False)
     async with dashboard(state) as (page, actions, _):
@@ -307,10 +491,14 @@ async def test_view_only_session_sees_the_area_but_cannot_change_it():
         )
         await drag(page, (0.1, 0.1), (0.9, 0.9))
         assert regions(actions) == []
-        # Another surgeon's change arrives with the next status.
+        # Another surgeon's change arrives with the next status. Nobody else's view moves.
+        await expect(page.locator(".zoom-level")).to_have_text("1×")
         state["session"]["cameras"][0].update(region=None, region_by="")
         await expect(page.locator(".region-overlay")).to_be_hidden()
         await expect(page.locator(".region-status")).to_be_hidden()
+        await expect(tools.get_by_role("button", name="Clear priority area")).to_be_hidden()
+        await expect(page.locator(".zoom-level")).to_have_text("1×")
+        assert zooms(actions) == []
 
 
 @pytest.mark.asyncio
@@ -324,6 +512,9 @@ async def test_a_refused_area_is_explained_and_not_left_on_the_picture():
         await expect(page.locator(".region-overlay")).to_be_hidden()
         await expect(page.locator(".region-status")).to_be_hidden()
         assert len(regions(actions)) == 1
+        # An area that was not accepted does not move the view.
+        await expect(page.locator(".zoom-level")).to_have_text("1×")
+        assert zooms(actions) == []
 
 
 @pytest.mark.asyncio
@@ -337,7 +528,7 @@ async def test_settings_that_prevent_an_area_disable_the_tools_with_the_reason()
             control = tools.get_by_role("button", name=name)
             await expect(control).to_be_disabled()
             await expect(control).to_have_attribute("title", f"Priority area unavailable: {reason}")
-        await expect(tools.get_by_role("button", name="Clear priority area")).to_be_disabled()
+        await expect(tools.get_by_role("button", name="Clear priority area")).to_be_hidden()
         await expect(page.locator(".region-status")).to_have_text(
             f"Priority area unavailable: {reason}."
         )
@@ -360,12 +551,15 @@ async def test_an_encoder_without_region_support_leaves_the_view_as_it_was(repor
 
     async def layout(page):
         return await page.evaluate(
-            """() => ['.video-tile', '.view-surface', '.view-viewport', '.view-zoom',
+            """() => ['.video-tile', '.view-surface', '.view-viewport', '.view-zoom .zoom-menu',
                       '.video-caption', '.video-caption .actions'].map(selector => {
                 const box = document.querySelector(selector).getBoundingClientRect();
                 return [selector, box.x, box.y, box.width, box.height];
             })"""
         )
+
+    async def bar(page):
+        return await page.locator(".view-zoom").bounding_box()
 
     async with dashboard(surgeon([plain])) as (page, actions, _):
         await expect(page.locator(".view-zoom")).to_be_visible()
@@ -374,7 +568,10 @@ async def test_an_encoder_without_region_support_leaves_the_view_as_it_was(repor
         await expect(page.locator(".region-status")).to_be_hidden()
         await expect(page.locator(".region-instruction")).to_be_hidden()
         assert await page.get_by_role("button", name="Draw a box").count() == 0
-        without = await layout(page)
+        await expect(page.get_by_role("group", name="Endoscope view zoom")).to_be_visible()
+        without, plain_bar = await layout(page), await bar(page)
+        # The bar is the zoom group alone: 2 + 28 + 44 + 28 + 2 px and its border.
+        assert plain_bar["width"] == pytest.approx(106, abs=1)
         # The existing surgeon-side view tools behave as before.
         await page.get_by_role("button", name="Zoom in", exact=True).click()
         await expect(page.locator(".zoom-level")).to_have_text("1.25×")
@@ -383,10 +580,14 @@ async def test_an_encoder_without_region_support_leaves_the_view_as_it_was(repor
         await drag(page, (0.25, 0.25), (0.75, 0.75))
         await expect(page.locator(".zoom-level")).to_have_text("2×")
         assert regions(actions) == []
-    # The same camera with the tools: only the tools and status line are added.
+    # The same camera with the tools: they lead the same bar, which grows to the left only.
     async with dashboard(surgeon([camera()])) as (page, _, _):
-        await expect(page.locator(".view-region")).to_be_visible()
+        await expect(page.locator(".view-zoom > .view-region")).to_be_visible()
         assert await layout(page) == without
+        with_tools = await bar(page)
+        assert with_tools["x"] + with_tools["width"] == plain_bar["x"] + plain_bar["width"]
+        assert (with_tools["y"], with_tools["height"]) == (plain_bar["y"], plain_bar["height"])
+        assert with_tools["width"] > plain_bar["width"]
 
 
 @pytest.mark.asyncio
@@ -429,7 +630,6 @@ async def test_outline_and_drawing_follow_zoom_pan_resize_and_side_by_side_depth
         await page.mouse.move(viewport["x"] + 500, viewport["y"] + 350, steps=5)
         await page.mouse.up()
         await expect(page.locator(".region-overlay")).to_have_attribute("data-state", "active")
-        assert await picture(page) == moved  # the view did not pan
         drawn = regions(actions)[-1]["points"]
         corners = (
             [(viewport["x"] + px - moved["x"]) / moved["width"] for px in (100, 500)],
@@ -439,11 +639,19 @@ async def test_outline_and_drawing_follow_zoom_pan_resize_and_side_by_side_depth
         assert [drawn[0][1], drawn[2][1]] == pytest.approx(corners[1], abs=0.004)
         drawn_box = pytest.approx([*drawn[0], *drawn[2]], abs=0.004)
         assert await outline(page) == drawn_box
+        # The drag drew rather than panned, and the view then framed the new area on its centre.
+        framed = framing(400 / moved["width"], 250 / moved["height"])
+        assert framed not in ("1×", "2×")
+        await expect(page.locator(".zoom-level")).to_have_text(framed)
+        left, top, right, bottom = await in_view(page)
+        assert (left + right) / 2 == pytest.approx(0.5, abs=0.01)
+        assert (top + bottom) / 2 == pytest.approx(0.5, abs=0.01)
+        assert 0.7 < bottom - top <= 0.81
 
         # A double-click resets the view; while a tool is armed it must not.
         await page.get_by_role("button", name="Draw a box").click()
         await page.mouse.dblclick(viewport["x"] + 300, viewport["y"] + 300)
-        await expect(page.locator(".zoom-level")).to_have_text("2×")
+        await expect(page.locator(".zoom-level")).to_have_text(framed)
         await page.keyboard.press("Escape")
 
         # Zoom's own area selection and the priority area tool never share a drag.
@@ -472,11 +680,13 @@ async def test_outline_and_drawing_follow_zoom_pan_resize_and_side_by_side_depth
             await settled(page)
             assert await outline(page) == drawn_box
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            tools = await page.locator(".view-region").bounding_box()
-            zoom = await page.locator(".view-zoom").bounding_box()
-            assert tools["x"] + tools["width"] < zoom["x"]  # the two groups do not collide
-        await page.set_viewport_size({"width": 390, "height": 844})
-        await expect(page.locator(".region-label")).to_be_hidden()  # icons only when narrow
+            # The one bar, with Clear showing, stays within the picture's surface.
+            bar = await page.locator(".view-zoom").bounding_box()
+            surface = await page.locator(".view-surface").bounding_box()
+            assert surface["x"] <= bar["x"]
+            assert bar["x"] + bar["width"] <= surface["x"] + surface["width"]
+            assert bar["y"] + bar["height"] <= surface["y"] + surface["height"]
+            await expect(page.get_by_role("button", name="Clear priority area")).to_be_visible()
         await page.set_viewport_size({"width": 1440, "height": 900})
         await page.get_by_role("button", name="Enlarge", exact=True).click()
         await settled(page)
@@ -502,6 +712,11 @@ async def test_outline_and_drawing_follow_zoom_pan_resize_and_side_by_side_depth
         clipped = regions(actions)[-1]["points"]
         assert [*clipped[0], *clipped[2]] == pytest.approx([0.5, 0.2, 1.0, 0.8], abs=0.004)
         assert await outline(page) == pytest.approx([0.5, 0.2, 1.0, 0.8], abs=0.004)
+        # Beside depth the picture is half the view: the area is framed by its size there.
+        await expect(page.locator(".zoom-level")).to_have_text(framing(0.25, 0.6))
+        left, top, right, bottom = await in_view(page)
+        assert 0 <= left < right <= 1 and (top + bottom) / 2 == pytest.approx(0.5, abs=0.01)
+        assert bottom - top == pytest.approx(0.6 * 1.3, abs=0.01)
 
 
 @pytest.mark.asyncio
@@ -547,9 +762,22 @@ async def test_holoviz_card_lends_a_still_picture_to_draw_on():
         lasso = tools.get_by_role("button", name="Draw freehand")
         clear = tools.get_by_role("button", name="Clear priority area")
         still = card.locator(".region-still")
+        level = card.locator(".zoom-level")
         await expect(tools).to_be_visible()
         await expect(box).to_be_enabled()
-        await expect(clear).to_be_disabled()
+        await expect(clear).to_be_hidden()
+        # One row of controls on the card: the tools lead its zoom bar.
+        assert await card.locator(".view-zoom").count() == 1
+        assert await card.locator(".view-zoom > .view-region").count() == 1
+        bar = card.get_by_role("group", name="Room camera view tools")
+        assert await bar.get_by_role("button").all_inner_texts() == [
+            "Draw a box",
+            "Draw freehand",
+            "Zoom out",
+            "1×",
+            "Zoom in",
+        ]
+        idle = [await box.bounding_box(), await lasso.bounding_box()]
         # No picture is requested from Holoviz until a drawing tool asks for one.
         await expect(still).to_be_hidden()
         await settled(page)
@@ -577,6 +805,31 @@ async def test_holoviz_card_lends_a_still_picture_to_draw_on():
         await expect(card.locator(".region-status")).to_have_text(
             "Priority area set by Dr. Rivera: picture detail is concentrated inside the outline."
         )
+        # The Holoviz window is zoomed onto the new area; the still keeps showing the whole picture.
+        await expect(level).to_have_text(framing(0.4, 0.5))
+        # The card's bar grows to the right, so there Clear follows the drawing tools.
+        assert (await bar.get_by_role("button").all_inner_texts())[:3] == [
+            "Draw a box",
+            "Draw freehand",
+            "Clear priority area",
+        ]
+        assert [await box.bounding_box(), await lasso.bounding_box()] == idle
+        await eventually(page, lambda: len(zooms(actions)) == 1)
+        assert zooms(actions)[0] == pytest.approx(
+            {"camera": "room:wide", "scale": 1.6, "x": 0.5, "y": 0.5}, abs=0.006
+        )
+        assert await outline(page, STILL) == pytest.approx([0.3, 0.25, 0.7, 0.75], abs=0.006)
+        # The card is rebuilt when the window's state changes. The tools move to its new bar,
+        # and the open picture, the area and the framed view carry over.
+        await card.locator(".view-zoom").evaluate("bar => { bar.dataset.replaced = 'true'; }")
+        state["native_views"]["room:wide"]["status"] = "starting"
+        await expect(card.locator(".view-zoom:not([data-replaced])")).to_be_visible()
+        assert await card.locator(".view-zoom").count() == 1
+        assert await card.locator(".view-zoom > .view-region").count() == 1
+        await expect(box).to_be_enabled()
+        await expect(clear).to_be_enabled()
+        await expect(level).to_have_text(framing(0.4, 0.5))
+        await expect(still).to_be_visible()
         # The picture keeps refreshing while it is open.
         before = stills(actions)
         await page.wait_for_timeout(900)
@@ -619,6 +872,10 @@ async def test_holoviz_card_lends_a_still_picture_to_draw_on():
         await expect(card.locator(".region-status")).to_be_hidden()
         assert regions(actions)[2] == {"id": "room:wide", "points": None}
         await expect(still).to_be_hidden()
+        # The Holoviz window returns to the view it had before the first area.
+        await expect(level).to_have_text("1×")
+        await eventually(page, lambda: zooms(actions)[-1]["scale"] == 1)
+        await expect(clear).to_be_hidden()
 
         # Leaving Holoviz removes the card and ends the requests.
         await lasso.click()

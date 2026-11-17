@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 /* Priority area: an outline only, so the picture's colours stay true.
-   The tools mirror the view zoom group. */
+   Its tools sit in the view's zoom bar (view-zoom.css). */
 .region-overlay {
     position: absolute;
     left: 0;
@@ -25,24 +25,18 @@
 .region-line { stroke: #b7ef66; stroke-width: calc(2px / var(--region-scale)); }
 .region-overlay[data-state="saving"] .region-line { stroke-dasharray: 6 5; }
 .view-viewport[data-region] { cursor: crosshair; touch-action: none; }
-.view-region {
-    position: absolute;
-    bottom: 12px;
-    left: 12px;
-    display: flex;
-    align-items: center;
-    padding: 2px;
-    border: 1px solid #ffffff35;
-    border-radius: 9px;
-    background: #15201deb;
-    color: #f6faf7;
-    box-shadow: 0 2px 8px #0003;
-    font-size: 12px;
-    z-index: 4;
-    cursor: default;
+/* The tools lead the view's zoom bar; a hairline separates the two groups. */
+.view-region { display: flex; align-items: center; }
+.view-region[hidden], .view-region .region-tool[hidden] { display: none; }
+.view-region::after {
+    content: "";
+    align-self: center;
+    width: 1px;
+    height: 16px;
+    margin: 0 3px 0 4px;
+    background: currentColor;
+    opacity: .28;
 }
-.view-region[hidden] { display: none; }
-.view-region .region-label { padding: 0 7px 0 8px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .view-region .region-tool {
     width: 28px;
     min-width: 28px;
@@ -55,9 +49,9 @@
     color: inherit;
     cursor: pointer;
 }
-.view-region .region-tool:hover { background: #ffffff18; }
-.view-region .region-tool:focus-visible { outline: 2px solid #a5db60; outline-offset: -2px; }
-.view-region .region-tool[aria-pressed="true"] { background: var(--green); color: #172700; }
+.view-region .region-tool .icon { width: 16px; height: 16px; }
+.view-region .region-tool[aria-pressed="true"],
+.view-region .region-tool[aria-pressed="true"]:hover { background: var(--green); color: #172700; }
 .view-region .region-tool:disabled { opacity: .35; cursor: default; background: transparent; }
 .video-caption > .region-status {
     grid-column: 1 / -1;
@@ -68,21 +62,9 @@
     line-height: 1.45;
 }
 .video-caption > .region-status[hidden] { display: none; }
-/* A camera open in Holoviz: the same tools on its card, and a still picture to draw on. */
-.region-native { margin-top: 12px; container-type: inline-size; }
+/* A camera open in Holoviz: the same tools in its card's zoom bar, and a still picture to draw on. */
+.region-native { container-type: inline-size; }
 .region-native[hidden] { display: none; }
-.native-region {
-    position: relative;
-    bottom: auto;
-    left: auto;
-    width: fit-content;
-    background: var(--theme-surface, #fff);
-    color: var(--ink);
-    border-color: var(--border);
-    box-shadow: none;
-}
-.native-region .region-tool:hover { background: var(--theme-stripe, #edf0ee); }
-.native-region .region-tool[aria-pressed="true"]:hover { background: var(--green); }
 .region-still {
     position: relative;
     width: min(100%, 640px);
@@ -125,9 +107,6 @@
     line-height: 1.45;
 }
 .region-native > .region-status[hidden] { display: none; }
-@container (max-width: 520px) {
-    .view-region .region-label { display: none; }
-}
 @media (pointer: coarse) {
     .view-region .region-tool { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
 }

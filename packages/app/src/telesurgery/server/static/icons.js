@@ -23,9 +23,10 @@ const paths = {
     add: "M12 5v14M5 12h14",
     minus: "M5 12h14",
     "select-area": "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9h6v6H9V9Z",
-    "area-box": "M3 5h18v14H3V5Zm9 4v6m-3-3h6",
-    "area-lasso": "M12 4c5 0 9 2.7 9 6s-4 6-9 6-9-2.7-9-6 4-6 9-6ZM7 15c-1.6 1.6-1.4 3.9.6 5.3",
-    "area-clear": "M3 5h18v14H3V5Zm6 4 6 6m0-6-6 6",
+    // A pair of shapes, as in drawing tools: a rectangle and a freeform outline.
+    "area-box": "M3.5 6h17v12h-17V6Z",
+    "area-lasso": "M5 6.5c2-2.2 5-1.3 7 .2 1.8 1.3 4.5-.7 6.5 1.3 2.2 2.2 1 5-.5 6.5-1.3 1.3-.5 3.5-2.5 4.5-2.5 1.3-4.5-.5-6.5-1-2.2-.5-4.5 0-5.3-2.5C2.9 13 3.5 8.2 5 6.5Z",
+    "area-clear": "M3.5 6h17v12h-17V6Zm5.8 3.3 5.4 5.4m0-5.4-5.4 5.4",
     remove: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
     copy: "M8 8h13v13H8V8ZM16 8V3H3v13h5",
     reset: "M3 4v5h5M3.5 9a9 9 0 1 1 .5 7",

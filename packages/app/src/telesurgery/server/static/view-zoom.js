@@ -169,7 +169,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
         send.put({ ...view });
     }
     root.addEventListener("keydown", event => {
-        if (event.key === "Escape") { panel.hidePopover(); summary.focus(); event.stopPropagation(); }
+        // The priority area tools share this bar and handle their own Esc.
+        if (event.key !== "Escape" || event.target.closest?.(".view-region")) return;
+        panel.hidePopover(); summary.focus(); event.stopPropagation();
     });
     root.addEventListener("focusout", event => {
         if (!root.contains(event.relatedTarget)) panel.hidePopover();
@@ -259,6 +261,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
     draw();
     return {
         element: root,
+        // For the priority area, which frames the view on a new area and puts it back after.
+        view: () => ({ ...view }),
+        set: update,
         flush: () => send.flush(),
         stop() {
             resize?.disconnect(); modes?.disconnect(); menuEvents?.abort(); send.stop();

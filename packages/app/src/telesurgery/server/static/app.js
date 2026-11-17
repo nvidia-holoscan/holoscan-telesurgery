@@ -344,16 +344,17 @@ async function openVideo(camera) {
     if (state.role === "surgeon") layout.attach(tile, camera);
     $("#videos").append(tile);
     const peer = new RTCPeerConnection({ iceServers: [] });
-    tiles.set(camera.id, {
+    const item = {
         tile,
         peer,
         title,
         timing: frameTiming(peer, video),
         depth: depthView(peer, video, stage, caption, camera, state.view_displays?.[camera.id]),
         zoom: viewZoom(camera, { viewport, stage, surface, initial: state.view_zooms?.[camera.id] }),
-        area: priorityArea(camera, { viewport, stage, surface, caption }),
-    });
-    tiles.get(camera.id).area.update(camera, state);
+    };
+    item.area = priorityArea(camera, { viewport, stage, surface, caption, zoom: item.zoom });
+    tiles.set(camera.id, item);
+    item.area.update(camera, state);
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
     };
@@ -965,19 +966,22 @@ function renderCurrent() {
                     `${codecName(camera.codec)} · Holoviz is open`,
                 );
                 tile.classList.add("native-tile");
-                tile.append(viewZoom(camera, {
+                const zoom = viewZoom(camera, {
                     native: true,
                     initial: state.view_zooms?.[camera.id],
-                }).element);
+                });
+                tile.append(zoom.element);
+                // Kept across re-renders: it may hold an open picture or a drawing.
+                if (!nativeAreas.has(camera.id))
+                    nativeAreas.set(camera.id, nativePriorityArea(camera));
+                // Its tools lead the zoom bar; the still picture to draw on opens below it.
+                nativeAreas.get(camera.id).attach(zoom);
+                tile.append(nativeAreas.get(camera.id).element);
                 nativeDepthControls(
                     camera,
                     tile,
                     state.native_views[camera.id].display,
                 );
-                // Kept across re-renders: it may hold an open picture or a drawing.
-                if (!nativeAreas.has(camera.id))
-                    nativeAreas.set(camera.id, nativePriorityArea(camera));
-                tile.append(nativeAreas.get(camera.id).element);
                 const controls = element("div", undefined, "actions");
                 const metrics = button(
                     "Metrics",
