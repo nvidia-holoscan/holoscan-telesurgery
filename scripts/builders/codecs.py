@@ -436,7 +436,17 @@ def main():
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
-    run("uv", "pip", "install", "--python", sys.executable, build_wheel(args))
+    # The version does not change when only the converter sources do: always replace it.
+    run(
+        "uv",
+        "pip",
+        "install",
+        "--reinstall-package",
+        "pynvvideocodec",
+        "--python",
+        sys.executable,
+        build_wheel(args),
+    )
 
 
 if __name__ == "__main__":

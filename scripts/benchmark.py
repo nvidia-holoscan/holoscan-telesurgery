@@ -14,6 +14,7 @@ from pathlib import Path
 
 import aiohttp
 from telesurgery_core.diagnostics.benchmark import write_report
+from telesurgery_core.video import region
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.encoder_settings import parse_extra, validate
 
@@ -145,6 +146,11 @@ async def run(args):
                         break
                     await asyncio.sleep(1)
             report["cameras"] = selected
+            if args.area:
+                # The patient dashboard may set an area; the benchmark surgeon is view-only.
+                for key in args.camera:
+                    await patient.action("camera.region", id=key, points=args.area)
+                report["priority_area"] = args.area
             # The surgeon receives inventory independently of the patient's HTTP reply.
             async with asyncio.timeout(30):
                 while True:
@@ -238,6 +244,9 @@ async def run(args):
             for key in args.camera:
                 try:
                     await surgeon.action("view.close", camera=key)
+                    if args.area:
+                        # The node keeps an area across stream restarts; do not leave one.
+                        await patient.action("camera.region", id=key, points=None)
                     await patient.action("camera.stop", id=key)
                 except (RuntimeError, aiohttp.ClientError, TimeoutError):
                     pass
@@ -265,6 +274,10 @@ def main():
     parser.add_argument("--qp", type=int, default=Config.qp)
     parser.add_argument("--preset", choices=["P1", "P3", "P5"], default=Config.encoder_preset)
     parser.add_argument("--encoder-extra", default="", help="key=value lines, e.g. 'aq=8'")
+    parser.add_argument(
+        "--area",
+        help="priority area box as x0,y0,x1,y1 in picture coordinates, e.g. 0.3,0.3,0.7,0.7",
+    )
     parser.add_argument("--receiver", choices=["holoviz", "webrtc"], default="holoviz")
     parser.add_argument("--seconds", type=float, default=60)
     parser.add_argument("--warmup", type=float, default=30)
@@ -274,6 +287,11 @@ def main():
         # Reject bad encoder settings before any stream is stopped or restarted.
         validate(args.rate_control, args.bitrate, args.qp)
         parse_extra(args.encoder_extra)
+        if args.area:
+            x0, y0, x1, y1 = (float(value) for value in args.area.split(","))
+            args.area = region.validate([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            if reason := region.unavailable(args.codec, args.encoder_extra):
+                raise ValueError(f"A priority area is unavailable: {reason}")
     except ValueError as exc:
         parser.error(str(exc))
     if not math.isfinite(args.seconds) or args.seconds < 5:
