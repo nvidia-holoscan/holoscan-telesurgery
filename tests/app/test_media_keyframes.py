@@ -31,13 +31,19 @@ async def test_track_skips_deltas_until_a_keyframe_and_asks_for_one():
     async def next_data():
         return bytes(await asyncio.wait_for(track.recv(), 2))
 
+    async def consumed():
+        # The track has looked at everything published so far.
+        async with asyncio.timeout(2):
+            while track.revision != feed.revision:
+                await asyncio.sleep(0.005)
+
     # Joined mid-GOP: the delta is withheld and exactly one IDR is requested.
     await publish(4)
     receiving = asyncio.create_task(next_data())
-    await asyncio.sleep(0.05)
+    await consumed()
     assert not receiving.done() and requests == ["idr"]
     await publish(5)
-    await asyncio.sleep(0.05)
+    await consumed()
     assert not receiving.done() and requests == ["idr"]  # Paced, not one per frame.
     await publish(0, gop=2)
     assert await receiving == b"frame0"
@@ -53,11 +59,11 @@ async def test_track_skips_deltas_until_a_keyframe_and_asks_for_one():
     for index in range(5, 5 + BACKLOG + 1):
         await publish(index, gop=2)
     receiving = asyncio.create_task(next_data())
-    await asyncio.sleep(0.05)
+    await consumed()
     assert not receiving.done()
     track.chain.next_request = 0
     await publish(5 + BACKLOG + 1, gop=2)
-    await asyncio.sleep(0.05)
+    await consumed()
     assert requests == ["idr", "idr"]
     await publish(0, gop=3)
     assert await receiving == b"frame0"

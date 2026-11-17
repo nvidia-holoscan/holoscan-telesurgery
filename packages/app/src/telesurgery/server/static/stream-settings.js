@@ -91,7 +91,7 @@ export function streamSettings(changed) {
               ? "Fixed QP keeps quality constant, so bandwidth and latency vary with the scene and each keyframe is large. Slower presets use more GPU time."
               : $("#stream-rate").value === "vbr"
                 ? "The stream averages this bitrate; hard scenes may briefly use up to twice as much. Leave it empty to pick one for the resolution. Slower presets use more GPU time."
-                : "No frame uses more than its share of this bitrate, so latency stays predictable; easy scenes use less. Leave it empty to pick one for the resolution. Slower presets use more GPU time.";
+                : "Frames are held near their share of this bitrate, so latency stays predictable; easy scenes use less. A keyframe, or a limit too low for the scene, can exceed it. Leave it empty to pick one for the resolution. Slower presets use more GPU time.";
         const [width, height] = resolution.value.split("x").map(Number);
         $("#stream-viewing").textContent = raw
             ? `View in Holoviz. Raw BGR8 needs about ${((width * height * Number(fps.value) * 24) / 1e9).toFixed(2)} Gbit/s per viewer, before transport overhead. No stream compression.${["MJPG", "JPEG"].includes(format.value) ? " Camera capture is still JPEG-compressed." : ""}`

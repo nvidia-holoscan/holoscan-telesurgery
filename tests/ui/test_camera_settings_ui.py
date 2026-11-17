@@ -3,6 +3,7 @@
 
 """Stream setup keeps resolution, FPS and format combinations valid."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -198,12 +199,13 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
         "surgeons": [],
         "endpoint_port": 7447,
     }
-    actions, errors = [], []
+    actions, errors, served = [], [], []
 
     async def route(request):
         path = request.request.url.removeprefix("http://localhost:8777/")
         if path == "api/status":
             await request.fulfill(json=state)
+            served.append(len(actions))
         elif path == "api/action":
             body = json.loads(request.request.post_data)
             actions.append(body)
@@ -221,6 +223,15 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
         try:
             page = await browser.new_page(viewport={"width": 1440, "height": 960})
             page.on("pageerror", lambda error: errors.append(str(error)))
+
+            async def refreshed():
+                # The dashboard has drawn a status fetched after the last action; until
+                # then the Stream settings button still holds the earlier camera.
+                async with asyncio.timeout(10):
+                    while not served or served[-1] < len(actions):
+                        await asyncio.sleep(0.02)
+                await page.evaluate("() => new Promise((resolve) => setTimeout(resolve, 0))")
+
             await page.route("http://localhost:8777/**", route)
             await page.goto("http://localhost:8777/#node/host")
             await page.get_by_role("button", name="Stream settings", exact=True).click()
@@ -245,6 +256,7 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
             assert settings["encoder_extra"] == "" and "qp" not in settings
 
             # Fixed quality replaces the bitrate with a QP; advanced settings are free text.
+            await refreshed()
             await expect(page.get_by_role("button", name="Stop", exact=True)).to_be_visible()
             await page.get_by_role("button", name="Stream settings", exact=True).click()
             await page.get_by_text("Encoder settings", exact=True).click()
@@ -261,6 +273,7 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
             assert "bitrate_mbps" not in settings
 
             # The dialog reopens with the stream's settings, advanced section included.
+            await refreshed()
             await page.get_by_role("button", name="Stream settings", exact=True).click()
             await page.get_by_text("Encoder settings", exact=True).click()
             await expect(rate).to_have_value("cqp")
@@ -271,6 +284,7 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
             await bitrate.fill("8")
             await expect(page.locator("#stream-quality-note")).to_contain_text("twice as much")
             await page.get_by_role("button", name="Apply encoding", exact=True).click()
+            await expect(page.get_by_role("dialog", name="Change encoding")).not_to_be_visible()
             settings = actions[-1]["params"]["settings"]
             assert settings["rate_control"] == "vbr" and settings["bitrate_mbps"] == 8
             assert not errors

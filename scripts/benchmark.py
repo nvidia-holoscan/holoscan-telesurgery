@@ -15,6 +15,7 @@ from pathlib import Path
 import aiohttp
 from telesurgery_core.diagnostics.benchmark import write_report
 from telesurgery_core.video.config import Config
+from telesurgery_core.video.encoder_settings import parse_extra, validate
 
 
 class Dashboard:
@@ -269,6 +270,12 @@ def main():
     parser.add_argument("--warmup", type=float, default=30)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    try:
+        # Reject bad encoder settings before any stream is stopped or restarted.
+        validate(args.rate_control, args.bitrate, args.qp)
+        parse_extra(args.encoder_extra)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not math.isfinite(args.seconds) or args.seconds < 5:
         parser.error("--seconds must be finite and at least 5")
     if not math.isfinite(args.warmup) or args.warmup < 0:

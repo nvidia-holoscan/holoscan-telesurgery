@@ -17,13 +17,15 @@ class DirectStreams:
     def __init__(self, app):
         self.app = app
         self.tasks, self.errors = {}, {}
-        self.peers, self.refreshing = {}, set()
+        self.peers, self.refreshing = {}, {}
         self.lock = asyncio.Lock()
 
     def refresh(self, camera):
         """Ask the camera's encoder, via our direct connection, for an IDR."""
         peer = self.peers.get(camera)
-        if peer is None or peer.closed.is_set():
+        # A lossy browser can ask many times a second; one request in flight is enough,
+        # and more could fill the connection's request queue.
+        if peer is None or peer.closed.is_set() or camera in self.refreshing:
             return
 
         async def request():
@@ -33,8 +35,8 @@ class DirectStreams:
                 pass  # The caller retries while it still lacks a keyframe.
 
         task = asyncio.create_task(request())
-        self.refreshing.add(task)
-        task.add_done_callback(self.refreshing.discard)
+        self.refreshing[camera] = task
+        task.add_done_callback(lambda _: self.refreshing.pop(camera, None))
 
     async def select(self, cameras):
         async with self.lock:

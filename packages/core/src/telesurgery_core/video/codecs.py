@@ -126,8 +126,9 @@ def create_codec(config, *, encode):
 def encoder_options(config, width, height):
     """Shared application/benchmark settings; no additional NVENC output queue.
 
-    "cbr" (default) limits every predicted frame to its share of the link (bitrate /
-    fps), so transmit time and latency stay predictable; easy scenes use less. It is
+    "cbr" (default) holds every predicted frame near its share of the link (bitrate /
+    fps), so transmit time and latency stay predictable; easy scenes use less. An IDR of
+    detailed content, or a limit too low for the scene, can exceed that share. It is
     NVENC's VBR mode with the peak equal to the average and a one-frame buffer:
     NVENC's own CBR mode produces the same pictures, then pads H.264 frames to the
     full budget with filler data (over 40% of a simulation stream).

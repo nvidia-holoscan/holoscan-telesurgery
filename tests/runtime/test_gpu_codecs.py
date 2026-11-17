@@ -107,9 +107,6 @@ def test_gpu_colors_timestamps_loss_late_join_and_restart(codec):
             packets.append(encoder.encode(Frame(header, pixels)))
             assert packets[-1][0].keyframe and packets[-1][0].gop != packets[0][0].gop
             order = (packets[-1], packets[0], packets[1], packets[2])
-            # Skipping packets[3] loses a reference, even though packets[4] arrives next.
-            with pytest.raises(MissingReference):
-                decoder.decode(*packets[4])
         else:
             # Independent frames: join halfway, skip, and replay an earlier frame.
             order = (packets[3], packets[7], packets[0])
@@ -122,6 +119,19 @@ def test_gpu_colors_timestamps_loss_late_join_and_restart(codec):
         # The pinned pool must not overwrite frames still owned by the viewer.
         for held, saved in held_frames:
             np.testing.assert_array_equal(held.image, saved)
+        if predicted:
+            # Loss during playback: packets[3] never arrives, so the frames after it
+            # are refused until a fresh IDR, and the same decoder then continues.
+            for header, data in (packets[4], packets[5]):
+                with pytest.raises(MissingReference):
+                    decoder.decode(header, data)
+            encoder.request_keyframe()
+            for sequence in (13, 14):
+                header = VideoHeader(sequence, time.time_ns(), 320, 240)
+                recovered = encoder.encode(Frame(header, originals[11][1]))
+                assert recovered[0].keyframe == (sequence == 13)
+                frame = decoder.decode(*recovered)
+                assert np.abs(frame.image.astype(float) - originals[11][1]).mean() < 4
         with pytest.raises(ValueError, match="bounded header"):
             decoder.decode(replace(packets[0][0], width=160), packets[0][1])
         with pytest.raises(RuntimeError, match="codec mismatch"):

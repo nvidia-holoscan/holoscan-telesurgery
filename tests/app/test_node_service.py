@@ -322,13 +322,15 @@ async def test_direct_video_tickets_scope_expiry_and_revocation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
+async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path, monkeypatch):
     from telesurgery.nodes.video import VideoEndpoint
     from telesurgery_core.diagnostics.clock import Clock
     from telesurgery_core.transport.peer import Peer
     from telesurgery_core.transport.protocol import VideoHeader
     from telesurgery_core.transport.tls import client_context
 
+    # Long enough that the request right after attaching stays inside the window.
+    monkeypatch.setattr("telesurgery.nodes.video.KEYFRAME_COALESCE", 0.5)
     endpoint = VideoEndpoint(tmp_path, Clock())
     requested, peers = [], []
     endpoint.refresh = requested.append
@@ -360,14 +362,14 @@ async def test_viewers_request_keyframes_and_requests_coalesce(tmp_path):
         await viewer.call("viewer.refresh", {})
         assert requested == ["one"]  # Shares the IDR that was just requested.
         endpoint.publish("one", asdict(VideoHeader(0, 1, 32, 32, gop=1)), b"idr", None)
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.6)
         assert requested == ["one"]  # That IDR arrived, so the second request is met.
         await viewer.call("viewer.refresh", {})
         assert requested == ["one", "one"]
         # A request inside the window with no IDR since is delayed, never dropped.
         await viewer.call("viewer.refresh", {})
         assert requested == ["one", "one"]
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.6)
         assert requested == ["one", "one", "one"]
     finally:
         for peer in peers:
@@ -415,7 +417,7 @@ async def test_a_viewer_that_falls_behind_keeps_decodable_frames_and_gets_an_idr
         frame(1, 2)
         frame(1, 3)
         assert requested == ["one"]
-        await asyncio.sleep(0.05)
+        await until(lambda: received[-1] == (1, 1))
         frame(1, 4)  # Still waiting: no delta is sent until the IDR.
         frame(2, 0)
         frame(2, 1)  # The IDR is unsent, so this delta would be undecodable too.

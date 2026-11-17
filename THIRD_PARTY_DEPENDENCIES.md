@@ -26,7 +26,7 @@ The 77 external distributions in `uv.lock` are the union of three distinct selec
 | `cuda-pathfinder` | 1.8.2 | Apache-2.0 | [upstream](https://github.com/NVIDIA/cuda-python) | distribution: `LICENSE` | runtime transitive |
 | `cuda-toolkit` | 13.4.2 | NVIDIA proprietary terms | [upstream](https://developer.nvidia.com/cuda-toolkit) | [CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html) | runtime transitive |
 | `cupy-cuda13x` | 14.2.0 | MIT | [upstream](https://github.com/cupy/cupy) | distribution: `LICENSE`, `docs/source/license.rst` | runtime direct |
-| `dnspython` | 2.8.0 | ISC | [upstream](https://github.com/rthalley/dnspython) | distribution: `LICENSE` | runtime transitive |
+| `dnspython` | 2.9.2 | ISC | [upstream](https://github.com/rthalley/dnspython) | distribution: `LICENSE` | runtime transitive |
 | `frozenlist` | 1.8.0 | Apache-2.0 | [upstream](https://github.com/aio-libs/frozenlist) | distribution: `LICENSE` | runtime transitive |
 | `google-crc32c` | 1.9.0 | Apache-2.0 | [upstream](https://github.com/googleapis/python-crc32c) | distribution: `LICENSE` | runtime transitive |
 | `idna` | 3.20 | BSD-3-Clause | [upstream](https://github.com/kjd/idna) | distribution: `LICENSE.md` | runtime transitive |
