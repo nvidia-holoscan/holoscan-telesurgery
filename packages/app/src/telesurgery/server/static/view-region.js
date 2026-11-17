@@ -47,7 +47,8 @@ function extent(points) {
 const who = (camera) => camera.region_by ? ` set by ${camera.region_by}` : "";
 const allowed = (state) => state.role === "patient" || Boolean(state.session?.robot);
 
-export function priorityArea(camera, { viewport, stage, surface, caption }) {
+// native: the tools sit on a card, not over a picture. changed: told the armed tool after each draw.
+export function priorityArea(camera, { viewport, stage, surface, caption, native = false, changed }) {
     let current = camera, permitted = false, mode = null, gesture = null, pending, busy = false;
     const overlay = document.createElementNS(SVG, "svg");
     overlay.setAttribute("class", "region-overlay");
@@ -63,7 +64,7 @@ export function priorityArea(camera, { viewport, stage, surface, caption }) {
     });
     stage.append(overlay);
 
-    const tools = element("div", undefined, "view-region");
+    const tools = element("div", undefined, `view-region${native ? " native-region" : ""}`);
     tools.setAttribute("role", "group");
     tools.setAttribute("aria-label", `${camera.name} priority area`);
     const label = element("span", "Priority area", "region-label");
@@ -132,6 +133,7 @@ export function priorityArea(camera, { viewport, stage, surface, caption }) {
             : "";
         if (status.textContent !== text) status.textContent = text;
         status.hidden = !text;
+        changed?.(mode);
     }
     async function save(shape) {
         if (busy) return;
@@ -247,15 +249,69 @@ export function priorityArea(camera, { viewport, stage, surface, caption }) {
     };
 }
 
-// A camera shown in Holoviz has no picture here to draw on: report the area and allow clearing it.
-export function nativePriorityArea(camera, state, refresh) {
-    if (!camera.region_supported || !camera.region) return null;
-    const row = element("div", undefined, "region-native");
-    row.append(element("span", `Priority area${who(camera)}`));
-    if (allowed(state))
-        row.append(button("Clear", async () => {
-            await action("camera.region", { id: camera.id, points: null });
-            await refresh();
-        }, "text-link"));
-    return row;
+// A camera shown in Holoviz has no picture here. Its card gets the same tools; choosing a
+// drawing tool opens a still picture lent by the Holoviz window, refreshed while it is open.
+const STILL_MS = 350;
+export function nativePriorityArea(camera) {
+    let shown = false, timer;
+    const root = element("div", undefined, "region-native");
+    const viewport = element("div", undefined, "region-still");
+    viewport.tabIndex = 0;
+    viewport.hidden = true;
+    viewport.setAttribute("role", "group");
+    viewport.setAttribute("aria-label", `${camera.name} still picture for drawing a priority area`);
+    const stage = element("div", undefined, "region-still-stage");
+    const image = document.createElement("img");
+    image.alt = `${camera.name}, still picture from Holoviz`;
+    image.draggable = false;
+    stage.append(image, element("p", "Waiting for the picture from Holoviz…", "region-still-waiting"));
+    viewport.append(stage);
+    const hide = button("Hide picture", () => open(false), "text-link region-still-hide");
+    hide.hidden = true;
+
+    const next = (delay) => {
+        clearTimeout(timer);
+        if (shown && !document.hidden) timer = setTimeout(load, delay);
+    };
+    function load() {
+        image.src = `/api/cameras/${encodeURIComponent(camera.id)}/native-preview?t=${Date.now()}`;
+    }
+    image.addEventListener("load", () => { stage.dataset.ready = "true"; next(STILL_MS); });
+    image.addEventListener("error", () => next(STILL_MS * 2));
+    const resume = () => next(0);
+    document.addEventListener("visibilitychange", resume);
+    function open(value) {
+        if (shown === value) return;
+        shown = value;
+        viewport.hidden = hide.hidden = !value;
+        clearTimeout(timer);
+        if (value) load();
+        else {
+            delete stage.dataset.ready;
+            image.removeAttribute("src");
+        }
+    }
+    const area = priorityArea(camera, {
+        viewport, stage, surface: root, caption: root, native: true,
+        changed: (mode) => { if (mode) open(true); },
+    });
+    // priorityArea added the tools and the status line; the picture belongs between them.
+    root.insertBefore(viewport, root.querySelector(".region-status"));
+    root.insertBefore(hide, root.querySelector(".region-status"));
+    return {
+        element: root,
+        update(camera, state) {
+            root.hidden = !camera.region_supported;
+            if (root.hidden) open(false);
+            // The still is stretched to the camera's shape, whatever size Holoviz lends.
+            if (camera.width > 0 && camera.height > 0)
+                stage.style.aspectRatio = `${camera.width} / ${camera.height}`;
+            area.update(camera, state);
+        },
+        stop() {
+            open(false);
+            document.removeEventListener("visibilitychange", resume);
+            area.stop();
+        },
+    };
 }

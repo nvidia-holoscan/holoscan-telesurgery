@@ -102,6 +102,19 @@ def create_app(service, host="127.0.0.1", *, token=None):
             headers={"Cache-Control": "no-store"},
         )
 
+    async def native_preview(request):
+        # A camera open in Holoviz has no picture here; the window lends a small still
+        # for drawing a priority area. Only this dashboard's own windows are served.
+        try:
+            data = service.native.preview(request.match_info["camera"])
+        except LookupError as exc:
+            raise web.HTTPNotFound(text=str(exc)) from None
+        if data is None:
+            return web.Response(status=204, headers={"Cache-Control": "no-store"})
+        return web.Response(
+            body=data, content_type="image/jpeg", headers={"Cache-Control": "no-store"}
+        )
+
     async def offer(request):
         body = await request.json(loads=loads)
         if not isinstance(body, dict) or any(
@@ -145,6 +158,7 @@ def create_app(service, host="127.0.0.1", *, token=None):
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/nodes/{node}/log", node_log)
     app.router.add_get("/api/cameras/{camera}/log", camera_log)
+    app.router.add_get("/api/cameras/{camera}/native-preview", native_preview)
     app.router.add_get("/api/robots/{robot}/log", robot_log)
     app.router.add_post("/api/action", action)
     app.router.add_post("/api/offer", offer)

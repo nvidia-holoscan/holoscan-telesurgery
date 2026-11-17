@@ -53,6 +53,44 @@ def mask(points, rows=GRID_ROWS, columns=GRID_COLUMNS):
     return np.ascontiguousarray(winding != 0, dtype=np.uint8)
 
 
+# The dashboard's outline colours (view-region.css), as RGB for the native viewer.
+OUTLINE_LINE = (183, 239, 102)
+OUTLINE_HALO = (12, 18, 15)
+
+
+def _band(columns, rows, thickness, width, height):
+    """Flat indices of the pixels within a square pen of this thickness around each sample."""
+    reach = np.arange(thickness) - thickness // 2
+    x = (columns[:, None] + reach[None, :]).clip(0, width - 1)
+    y = (rows[:, None] + reach[None, :]).clip(0, height - 1)
+    return np.unique(y[:, :, None] * width + x[:, None, :]).astype(np.int32)
+
+
+def outline(points, width, height):
+    """Pixels of the area's outline in a width x height picture: (halo, line).
+
+    Both are sorted flat indices (row * width + column) for the native viewer, which
+    has no overlay layer and paints them into each frame. The line is about 2 pixels
+    per 1080 picture lines and the dark halo around it keeps it visible on any content,
+    as on the dashboard.
+    """
+    polygon = np.asarray(points, dtype=np.float64) * (width, height)
+    columns, rows = [], []
+    for (x0, y0), (x1, y1) in zip(polygon, np.roll(polygon, -1, axis=0), strict=True):
+        steps = max(2, int(np.ceil(max(abs(x1 - x0), abs(y1 - y0)) * 2)) + 1)
+        along = np.linspace(0.0, 1.0, steps)
+        columns.append(x0 + (x1 - x0) * along)
+        rows.append(y0 + (y1 - y0) * along)
+    columns = np.floor(np.concatenate(columns)).astype(np.int64).clip(0, width - 1)
+    rows = np.floor(np.concatenate(rows)).astype(np.int64).clip(0, height - 1)
+    # Each pixel of the path once, however many samples fell in it.
+    path = np.unique(rows * width + columns)
+    rows, columns = path // width, path % width
+    line = max(2, round(height / 540))
+    halo = line + 2 * max(1, round(height / 1080))
+    return _band(columns, rows, halo, width, height), _band(columns, rows, line, width, height)
+
+
 def validate(points):
     """Return the polygon as [[x, y], ...] or raise ValueError with a message for the user."""
     if not isinstance(points, (list, tuple)) or not MIN_POINTS <= len(points) <= MAX_POINTS:

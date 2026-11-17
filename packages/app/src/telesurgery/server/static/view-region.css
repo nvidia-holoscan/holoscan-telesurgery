@@ -68,14 +68,63 @@
     line-height: 1.45;
 }
 .video-caption > .region-status[hidden] { display: none; }
-.region-native {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+/* A camera open in Holoviz: the same tools on its card, and a still picture to draw on. */
+.region-native { margin-top: 12px; container-type: inline-size; }
+.region-native[hidden] { display: none; }
+.native-region {
+    position: relative;
+    bottom: auto;
+    left: auto;
+    width: fit-content;
+    background: var(--theme-surface, #fff);
+    color: var(--ink);
+    border-color: var(--border);
+    box-shadow: none;
+}
+.native-region .region-tool:hover { background: var(--theme-stripe, #edf0ee); }
+.native-region .region-tool[aria-pressed="true"]:hover { background: var(--green); }
+.region-still {
+    position: relative;
+    width: min(100%, 640px);
     margin-top: 10px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #0f1714;
+    user-select: none;
+}
+.region-still[hidden], .region-still-hide[hidden] { display: none; }
+.region-still[data-region] { cursor: crosshair; touch-action: none; }
+.region-still:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.region-still-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; }
+.region-still-stage img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    visibility: hidden;
+    -webkit-user-drag: none;
+}
+.region-still-stage[data-ready="true"] img { visibility: visible; }
+.region-still-waiting {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 0 12px;
+    color: #c9d3cd;
+    font-size: 12px;
+    text-align: center;
+}
+.region-still-stage[data-ready="true"] .region-still-waiting { display: none; }
+.region-still-hide { display: block; margin-top: 6px; font-size: 12px; }
+.region-native > .region-status {
+    margin: 8px 0 0;
     color: var(--muted);
     font-size: 11px;
+    line-height: 1.45;
 }
+.region-native > .region-status[hidden] { display: none; }
 @container (max-width: 520px) {
     .view-region .region-label { display: none; }
 }

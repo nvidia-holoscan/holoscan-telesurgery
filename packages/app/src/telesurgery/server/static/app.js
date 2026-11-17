@@ -90,6 +90,7 @@ for (const [selector, method, done] of [
     };
 }
 const tiles = new Map(),
+    nativeAreas = new Map(),
     previews = new Set(),
     rendered = new Map();
 const layout = viewingLayout();
@@ -943,14 +944,18 @@ function renderCurrent() {
     const nativeCameras = cameras.filter(
         (c) => nativeViewing(c.id) && (isPatient || approved),
     );
+    for (const [id, area] of nativeAreas)
+        if (!nativeCameras.some((c) => c.id === id)) {
+            area.stop();
+            nativeAreas.delete(id);
+        }
     renderChanged(
         "native-tiles",
         nativeCameras.map((c) => [
             c.id,
             c.name,
+            c.codec,
             state.native_views[c.id].status,
-            c.region_supported && c.region ? c.region_by || "" : null,
-            isPatient || Boolean(state.session?.robot),
         ]),
         () => {
             $("#native-views").replaceChildren();
@@ -969,8 +974,10 @@ function renderCurrent() {
                     tile,
                     state.native_views[camera.id].display,
                 );
-                const area = nativePriorityArea(camera, state, refresh);
-                if (area) tile.append(area);
+                // Kept across re-renders: it may hold an open picture or a drawing.
+                if (!nativeAreas.has(camera.id))
+                    nativeAreas.set(camera.id, nativePriorityArea(camera));
+                tile.append(nativeAreas.get(camera.id).element);
                 const controls = element("div", undefined, "actions");
                 const metrics = button(
                     "Metrics",
@@ -1008,6 +1015,8 @@ function renderCurrent() {
             }
         },
     );
+    for (const camera of nativeCameras)
+        nativeAreas.get(camera.id)?.update(camera, state);
     $("#view-toolbar").hidden = isPatient;
     $("#workspace-kicker").hidden = isPatient;
     $("#workspace-title").textContent = isPatient

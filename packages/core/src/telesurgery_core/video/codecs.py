@@ -115,17 +115,35 @@ class CodecWorker:
             header, pack_ns=header.pack_ns + finished - started, encoded_ns=finished
         ), data
 
-    def _decode(self, header, data, on_device=False):
+    def _decode(self, header, data, on_device=False, prepare=None):
         color, packed = depth.split(header, data)
-        frame = self.codec.decode(header, color, on_device=on_device)
+        if prepare is None:
+            frame = self.codec.decode(header, color, on_device=on_device)
+        elif isinstance(self.codec, GpuCodec):
+            frame = self.codec.decode(header, color, on_device=on_device, prepare=prepare)
+        else:
+            frame = self.codec.decode(header, color, on_device=on_device)
+            import cupy as cp
+
+            with cp.cuda.Device(frame.image.device.id):
+                prepare(frame.image)
+                cp.cuda.get_current_stream().synchronize()
         frame.depth = depth.unpack(header, packed)
         return frame
 
     def decode(self, header, data):
         return self.executor.submit(self._decode, header, data).result()
 
-    def decode_device(self, header, data):
-        return self.executor.submit(self._decode, header, data, on_device=True).result()
+    def decode_device(self, header, data, prepare=None):
+        """Decode to owned device pixels for display.
+
+        prepare(image) may read or draw on those pixels before they leave the decoder.
+        Its GPU work is finished when this returns, at no extra synchronization for
+        H.264/H.265/nvJPEG, where it joins the decoder's own stream.
+        """
+        return self.executor.submit(
+            self._decode, header, data, on_device=True, prepare=prepare
+        ).result()
 
     def close(self):
         try:
@@ -397,7 +415,7 @@ class GpuCodec:
             self.chain.reset()
             raise MissingReference("delta frame does not match the active decoder")
 
-    def decode(self, header: VideoHeader, data: bytes, *, on_device=False) -> Frame:
+    def decode(self, header: VideoHeader, data: bytes, *, on_device=False, prepare=None) -> Frame:
         """Return owned RGB device pixels for display, or BGR host pixels for diagnostics."""
         if header.codec != self.kind:
             raise RuntimeError(
@@ -412,13 +430,13 @@ class GpuCodec:
         if self.kind != "nvjpeg":
             self._check_reference(header, keyframe, size)
         try:
-            return self._decode(header, data, size, on_device)
+            return self._decode(header, data, size, on_device, prepare)
         except Exception:
             # The decoder may not hold this frame; later deltas must wait for an IDR.
             self.chain.reset()
             raise
 
-    def _decode(self, header, data, size, on_device):
+    def _decode(self, header, data, size, on_device, prepare=None):
         with self.device, self.stream:
             if self.kind == "nvjpeg":
                 image = self.cp.asarray(self.backend.decode(data))
@@ -441,6 +459,9 @@ class GpuCodec:
                 # NVDEC recycles its surfaces. Own a device copy until Holoviz has
                 # consumed it; no uncompressed pixels cross to host memory.
                 owned = image.copy()
+                if prepare is not None:
+                    # On this stream, so the wait below also covers the caller's work.
+                    prepare(owned)
                 self.stream.synchronize()
                 return Frame(header, owned)
             image = image[..., ::-1]

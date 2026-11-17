@@ -402,6 +402,7 @@ class Application:
             await self.media.clear(camera)
             await self._media_changed()
             await self._sync_streams()
+            self._native_areas()
             await self.native.open(
                 {
                     "camera": camera,
@@ -421,6 +422,17 @@ class Application:
             raise PermissionError("Patient access was revoked")
         await self._sync_streams()
         return True
+
+    def _native_areas(self):
+        """Tell Holoviz windows their cameras' priority areas; they draw the outline."""
+        cameras = (
+            self.inventory()["cameras"]
+            if self.role == "patient"
+            else self.remote_status.get("cameras", [])
+        )
+        self.native.regions(
+            {item["id"]: item.get("region") for item in cameras if item.get("region_supported")}
+        )
 
     async def _sync_streams(self):
         if self.role != "surgeon":
@@ -1180,6 +1192,7 @@ class Application:
                 for camera in self.remote_status.get("cameras", []):
                     if camera["id"] == params["id"]:
                         camera.update(state)
+                self._native_areas()
                 return state
             if method in {"view", "view.hide"}:
                 selected = set(params["cameras"])
@@ -1413,9 +1426,11 @@ class Application:
                 return next(c["camera_zoom"] for c in result["cameras"] if c["id"] == device)
             return True
         if method == "camera.region":
-            return await self._set_region(
+            state = await self._set_region(
                 params.get("id"), params.get("points"), "the patient dashboard"
             )
+            self._native_areas()
+            return state
         if method in {"node.approve", "node.reject"}:
             return await self.node_registry.decide(
                 params["id"],
@@ -1591,6 +1606,8 @@ class Application:
         tick = 0
         while True:
             try:
+                if self.native.windows:
+                    self._native_areas()
                 if self.haply.reader and (
                     time.monotonic() - self.haply.last_read > 2
                     or self.remote_status.get("status") != "approved"

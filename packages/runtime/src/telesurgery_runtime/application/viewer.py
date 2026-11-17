@@ -6,19 +6,23 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import signal
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 
+import numpy as np
 from telesurgery_core.diagnostics.benchmark import Benchmark
 from telesurgery_core.diagnostics.clock import Clock
 from telesurgery_core.diagnostics.trace import arrive, mark
 from telesurgery_core.transport.peer import Peer
 from telesurgery_core.transport.protocol import decode_video
 from telesurgery_core.transport.tls import client_context, pin_peer
+from telesurgery_core.video import region
 from telesurgery_core.video.codecs import CodecWorker
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.depth import render
@@ -31,6 +35,75 @@ from telesurgery_runtime.backends.sdk import backend, require_sdk
 # Predicted frames that arrived while the viewer was busy are decoded in order, so a
 # short stall costs no keyframe. A longer backlog is dropped and repaired by an IDR.
 BACKLOG = 8
+# The dashboard asks for still pictures by touching a file; stop when it stops asking.
+STILL_REQUEST_SECONDS = 3
+
+
+class Stills:
+    """Small JPEGs of the current picture, for drawing a priority area on the dashboard.
+
+    A camera shown in Holoviz has no picture in the browser. While the dashboard asks,
+    the display path launches one strided GPU copy at most four times a second; the
+    download, JPEG encoding and file write run on a worker thread.
+    """
+
+    SIDE, INTERVAL = 640, 0.25
+
+    def __init__(self, path):
+        self.path, self.wanted = Path(path), False
+        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="view-still")
+        self.pending, self.due, self.written = None, 0.0, 0
+
+    def want(self, wanted):
+        if self.wanted and not wanted:
+            # A later request must not be answered with an old picture.
+            self.path.unlink(missing_ok=True)
+        self.wanted = wanted
+
+    def offer(self, image):
+        """Called with each displayed frame, before anything is drawn on it."""
+        now = time.monotonic()
+        if not self.wanted or now < self.due or (self.pending and not self.pending.done()):
+            return
+        self.due = now + self.INTERVAL
+        import cupy as cp
+
+        step = -(-max(image.shape[:2]) // self.SIDE)
+        with cp.cuda.Device(image.device.id):
+            small = cp.ascontiguousarray(image[::step, ::step])
+            # The copy is only queued, on the decoder's stream. The worker reads it on
+            # another stream, so it waits for this marker first.
+            copied = cp.cuda.Event()
+            copied.record()
+        self.pending = self.worker.submit(self._write, small, copied)
+
+    def _write(self, small, copied):
+        try:
+            import cupy as cp
+            import cv2
+
+            with cp.cuda.Device(small.device.id):
+                copied.synchronize()
+                pixels = small.get()
+            encoded, data = cv2.imencode(
+                ".jpg", cv2.cvtColor(pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 80]
+            )
+            if not encoded:
+                raise RuntimeError("JPEG encoding failed")
+            temporary = self.path.with_suffix(".tmp")
+            temporary.write_bytes(data)
+            if self.wanted:
+                temporary.replace(self.path)
+                self.written += 1
+            else:
+                temporary.unlink(missing_ok=True)
+        except Exception:
+            logging.exception("Could not write a still picture for the dashboard")
+
+    def close(self):
+        self.wanted = False
+        self.worker.shutdown(wait=True)
+        self.path.unlink(missing_ok=True)
 
 
 class ReceiveDecode:
@@ -42,6 +115,11 @@ class ReceiveDecode:
         self.depth_enabled = depth_enabled
         self.display = {"mode": "color", "distance": 2.0, "opacity": 0.4}
         self.zoom = zoom_settings()
+        # Priority area: (width, height, halo, line) pixel indices from region.outline,
+        # replaced as a whole by the service loop; the GPU copy belongs to the decoder.
+        self.outline, self.painted = None, None
+        self.picture = None  # (width, height) of the frames being shown
+        self.stills = None
         self.waiting = ReferenceChain()  # Only paces keyframe requests.
         self.wants_keyframe, self.waiting_since = False, 0.0
 
@@ -98,7 +176,7 @@ class ReceiveDecode:
             self.codec = header.codec
             self.decoder_key = key
         try:
-            frame = self.decoder.decode_device(header, data)
+            frame = self.decoder.decode_device(header, data, self._prepare if show else None)
         except MissingReference:
             # Loss or a late join: drop deltas until an IDR arrives and ask for one.
             if not self.wants_keyframe:
@@ -117,13 +195,49 @@ class ReceiveDecode:
         self.decoded_ns = time.monotonic_ns()
         self.benchmark.add(stage, (time.perf_counter() - stamp) * 1000)
         self.frames += 1
-        image = crop(render(frame.image, frame.depth, **self.display), **self.zoom)
+        shown = render(frame.image, frame.depth, **self.display)
+        if self.display.get("mode") == "depth":
+            # A depth-only view replaces the colour picture the outline was drawn on.
+            self._outline(shown, wait=True)
+        image = crop(shown, **self.zoom)
         # Depth composition already waits for its GPU work. Zoom itself only
         # changes tensor metadata; sampling/scaling is part of Holoviz rendering.
         self.prepared_ns = time.monotonic_ns()
         self.trace = mark(self.trace, "view_processing_ms", self.prepared_ns)
         self.benchmark.add("view_processing_ms", (self.prepared_ns - self.decoded_ns) / 1e6)
         return image
+
+    def _prepare(self, image):
+        """With the decoder, before the frame is handed over: lend a still, draw the outline.
+
+        The decoder waits for its own GPU work once per frame; work added here is covered
+        by that wait instead of adding another on the display path.
+        """
+        self.picture = (image.shape[1], image.shape[0])
+        if self.stills is not None:
+            self.stills.offer(image)
+        self._outline(image)
+
+    def _outline(self, image, *, wait=False):
+        """Paint the priority area's outline into an owned frame; Holoviz has no overlay."""
+        outline = self.outline
+        if outline is None or image.shape[:2] != (outline[1], outline[0]):
+            return
+        import cupy as cp
+
+        with cp.cuda.Device(image.device.id):
+            if self.painted is None or self.painted[0] is not outline:
+                # One write per frame: every halo pixel with its colour, the line's among them.
+                halo, line = outline[2], outline[3]
+                colours = np.where(
+                    np.isin(halo, line)[:, None], region.OUTLINE_LINE, region.OUTLINE_HALO
+                ).astype(np.uint8)
+                self.painted = (outline, cp.asarray(halo), cp.asarray(colours))
+            _, pixels, colours = self.painted
+            image.reshape(-1, 3)[pixels] = colours
+            if wait:
+                # The display hand-off reads this frame on another stream.
+                cp.cuda.get_current_stream().synchronize()
 
     def submitted(self):
         trace = mark(self.trace, "render_submit_ms")
@@ -132,8 +246,26 @@ class ReceiveDecode:
             self.benchmark.finish(trace, "holoviz")
 
     def stop(self):
+        if self.stills is not None:
+            self.stills.close()
         if self.decoder:
             self.decoder.close()
+
+
+def still_wanted(request):
+    """True while the dashboard keeps renewing its request for still pictures."""
+    try:
+        return time.time() - request.stat().st_mtime < STILL_REQUEST_SECONDS
+    except OSError:
+        return False
+
+
+def area_points(value):
+    """A priority area from the service, or None when there is none to draw."""
+    try:
+        return region.validate(value) if value is not None else None
+    except ValueError:
+        return None
 
 
 async def run(config, report):
@@ -142,6 +274,8 @@ async def run(config, report):
     source = ReceiveDecode(config.get("depth", False))
     source.zoom = zoom_settings(**config.get("zoom", {}))
     source.display.update(config.get("display", {}))
+    source.stills = Stills(report.with_name("preview.jpg"))
+    area, outlined = area_points(config.get("region")), None
     clock = Clock()
     clock_task = asyncio.create_task(clock.watch())
     session = None
@@ -184,6 +318,8 @@ async def run(config, report):
             reset_request = report.with_name("reset-metrics")
             display_request = report.with_name("display.json")
             zoom_request = report.with_name("zoom.json")
+            region_request = report.with_name("region.json")
+            still_request = report.with_name("preview-request")
             request_versions = {}
             while not stopped.is_set() and not peer.closed.is_set() and os.getppid() == parent:
                 if not session.is_running():
@@ -204,6 +340,24 @@ async def run(config, report):
                                 attribute,
                                 zoom_settings(**values) if attribute == "zoom" else values,
                             )
+                    # Compared by identity as well as time: file times are coarse on Jetson,
+                    # and two areas set a few milliseconds apart must both be seen.
+                    stamp = region.stamp(region_request)
+                    if stamp is not None and stamp != request_versions.get(region_request):
+                        request_versions[region_request] = stamp
+                        area = area_points(json.loads(region_request.read_text()).get("points"))
+                    if (area, source.picture) != outlined:
+                        outlined = (area, source.picture)
+                        # Off this loop: it also delivers the video packets.
+                        source.outline = (
+                            (
+                                *source.picture,
+                                *await asyncio.to_thread(region.outline, area, *source.picture),
+                            )
+                            if area and source.picture
+                            else None
+                        )
+                    source.stills.want(still_wanted(still_request))
                     resetting = reset_request.exists()
                     if resetting:
                         source.benchmark.reset()
@@ -220,6 +374,7 @@ async def run(config, report):
                                 "codec": source.codec,
                                 "display": source.display,
                                 "zoom": source.zoom,
+                                "region": area,
                                 "metrics": metrics,
                             },
                         )

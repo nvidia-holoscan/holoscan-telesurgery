@@ -127,3 +127,49 @@ def test_request_and_status_files_are_replaced_whole(tmp_path):
         "revision": None,
         "error": "refused",
     }
+
+
+@pytest.mark.parametrize("width,height,line,halo", [(1920, 1080, 2, 4), (3840, 2160, 4, 8)])
+def test_outline_is_a_line_with_a_halo_scaled_to_the_picture(width, height, line, halo):
+    box = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]
+    dark, bright = region.outline(box, width, height)
+    for indices in (dark, bright):
+        assert indices.dtype == np.int32
+        assert np.all(np.diff(indices) > 0)  # sorted, each pixel once
+        assert 0 <= indices[0] and indices[-1] < width * height
+    assert np.isin(bright, dark).all()
+    picture = np.zeros(width * height, dtype=np.uint8)
+    picture[dark] = 1
+    picture[bright] = 2
+    picture = picture.reshape(height, width)
+    # Crossing the top edge at the middle of the picture: halo, line, halo.
+    column = picture[: height // 2, width // 2]
+    assert (column == 2).sum() == line and (column > 0).sum() == halo
+    top = np.flatnonzero(column == 2)
+    assert abs(top.mean() - height * 0.25) <= line
+    # Crossing the left edge at mid-height, and nothing drawn inside or outside the box.
+    row = picture[height // 2, : width // 2]
+    assert (row == 2).sum() == line and (row > 0).sum() == halo
+    assert not picture[height // 2, width // 2] and not picture[5, 5]
+    # A closed outline: every row between the top and bottom edges crosses it twice.
+    rows = picture[int(height * 0.3) : int(height * 0.7)]
+    assert ((rows == 2).sum(axis=1) == 2 * line).all()
+
+
+def test_outline_follows_slanted_edges_without_gaps_and_stays_inside_the_picture():
+    width, height = 640, 360
+    triangle = [[0.0, 0.0], [1.0, 0.4], [0.3, 1.0]]
+    dark, bright = region.outline(triangle, width, height)
+    picture = np.zeros(width * height, dtype=bool)
+    picture[bright] = True
+    picture = picture.reshape(height, width)
+    # Each row and each column the triangle spans holds part of the line.
+    assert picture.any(axis=1).all() and picture.any(axis=0).all()
+    assert picture[0, 0] and picture[height - 1, int(0.3 * width)]
+    # Points on the picture's border are drawn at the border, not wrapped to the other side.
+    edge = region.outline([[0, 0], [1, 0], [1, 1], [0, 1]], width, height)[1]
+    border = np.zeros(width * height, dtype=bool)
+    border[edge] = True
+    border = border.reshape(height, width)
+    assert border[0].all() and border[-1].all() and border[:, 0].all() and border[:, -1].all()
+    assert not border[height // 2, width // 2]

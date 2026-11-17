@@ -8,6 +8,8 @@ import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 from playwright.async_api import async_playwright, expect
 
@@ -23,6 +25,9 @@ PEER = """window.RTCPeerConnection=class {
 };"""
 FIELDS = ("region_supported", "region_unavailable", "region", "region_by")
 BOX = [[0.3, 0.25], [0.7, 0.25], [0.7, 0.75], [0.3, 0.75]]
+VIDEO, STILL = ".video-tile video", ".region-still-stage"
+# What a Holoviz window lends the dashboard: a small JPEG of its picture.
+JPEG = cv2.imencode(".jpg", np.full((360, 640, 3), (60, 70, 150), dtype=np.uint8))[1].tobytes()
 
 
 def camera(**changes):
@@ -71,6 +76,13 @@ async def dashboard(state, *, size=(1440, 900), refuse=None, ready=".video-tile,
         path = request.request.url.removeprefix("http://localhost:8777/")
         if path.startswith("api/status"):
             await request.fulfill(json=state)
+        elif "/native-preview" in path:
+            # Recorded with the actions, so tests can tell when the page stops asking.
+            identity = path.removeprefix("api/cameras/").split("/native-preview")[0]
+            actions.append({"action": "native-preview", "params": {"id": identity}})
+            if identity.replace("%3A", ":") not in state["native_views"]:
+                return await request.fulfill(status=404, json={"error": "Not open in Holoviz"})
+            await request.fulfill(status=200, content_type="image/jpeg", body=JPEG)
         elif path == "api/action":
             body = json.loads(request.request.post_data)
             actions.append(body)
@@ -102,17 +114,18 @@ async def dashboard(state, *, size=(1440, 900), refuse=None, ready=".video-tile,
             await browser.close()
 
 
-async def picture(page):
+async def picture(page, target=VIDEO):
     """The picture's box on screen, once the view has sized it."""
     await page.wait_for_function(
-        "() => document.querySelector('.video-tile video')?.getBoundingClientRect().width > 0"
+        "target => document.querySelector(target)?.getBoundingClientRect().width > 0",
+        arg=target,
     )
-    return await page.locator(".video-tile video").first.bounding_box()
+    return await page.locator(target).first.bounding_box()
 
 
-async def drag(page, start, end, *, steps=8):
+async def drag(page, start, end, *, steps=8, target=VIDEO):
     """Press at one point of the picture and release at another (fractions of the picture)."""
-    frame = await picture(page)
+    frame = await picture(page, target)
     await page.mouse.move(
         frame["x"] + frame["width"] * start[0], frame["y"] + frame["height"] * start[1]
     )
@@ -123,16 +136,19 @@ async def drag(page, start, end, *, steps=8):
     await page.mouse.up()
 
 
-async def outline(page):
+async def outline(page, target=VIDEO):
     """The drawn outline's extent as fractions of the picture: left, top, right, bottom."""
-    await picture(page)
+    await picture(page, target)
     return await page.evaluate(
-        """() => {
-            const frame = document.querySelector('.video-tile video').getBoundingClientRect();
-            const line = document.querySelector('.region-line').getBoundingClientRect();
+        """target => {
+            const picture = document.querySelector(target);
+            const frame = picture.getBoundingClientRect();
+            const line = picture.parentElement.querySelector('.region-line')
+                .getBoundingClientRect();
             return [(line.left - frame.left) / frame.width, (line.top - frame.top) / frame.height,
                 (line.right - frame.left) / frame.width, (line.bottom - frame.top) / frame.height];
-        }"""
+        }""",
+        target,
     )
 
 
@@ -143,6 +159,10 @@ async def settled(page):
 
 def regions(actions):
     return [a["params"] for a in actions if a["action"] == "camera.region"]
+
+
+def stills(actions):
+    return sum(a["action"] == "native-preview" for a in actions)
 
 
 @pytest.mark.asyncio
@@ -516,22 +536,163 @@ async def test_touch_and_pen_draw_like_a_mouse(pointer):
 
 
 @pytest.mark.asyncio
-async def test_patient_preview_and_holoviz_card_show_and_clear_the_area():
+async def test_holoviz_card_lends_a_still_picture_to_draw_on():
+    # H.265 is only ever shown in Holoviz, so its card is the one place to draw.
+    native = camera(id="room:wide", name="Room camera", codec="h265")
+    state = surgeon([native], native=["room:wide"])
+    async with dashboard(state) as (page, actions, _):
+        card = page.locator(".native-tile")
+        tools = card.get_by_role("group", name="Room camera priority area")
+        box = tools.get_by_role("button", name="Draw a box")
+        lasso = tools.get_by_role("button", name="Draw freehand")
+        clear = tools.get_by_role("button", name="Clear priority area")
+        still = card.locator(".region-still")
+        await expect(tools).to_be_visible()
+        await expect(box).to_be_enabled()
+        await expect(clear).to_be_disabled()
+        # No picture is requested from Holoviz until a drawing tool asks for one.
+        await expect(still).to_be_hidden()
+        await settled(page)
+        assert stills(actions) == 0
+
+        await box.click()
+        await expect(still).to_be_visible()
+        await expect(card.locator(STILL)).to_have_attribute("data-ready", "true")
+        await expect(card.locator(".region-instruction")).to_have_text(
+            "Drag a box around the area · Esc to cancel"
+        )
+        assert await still.evaluate("e => getComputedStyle(e).cursor") == "crosshair"
+        # The still keeps the camera's shape and is not enlarged past what Holoviz lends.
+        frame = await picture(page, STILL)
+        assert frame["width"] / frame["height"] == pytest.approx(16 / 9, rel=0.01)
+        assert frame["width"] <= 640
+        await drag(page, (0.3, 0.25), (0.7, 0.75), target=STILL)
+        await expect(card.locator(".region-overlay")).to_have_attribute("data-state", "active")
+        sent = regions(actions)
+        assert len(sent) == 1 and sent[0]["id"] == "room:wide"
+        for point, expected in zip(sent[0]["points"], BOX, strict=True):
+            assert point == pytest.approx(expected, abs=0.006)
+        assert await outline(page, STILL) == pytest.approx([0.3, 0.25, 0.7, 0.75], abs=0.006)
+        await expect(box).to_have_attribute("aria-pressed", "false")
+        await expect(card.locator(".region-status")).to_have_text(
+            "Priority area set by Dr. Rivera: picture detail is concentrated inside the outline."
+        )
+        # The picture keeps refreshing while it is open.
+        before = stills(actions)
+        await page.wait_for_timeout(900)
+        assert stills(actions) >= before + 2
+
+        # Freehand, then Esc on an armed tool: the picture stays, nothing is sent.
+        await lasso.click()
+        centre = (frame["x"] + frame["width"] * 0.5, frame["y"] + frame["height"] * 0.5)
+        radius = frame["height"] * 0.35
+        await page.mouse.move(centre[0] + radius, centre[1])
+        await page.mouse.down()
+        for step in range(1, 91):
+            angle = math.radians(step * 4)
+            await page.mouse.move(
+                centre[0] + radius * math.cos(angle), centre[1] + radius * math.sin(angle)
+            )
+        await page.mouse.up()
+        await expect(card.locator(".region-overlay")).to_have_attribute("data-state", "active")
+        assert len(regions(actions)) == 2 and 8 <= len(regions(actions)[1]["points"]) <= 64
+        await box.click()
+        await page.keyboard.press("Escape")
+        await expect(box).to_have_attribute("aria-pressed", "false")
+        await expect(box).to_be_focused()
+        await expect(still).to_be_visible()
+        assert len(regions(actions)) == 2
+
+        # Hiding the picture stops the requests; Clear needs no picture.
+        await card.get_by_role("button", name="Hide picture", exact=True).click()
+        await expect(still).to_be_hidden()
+        await page.wait_for_timeout(500)
+        quiet = stills(actions)
+        await page.wait_for_timeout(1200)
+        assert stills(actions) == quiet
+        await clear.click()
+        await expect(card.locator(".region-status")).to_be_hidden()
+        assert regions(actions)[2] == {"id": "room:wide", "points": None}
+        await expect(still).to_be_hidden()
+
+        # Leaving Holoviz removes the card and ends the requests.
+        await lasso.click()
+        await expect(still).to_be_visible()
+        state["native_views"] = {}
+        state["selected"] = []
+        await expect(page.locator(".native-tile")).to_have_count(0)
+        await page.wait_for_timeout(500)
+        quiet = stills(actions)
+        await page.wait_for_timeout(1200)
+        assert stills(actions) == quiet
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844)])
+async def test_holoviz_card_follows_the_same_rules_as_a_browser_view(size):
+    area = {"region": BOX, "region_by": "Dr. Rivera"}
+    native = camera(id="room:wide", name="Room camera", codec="h265", **area)
+    # View-only: the state is shown, nothing can be changed and no picture is fetched.
+    state = surgeon([native], robot=False, native=["room:wide"])
+    async with dashboard(state, size=size) as (page, actions, _):
+        card = page.locator(".native-tile")
+        tools = card.get_by_role("group", name="Room camera priority area")
+        await expect(card.locator(".region-status")).to_have_text(
+            "Priority area set by Dr. Rivera: picture detail is concentrated inside the outline."
+        )
+        for name in ("Draw a box", "Draw freehand", "Clear priority area"):
+            await expect(tools.get_by_role("button", name=name)).to_be_disabled()
+        await expect(tools.get_by_role("button", name="Draw a box")).to_have_attribute(
+            "title", "View-only access cannot change the priority area"
+        )
+        await expect(card.locator(".region-still")).to_be_hidden()
+        assert stills(actions) == 0 and regions(actions) == []
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    # Settings that prevent an area: disabled with the reason.
+    blocked = camera(
+        id="room:wide",
+        name="Room camera",
+        codec="h265",
+        region_unavailable="turn off adaptive quantization (aq, temporalaq) in the stream's "
+        "advanced settings",
+    )
+    async with dashboard(surgeon([blocked], native=["room:wide"]), size=size) as (page, *_):
+        card = page.locator(".native-tile")
+        await expect(card.get_by_role("button", name="Draw a box")).to_be_disabled()
+        await expect(card.locator(".region-status")).to_contain_text(
+            "Priority area unavailable: turn off adaptive quantization"
+        )
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    # An encoder without support: the card is as it was before priority areas existed.
+    plain = camera(id="room:wide", name="Room camera", codec="h265", region_supported=False)
+    async with dashboard(surgeon([plain], native=["room:wide"]), size=size) as (page, actions, _):
+        card = page.locator(".native-tile")
+        await expect(card.locator(".region-native")).to_be_hidden()
+        assert await card.get_by_role("button", name="Draw a box").count() == 0
+        assert stills(actions) == 0
+    # A controlling surgeon on a narrow screen draws within the card.
+    async with dashboard(surgeon([native], native=["room:wide"]), size=size) as (page, actions, _):
+        card = page.locator(".native-tile")
+        await card.get_by_role("button", name="Draw a box").click()
+        await expect(card.locator(STILL)).to_have_attribute("data-ready", "true")
+        assert await outline(page, STILL) == pytest.approx([0.3, 0.25, 0.7, 0.75], abs=0.006)
+        frame, tile = await picture(page, STILL), await card.bounding_box()
+        assert frame["x"] >= tile["x"] and frame["x"] + frame["width"] <= tile["x"] + tile["width"]
+        await drag(page, (0.1, 0.1), (0.5, 0.6), target=STILL)
+        await expect(card.locator(".region-overlay")).to_have_attribute("data-state", "active")
+        assert len(regions(actions)) == 1
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.asyncio
+async def test_patient_preview_shows_and_changes_the_area():
     shown = camera(id="room:scope", region=BOX, region_by="Dr. Rivera")
     native = camera(id="room:wide", name="Room camera", region=BOX, region_by="Dr. Rivera")
-    # A view-only surgeon whose camera is open in Holoviz reads the state but cannot clear it.
-    async with dashboard(surgeon([native], robot=False, native=["room:wide"])) as (page, _, _):
-        card = page.locator(".native-tile")
-        await expect(card.locator(".region-native")).to_have_text("Priority area set by Dr. Rivera")
-        assert await card.get_by_role("button", name="Clear", exact=True).count() == 0
     state = surgeon([shown, native], native=["room:wide"])
     async with dashboard(state) as (page, actions, _):
         card = page.locator(".native-tile")
-        await expect(card.locator(".region-native span")).to_have_text(
-            "Priority area set by Dr. Rivera"
-        )
-        await card.get_by_role("button", name="Clear", exact=True).click()
-        await expect(card.locator(".region-native")).to_have_count(0)
+        await card.get_by_role("button", name="Clear priority area").click()
+        await expect(card.locator(".region-status")).to_be_hidden()
         assert regions(actions) == [{"id": "room:wide", "points": None}]
         # The camera still shown in the browser keeps its own area.
         assert await outline(page) == pytest.approx([0.3, 0.25, 0.7, 0.75], abs=0.004)
