@@ -86,7 +86,7 @@ Camera-to-viewer runs with `scripts/benchmark.py` (60 seconds after a 30-second 
 
 ## Hosts
 
-The same encoder path was run on each host with synthetic moving texture at 640×480, FHD and 4K, H.264 and H.265. On all three an area raised quality inside it, lowered it outside, produced no keyframe and left encode time unchanged.
+The same encoder path was run on each host with synthetic moving texture at 640×480, FHD and 4K, H.264 and H.265. On all three an area raised quality inside it, lowered it outside, produced no keyframe and left encode time unchanged. Without an area, an encoder that can take one produced byte-identical streams to one that cannot, at FHD and 4K in both codecs on each host.
 
 | Host | GPU | Driver |
 | --- | --- | --- |
