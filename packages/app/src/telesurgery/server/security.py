@@ -154,6 +154,10 @@ async def security_headers(request, response):
     response.headers.pop("Server", None)
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif request.path.startswith("/static/"):
+        # Without this a browser may reuse scripts from before an update for hours, beside
+        # a page that expects the new ones. It still answers 304 when nothing changed.
+        response.headers["Cache-Control"] = "no-cache"
 
 
 def dashboard_tls(directory, host, cert=None, key=None):

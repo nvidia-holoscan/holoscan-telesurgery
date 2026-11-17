@@ -16,6 +16,7 @@ from pathlib import Path
 
 from telesurgery_core.adapters.cameras import open_camera
 from telesurgery_core.transport.protocol import MAX_FRAME, VideoHeader
+from telesurgery_core.video import region
 from telesurgery_core.video.codecs import CodecWorker
 from telesurgery_core.video.config import Config
 from telesurgery_core.video.model import Frame
@@ -66,6 +67,10 @@ class Encode:
         self.preparing = self.builder = None
         self.requested = config
         self.failed = None
+        # Priority area: the node's request, and the encoder it was last applied to.
+        self.region_stamp, self.region_request = None, (None, None)
+        self.region_codec = self.region_holder = None
+        self.region_retry = 0.0
 
     def _error(self, message=""):
         if self.settings_path:
@@ -82,7 +87,9 @@ class Encode:
     def _refresh(self):
         if self.settings_path and time.monotonic() >= self.check_at:
             self.check_at = time.monotonic() + 0.25
-            stamp = self.settings_path.stat().st_mtime_ns
+            # The node replaces the file, so its identity changes even when two writes
+            # share a timestamp (kernels with coarse file times, such as Jetson's).
+            stamp = region.stamp(self.settings_path)
             if stamp != self.settings_stamp:
                 self.requested = Config(**json.loads(self.settings_path.read_text())["camera"])
                 self.settings_stamp = stamp
@@ -112,8 +119,51 @@ class Encode:
                 self.builder.submit(CodecWorker, self.requested, encode=True),
             )
 
+    def _region(self):
+        """Apply the node's priority area when it changes, and again on a new encoder."""
+        path = self.settings_path.with_suffix(region.REQUEST_SUFFIX)
+        stamp = region.stamp(path)
+        if stamp != self.region_stamp:
+            self.region_stamp, self.region_request = stamp, region.read_request(path)
+            self.region_codec = None
+        if self.region_codec is self.codec or time.monotonic() < self.region_retry:
+            return
+        self.region_codec = self.codec
+        revision, points = self.region_request
+        supported, error = self.codec.supports_region, ""
+        try:
+            if points is not None and not supported:
+                error = "This encoder cannot use a priority area"
+            elif points is not None:
+                self.codec.set_region(region.mask(points))
+                self.region_holder = self.codec
+            elif self.region_holder is self.codec:
+                self.region_holder = None
+                self.codec.set_region(None)
+        except Exception as exc:
+            # Video continues with uniform quality; the node reports the area as unavailable.
+            error = str(exc) or type(exc).__name__
+            logging.exception("Priority area could not be applied")
+            self.region_holder = None
+            with contextlib.suppress(Exception):
+                self.codec.set_region(None)
+        try:
+            region.write_status(
+                self.settings_path.with_suffix(region.STATUS_SUFFIX),
+                supported,
+                region.unavailable(self.config.codec, self.config.encoder_extra),
+                revision,
+                error,
+            )
+        except OSError:
+            # Video continues. The node has no answer yet, so apply and report again.
+            logging.exception("Priority area status could not be written")
+            self.region_codec, self.region_retry = None, time.monotonic() + 1
+
     def compute(self, frame):
         self._refresh()
+        if self.settings_path:
+            self._region()
         # A receiver lost a reference frame, or a viewer joined mid-GOP.
         if self.settings_path and self.settings_path.with_suffix(KEYFRAME_SUFFIX).exists():
             self.settings_path.with_suffix(KEYFRAME_SUFFIX).unlink(missing_ok=True)

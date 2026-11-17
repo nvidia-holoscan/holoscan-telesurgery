@@ -5,10 +5,15 @@
 
 import importlib.util
 import logging
+import time
 from functools import lru_cache
 
-from telesurgery_core.video.codecs import probe
+import numpy as np
+from telesurgery_core.transport.protocol import VideoHeader
+from telesurgery_core.video.codecs import create_codec, probe
 from telesurgery_core.video.config import Config
+from telesurgery_core.video.model import Frame
+from telesurgery_core.video.region import VIDEO_CODECS
 
 
 @lru_cache(maxsize=1)
@@ -28,3 +33,27 @@ def supported_codecs():
     ):
         available.append("surgical-tokenizer")
     return [*available, "raw-bgr8"]
+
+
+@lru_cache(maxsize=1)
+def region_supported():
+    """True when this node's H.264/H.265 encoder can take a priority area.
+
+    The encoder reports it after its first frame, so encode one small frame.
+    """
+    width, height = 320, 240
+    for codec in VIDEO_CODECS:
+        try:
+            encoder = create_codec(Config(codec=codec, width=width, height=height), encode=True)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            continue
+        try:
+            pixels = np.zeros((height, width, 3), dtype=np.uint8)
+            encoder.encode(Frame(VideoHeader(0, time.time_ns(), width, height), pixels))
+            if getattr(encoder, "supports_region", False):
+                return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+        finally:
+            encoder.close()
+    return False

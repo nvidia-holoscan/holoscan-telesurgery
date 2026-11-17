@@ -68,6 +68,21 @@ async def test_dashboard_access(host):
 
 
 @pytest.mark.asyncio
+async def test_dashboard_scripts_are_revalidated_on_every_load():
+    app = create_app(SimpleNamespace(action=AsyncMock()))
+    app.cleanup_ctx.clear()
+    async with TestClient(TestServer(app)) as client:
+        for path in ("/static/app.js", "/static/icons.js", "/static/style.css"):
+            response = await client.get(path)
+            assert response.status == 200
+            # No heuristic caching: a page loaded after an update must not mix old scripts.
+            assert response.headers["Cache-Control"] == "no-cache"
+            unchanged = await client.get(path, headers={"If-None-Match": response.headers["ETag"]})
+            assert unchanged.status == 304
+            assert unchanged.headers["Cache-Control"] == "no-cache"
+
+
+@pytest.mark.asyncio
 async def test_invalid_requests_cannot_reach_actions():
     service = SimpleNamespace(action=AsyncMock())
     app = create_app(service)

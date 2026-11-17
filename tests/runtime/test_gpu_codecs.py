@@ -423,3 +423,333 @@ def test_native_decode_keeps_owned_rgb_pixels_on_gpu(monkeypatch):
         # A later decode must not overwrite a tensor still being displayed.
         np.testing.assert_allclose(cp.asnumpy(images[0][120, 160]), [170, 90, 30], atol=4)
         np.testing.assert_allclose(cp.asnumpy(images[1][120, 160]), [20, 70, 180], atol=4)
+
+
+AREA = [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]]
+
+
+def _encode_with_area(config, events=None, frames=45):
+    """Encode moving texture, applying events[frame] = mask or None before that frame.
+
+    Returns the packets and the mean PSNR of the decoded picture inside and outside AREA.
+    """
+    rng = np.random.default_rng(7)
+    blocks = np.kron(rng.integers(0, 256, (68, 88, 3), dtype=np.uint8), np.ones((8, 8, 1)))
+    texture = (blocks + rng.integers(-12, 13, blocks.shape)).clip(0, 255).astype(np.uint8)
+    inside = np.zeros((480, 640), dtype=bool)
+    inside[144:336, 192:448] = True
+    encoder = GpuCodec(config, encode=True)
+    decoder = GpuCodec(config, encode=False)
+    try:
+        packets, errors = [], []
+        for index in range(frames):
+            if events and index in events:
+                encoder.set_region(events[index])
+            shift = index % 64
+            pixels = np.ascontiguousarray(texture[shift : shift + 480, shift : shift + 640])
+            header, data = encoder.encode(Frame(VideoHeader(index, index + 1, 640, 480), pixels))
+            error = (decoder.decode(header, data).image.astype(float) - pixels) ** 2
+            errors.append((error[inside].mean(), error[~inside].mean()))
+            packets.append((len(data), header.keyframe, bytes(data)))
+        # Skip the frames in which rate control settles after the IDR.
+        quality = [10 * np.log10(255**2 / np.mean(part)) for part in zip(*errors[10:], strict=True)]
+        return {
+            "packets": packets,
+            "supported": encoder.supports_region,
+            "rate": encoder.rate,  # share of the bitrate limit in use at the end
+            "bytes": float(np.mean([size for size, _, _ in packets[10:]])),
+            "inside": quality[0],
+            "outside": quality[1],
+        }
+    finally:
+        encoder.close()
+        decoder.close()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+@pytest.mark.parametrize("rate_control", ["cbr", "vbr"])
+def test_priority_area_softens_the_rest_of_the_picture_and_saves_bandwidth(codec, rate_control):
+    from telesurgery_core.video.region import mask
+
+    def run(events=None, frames=45, **settings):
+        config = Config(
+            codec=codec, width=640, height=480, fps=30, rate_control=rate_control, **settings
+        )
+        return _encode_with_area(config, events, frames)
+
+    # The default strength, on a stream with bandwidth to spare (the limit is 5 Mbit/s).
+    plain = run()
+    assert plain["supported"]
+    area = run({0: mask(AREA)})
+    # The encoder is given a third of the limit: the 16% inside the area keeps its share and
+    # the rest a fifth of its own. The area holds its quality and the rest is coarser.
+    assert area["rate"] == pytest.approx(0.16 + 0.84 * 0.2, abs=0.01) and plain["rate"] == 1
+    assert area["inside"] > plain["inside"] - 0.3
+    assert area["outside"] < plain["outside"] - 0.6
+    assert area["bytes"] < plain["bytes"] * 0.8
+    assert [keyframe for _, keyframe, _ in area["packets"]] == [True] + [False] * 44
+
+    # Drawn, moved and cleared mid-stream: no IDR, earlier frames untouched, and the
+    # bitrate returns once the area is gone.
+    moved = [[x * 0.5, y * 0.5] for x, y in AREA]
+    plain = run(frames=75)
+    changed = run({15: mask(AREA), 25: mask(moved), 35: None}, frames=75)
+    assert [keyframe for _, keyframe, _ in changed["packets"]] == [True] + [False] * 74
+    assert changed["packets"][:15] == plain["packets"][:15]
+    assert changed["rate"] == 1
+
+    def size(result, first, last):
+        return float(np.mean([length for length, _, _ in result["packets"][first:last]]))
+
+    assert size(changed, 18, 35) < size(plain, 18, 35) * 0.85
+    assert size(changed, 55, 75) > size(plain, 55, 75) * 0.85
+
+    # A stream already short of bandwidth is not cut further: quality moves into the area.
+    plain = run(bitrate_mbps=1)
+    starved = run({0: mask(AREA)}, bitrate_mbps=1)
+    assert starved["rate"] == 1
+    assert starved["inside"] > plain["inside"] + 0.8
+    assert starved["outside"] < plain["outside"] - 0.5
+    assert abs(starved["bytes"] / plain["bytes"] - 1) < 0.15
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+@pytest.mark.parametrize("rate_control", ["cbr", "vbr"])
+def test_subtle_priority_area_moves_quality_at_the_same_bitrate(codec, rate_control):
+    from telesurgery_core.video.region import mask
+
+    def run(events=None, **settings):
+        config = Config(
+            codec=codec,
+            width=640,
+            height=480,
+            fps=30,
+            rate_control=rate_control,
+            encoder_extra="area_strength=subtle",
+            **settings,
+        )
+        return _encode_with_area(config, events)
+
+    # Short of bandwidth, and the automatic 5 Mbit/s where there is less to gain.
+    for limit, gain in ((1, 0.6), (0, 0.1)):
+        plain = run(bitrate_mbps=limit)
+        area = run({0: mask(AREA)}, bitrate_mbps=limit)
+        # Quality moves from outside the area to inside it; the stream keeps its bitrate.
+        assert area["rate"] == 1
+        assert area["inside"] > plain["inside"] + gain
+        assert plain["outside"] - 1.5 < area["outside"] < plain["outside"]
+        assert abs(area["bytes"] / plain["bytes"] - 1) < 0.1
+        assert [keyframe for _, keyframe, _ in area["packets"]] == [True] + [False] * 44
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_priority_area_with_constant_qp(codec):
+    from telesurgery_core.video.region import mask
+
+    def run(events=None, **settings):
+        config = Config(
+            codec=codec, width=640, height=480, fps=30, rate_control="cqp", qp=34, **settings
+        )
+        return _encode_with_area(config, events)
+
+    plain = run()
+    # No rate control rebalances the picture. The default makes the area finer and the rest
+    # coarser by fixed steps, which saves bandwidth for an area this size.
+    area = run({0: mask(AREA)})
+    assert area["inside"] > plain["inside"] + 0.3
+    assert area["outside"] < plain["outside"] - 0.5
+    assert area["bytes"] < plain["bytes"] * 0.9
+    assert area["rate"] == 1
+    # Subtle leaves the rest at the chosen QP, and the finer area costs bandwidth.
+    subtle = run({0: mask(AREA)}, encoder_extra="area_strength=subtle")
+    assert subtle["inside"] > plain["inside"] + 0.3
+    assert abs(subtle["outside"] - plain["outside"]) < 0.1
+    assert plain["bytes"] * 1.02 < subtle["bytes"] < plain["bytes"] * 1.4
+
+
+def test_priority_area_survives_an_encoder_that_refuses_a_new_bitrate(caplog):
+    from telesurgery_core.video.region import mask
+
+    class Refusing:
+        """The real encoder, except that it refuses bitrate changes while `refuse` is set."""
+
+        def __init__(self, backend):
+            self.backend, self.refuse = backend, True
+
+        def __getattr__(self, name):
+            return getattr(self.backend, name)
+
+        def Reconfigure(self, params):
+            return False if self.refuse else self.backend.Reconfigure(params)
+
+    pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)
+    frames = iter(range(1, 100))
+
+    def encode(encoder):
+        index = next(frames)
+        return encoder.encode(Frame(VideoHeader(index, index + 1, 640, 480), pixels))
+
+    encoder = GpuCodec(Config(codec="h264", width=640, height=480, fps=30), encode=True)
+    try:
+        encoder.encode(Frame(VideoHeader(0, 1, 640, 480), pixels))
+        backend = encoder.backend = Refusing(encoder.backend)
+        # A refused cut: the area is applied at the bandwidth the stream had.
+        with caplog.at_level("WARNING"):
+            encoder.set_region(mask(AREA))
+        assert "bitrate for a priority area" in caplog.text
+        assert encoder.region is not None and encoder.rate == 1.0
+        header, data = encode(encoder)
+        assert data and not header.keyframe and encoder.backend is backend
+        encoder.set_region(None)
+        assert encoder.region is None and encoder.rate == 1.0 and encoder.backend is backend
+
+        # A cut that was applied but cannot be undone must not starve the picture: the
+        # encoder is replaced, and its first frame is an IDR at the full bitrate.
+        backend.refuse = False
+        encoder.set_region(mask(AREA))
+        assert encoder.rate < 0.5 and not encode(encoder)[0].keyframe
+        backend.refuse = True
+        encoder.set_region(None)
+        assert encoder.backend is None and encoder.region is None
+        header, data = encode(encoder)
+        assert data and header.keyframe
+        assert encoder.backend is not backend and encoder.rate == 1.0
+        assert encoder.supports_region and not encode(encoder)[0].keyframe
+
+        # The same when the area grows and the larger share is refused.
+        small = [[x * 0.5, y * 0.5] for x, y in AREA]
+        encoder.set_region(mask(small))
+        lowered = encoder.rate
+        backend = encoder.backend = Refusing(encoder.backend)
+        encoder.set_region(mask(AREA))
+        assert encoder.backend is None
+        header, data = encode(encoder)
+        # The new encoder starts with the larger area and its own share of the limit.
+        assert header.keyframe and encoder.region is not None
+        assert lowered < encoder.rate < 1.0
+    finally:
+        encoder.close()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_an_encoder_ready_for_a_priority_area_produces_the_same_stream_until_one_is_set(
+    codec, monkeypatch
+):
+    import PyNvVideoCodec as nvc
+
+    config = Config(codec=codec, width=640, height=480, fps=30, bitrate_mbps=1)
+    ready = _encode_with_area(config, frames=20)
+    cleared = _encode_with_area(config, {0: None, 5: None}, frames=20)
+    assert ready["supported"] and cleared["packets"] == ready["packets"]
+
+    # A binding without the patch encodes the same bytes and reports no support.
+    monkeypatch.delattr(nvc, "telesurgery_policy_map_patch")
+    stock = _encode_with_area(config, frames=20)
+    assert not stock["supported"] and stock["packets"] == ready["packets"]
+
+
+def test_priority_area_is_refused_where_the_encoder_cannot_use_one(monkeypatch):
+    import PyNvVideoCodec as nvc
+    from telesurgery_core.video.codecs import CodecWorker
+    from telesurgery_core.video.region import mask
+
+    area = mask(AREA)
+    pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)
+    frame = Frame(VideoHeader(0, 1, 640, 480), pixels)
+
+    def encoder(**settings):
+        worker = CodecWorker(Config(width=640, height=480, fps=30, **settings), encode=True)
+        worker.encode(frame)
+        return worker
+
+    # NVENC's own adaptive quantization excludes a delta-QP map.
+    for extra in ("aq=8", "temporalaq=on"):
+        worker = encoder(codec="h264", encoder_extra=extra)
+        try:
+            assert not worker.supports_region
+            with pytest.raises(RuntimeError, match="cannot use a priority area"):
+                worker.set_region(area)
+            worker.set_region(None)
+            assert worker.encode(frame)[1]
+        finally:
+            worker.close()
+
+    # Other advanced settings and constant QP keep it.
+    for settings in (
+        {"encoder_extra": "multipass=qres"},
+        {"encoder_extra": "qmax=30\nvbv_frames=2\ngop_seconds=1"},
+        {"rate_control": "cqp", "qp": 30},
+    ):
+        worker = encoder(codec="h265", **settings)
+        try:
+            assert worker.supports_region
+            worker.set_region(area)
+            assert worker.encode(frame)[1]
+        finally:
+            worker.close()
+
+    for codec in ("nvjpeg", "raw-bgr8"):
+        worker = encoder(codec=codec)
+        try:
+            assert not worker.supports_region
+            with pytest.raises(RuntimeError, match="cannot use a priority area"):
+                worker.set_region(area)
+            worker.set_region(None)
+        finally:
+            worker.close()
+
+    # A GPU or driver that rejects the map mode still streams, without the feature.
+    create = nvc.CreateEncoder
+
+    def refuse(*args, **options):
+        if "qp_policy_map" in options:
+            raise RuntimeError("delta-QP maps are not supported")
+        return create(*args, **options)
+
+    monkeypatch.setattr(nvc, "CreateEncoder", refuse)
+    worker = encoder(codec="h264")
+    try:
+        assert not worker.supports_region
+        with pytest.raises(RuntimeError, match="cannot use a priority area"):
+            worker.set_region(area)
+        assert worker.encode(frame)[1]
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("width,height", [(1920, 1080), (3840, 2160), (1280, 720), (642, 482)])
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_priority_area_fits_camera_resolutions(width, height, codec):
+    from telesurgery_core.video.region import mask
+
+    # The area grid is independent of the picture size and of the codec's block size.
+    config = Config(codec=codec, width=width, height=height, fps=30)
+    encoder = GpuCodec(config, encode=True)
+    decoder = GpuCodec(config, encode=False)
+    try:
+        rng = np.random.default_rng(3)
+        small = rng.integers(0, 256, (height // 8 + 1, width // 8 + 1, 3), dtype=np.uint8)
+        pixels = np.ascontiguousarray(np.kron(small, np.ones((8, 8, 1), np.uint8))[:height, :width])
+        plain = []
+        for index in range(4):
+            if index == 2:
+                encoder.set_region(mask([[0.1, 0.2], [0.9, 0.1], [0.6, 0.95]]))
+            header, data = encoder.encode(
+                Frame(VideoHeader(index, index + 1, width, height), pixels)
+            )
+            assert decoder.decode(header, data).image.shape == (height, width, 3)
+            plain.append(header.keyframe)
+        assert encoder.supports_region and plain == [True, False, False, False]
+    finally:
+        encoder.close()
+        decoder.close()
+
+
+def test_node_and_doctor_report_priority_area_support_from_the_real_encoder():
+    from telesurgery_core.video.capabilities import region_supported
+    from telesurgery_core.video.codecs import probe
+
+    region_supported.cache_clear()
+    assert region_supported() is True
+    assert probe(Config(codec="h264"))["priority_area"] is True
+    assert probe(Config(codec="nvjpeg"))["priority_area"] is False

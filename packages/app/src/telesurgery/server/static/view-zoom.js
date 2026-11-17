@@ -91,6 +91,8 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
     if (viewport) {
         area = button("Select area", () => {
             selecting = !selecting;
+            // Only one drag tool owns the picture at a time.
+            if (selecting) viewport.dispatchEvent(new CustomEvent("view-tool", { detail: "zoom" }));
             panel.hidePopover();
             draw();
             viewport.focus({ preventScroll: true });
@@ -167,7 +169,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
         send.put({ ...view });
     }
     root.addEventListener("keydown", event => {
-        if (event.key === "Escape") { panel.hidePopover(); summary.focus(); event.stopPropagation(); }
+        // The priority area tools share this bar and handle their own Esc.
+        if (event.key !== "Escape" || event.target.closest?.(".view-region")) return;
+        panel.hidePopover(); summary.focus(); event.stopPropagation();
     });
     root.addEventListener("focusout", event => {
         if (!root.contains(event.relatedTarget)) panel.hidePopover();
@@ -239,6 +243,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
         listen("dblclick", event => {
             if (!root.contains(event.target)) { event.preventDefault(); update({ scale: 1, x: 0.5, y: 0.5 }); }
         });
+        listen("view-tool", event => {
+            if (event.detail !== "zoom" && selecting) { selecting = false; gesture = null; selection.hidden = true; draw(); }
+        });
         listen("keydown", event => {
             if (root.contains(event.target)) return;
             if (event.key === "Escape" && selecting) {
@@ -254,6 +261,9 @@ export function viewZoom(camera, { viewport, stage, surface, initial = {}, nativ
     draw();
     return {
         element: root,
+        // For the priority area, which frames the view on a new area and puts it back after.
+        view: () => ({ ...view }),
+        set: update,
         flush: () => send.flush(),
         stop() {
             resize?.disconnect(); modes?.disconnect(); menuEvents?.abort(); send.stop();

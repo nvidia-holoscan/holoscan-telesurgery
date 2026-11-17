@@ -10,6 +10,7 @@ so every call selects its CUDA device and enters its owned stream explicitly.
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +19,12 @@ from dataclasses import replace
 import numpy as np
 from telesurgery_core.transport.protocol import MAX_VIDEO, VideoHeader
 from telesurgery_core.video import depth
-from telesurgery_core.video.encoder_settings import bitrate, parse_extra, validate
+from telesurgery_core.video.encoder_settings import (
+    automatic_bitrate,
+    bitrate,
+    parse_extra,
+    validate,
+)
 from telesurgery_core.video.formats import video_frame
 from telesurgery_core.video.gpu import nv12 as _nv12
 from telesurgery_core.video.model import Frame
@@ -27,6 +33,35 @@ from telesurgery_core.video.reference import MissingReference, ReferenceChain
 # H.264/H.265 run IPPP with a long GOP. Loss or a new viewer forces an IDR, so the
 # periodic one is only a backstop and the GOP stays long.
 GOP_SECONDS = 10
+# Priority area: NVIDIA's converter (native/cae) takes one policy per map cell: 0 Neutral,
+# 1 Protect and 2 ProtectStrong quantize more finely (-4 and -8 QP), 3 Deprioritize and
+# 4 DeprioritizeStrong more coarsely (+4 and +8).
+# "strong" (default) is meant to be seen. The area is encoded 16 QP finer than the rest of
+# the picture, and the encoder is given less to spend: the rest, now coarser, keeps
+# AREA_REST_RATE of its share of the bitrate limit. The area holds or gains quality, the
+# rest is visibly softer, and bandwidth falls to between a quarter and a half.
+# A stream already near starvation is not cut further (AREA_FLOOR of the automatic bitrate
+# for its size): there the same 16 QP move quality into the area at the bandwidth it has.
+# "subtle" moves quality at the same bandwidth: rate control holds the bitrate, so a small
+# area gains 2 to 3 dB for under 0.5 dB outside.
+# Constant QP has no rate control to rebalance. "subtle" leaves the rest at the chosen QP
+# and the area costs bandwidth; "strong" also coarsens the rest by 8, which saves
+# bandwidth for a small area and about breaks even at a quarter of the picture.
+AREA_POLICY = {"strong": (2, 4), "subtle": (1, 3)}  # inside, outside
+AREA_POLICY_CQP = {"strong": (1, 4), "subtle": (1, 0)}
+AREA_REST_RATE = 0.2
+AREA_FLOOR = 0.25
+
+
+def area_plan(config, cells):
+    """(inside policy, outside policy, share of the bitrate limit) for an area's cells."""
+    strength = parse_extra(config.encoder_extra).get("area_strength", "strong")
+    if config.rate_control == "cqp":
+        return *AREA_POLICY_CQP[strength], 1.0
+    if strength == "subtle":
+        return *AREA_POLICY[strength], 1.0
+    share = np.count_nonzero(cells) / cells.size
+    return *AREA_POLICY[strength], share + (1 - share) * AREA_REST_RATE
 
 
 class _CudaBuffer:
@@ -78,6 +113,19 @@ class CodecWorker:
         if request is not None:
             request()
 
+    @property
+    def supports_region(self):
+        """True when this encoder can concentrate quality in a priority area."""
+        return bool(getattr(self.codec, "supports_region", False))
+
+    def set_region(self, mask):
+        """Apply a priority area (telesurgery_core.video.region.mask), or None to clear it."""
+        apply = getattr(self.codec, "set_region", None)
+        if apply is not None:
+            self.executor.submit(apply, mask).result()
+        elif mask is not None:
+            raise RuntimeError("This encoder cannot use a priority area")
+
     def encode(self, frame):
         return self.executor.submit(self._encode, frame).result()
 
@@ -92,17 +140,35 @@ class CodecWorker:
             header, pack_ns=header.pack_ns + finished - started, encoded_ns=finished
         ), data
 
-    def _decode(self, header, data, on_device=False):
+    def _decode(self, header, data, on_device=False, prepare=None):
         color, packed = depth.split(header, data)
-        frame = self.codec.decode(header, color, on_device=on_device)
+        if prepare is None:
+            frame = self.codec.decode(header, color, on_device=on_device)
+        elif isinstance(self.codec, GpuCodec):
+            frame = self.codec.decode(header, color, on_device=on_device, prepare=prepare)
+        else:
+            frame = self.codec.decode(header, color, on_device=on_device)
+            import cupy as cp
+
+            with cp.cuda.Device(frame.image.device.id):
+                prepare(frame.image)
+                cp.cuda.get_current_stream().synchronize()
         frame.depth = depth.unpack(header, packed)
         return frame
 
     def decode(self, header, data):
         return self.executor.submit(self._decode, header, data).result()
 
-    def decode_device(self, header, data):
-        return self.executor.submit(self._decode, header, data, on_device=True).result()
+    def decode_device(self, header, data, prepare=None):
+        """Decode to owned device pixels for display.
+
+        prepare(image) may read or draw on those pixels before they leave the decoder.
+        Its GPU work is finished when this returns, at no extra synchronization for
+        H.264/H.265/nvJPEG, where it joins the decoder's own stream.
+        """
+        return self.executor.submit(
+            self._decode, header, data, on_device=True, prepare=prepare
+        ).result()
 
     def close(self):
         try:
@@ -186,6 +252,9 @@ class GpuCodec:
         self.keyframe_requested = True
         self.gop, self.gop_index = secrets.randbelow(2**30), 0
         self.chain = ReferenceChain()
+        self.region = None  # policy map of the active priority area
+        self.region_rate = 1.0  # share of the bitrate limit that area asks for
+        self.rate = 1.0  # share the live encoder is using
         try:
             import cupy as cp
 
@@ -219,6 +288,109 @@ class GpuCodec:
     def request_keyframe(self):
         self.keyframe_requested = True
 
+    # True once an H.264/H.265 encoder exists that accepts a priority area. The encoder is
+    # created on the first frame, so read it after that.
+    supports_region = False
+
+    def set_region(self, mask):
+        """Concentrate quality where mask (uint8 cells, 1 inside) is set; None restores uniform.
+
+        The area takes effect on the next frame without an IDR. Before the first frame
+        there is no encoder yet: the area is kept and applied when one is created.
+        """
+        video = self.encoding and self.kind in {"h264", "h265"}
+        if mask is None:
+            policy, rate = None, 1.0
+        elif not video or (self.backend is not None and not self.supports_region):
+            raise RuntimeError("This encoder cannot use a priority area")
+        else:
+            cells = np.asarray(mask)
+            if cells.ndim != 2 or not cells.size:
+                raise ValueError("A priority area mask is a two-dimensional grid")
+            inside, outside, rate = area_plan(self.config, cells)
+            policy = np.where(cells != 0, inside, outside).astype(np.uint8)
+        if self.supports_region and self.backend is not None:
+            with self.device, self.stream:
+                self.backend.SetPolicyMap(policy)
+                if not self._set_rate(self.backend, rate):
+                    # The encoder kept a cut meant for an area that is gone or has grown,
+                    # which would starve the whole picture. The next frame starts a new
+                    # encoder at the bitrate limit, with an IDR.
+                    self.backend.EndEncode()
+                    self.stream.synchronize()
+                    self.backend = None
+                    self.keyframe_requested = True
+        self.region, self.region_rate = policy, rate
+
+    def _set_rate(self, backend, rate):
+        """Give the live encoder this share of its bitrate limit. NVENC needs no IDR for it.
+
+        The rate buffer keeps its size, so no frame may be larger than the limit already
+        allowed. Scaled with the bitrate, each IDR would be coded so coarsely that the whole
+        picture, the area included, blurs for a third of a second.
+        Returns False when NVENC refused and the encoder is left with less than it should have.
+        """
+        options = encoder_options(self.config, *self.dimensions)
+        if "bitrate" not in options:
+            return True
+        floor = AREA_FLOOR * automatic_bitrate(*self.dimensions) * 1_000_000
+        rate = min(1.0, max(rate, floor / options["bitrate"]))
+        if rate == self.rate:
+            return True
+        try:
+            params = backend.GetEncodeReconfigureParams()
+            params.averageBitrate = round(options["bitrate"] * rate)
+            params.maxBitRate = round(options["maxbitrate"] * rate)
+            params.vbvBufferSize = params.vbvInitialDelay = options["vbvbufsize"]
+            if not backend.Reconfigure(params):
+                raise RuntimeError("NVENC refused the new bitrate")
+        except Exception:
+            logging.warning(
+                "Could not change the encoder's bitrate for a priority area", exc_info=True
+            )
+            # A refused cut only loses the bandwidth saving; the area itself is applied.
+            return rate < self.rate
+        self.rate = rate
+        return True
+
+    def _create_encoder(self, width, height):
+        nvc = self.library
+        options = encoder_options(self.config, width, height)
+
+        def create(**extra):
+            return nvc.CreateEncoder(
+                width,
+                height,
+                "NV12",
+                False,
+                gpu_id=self.config.codec_gpu,
+                cudastream=self.stream.ptr,
+                **options,
+                **extra,
+            )
+
+        self.supports_region = False
+        self.rate = 1.0
+        # NVENC's delta-QP map excludes its own adaptive quantization. Arming the map costs
+        # nothing: without an area the stream is byte-identical.
+        if getattr(nvc, "telesurgery_policy_map_patch", None) == 1 and not (
+            {"aq", "temporalaq"} & options.keys()
+        ):
+            try:
+                backend = create(qp_policy_map=1)
+                self.supports_region = bool(backend.SupportsPolicyMap())
+            except Exception:
+                logging.warning(
+                    "NVENC refused priority areas for this stream; continuing without them",
+                    exc_info=True,
+                )
+            else:
+                if self.region is not None and self.supports_region:
+                    backend.SetPolicyMap(self.region)
+                    self._set_rate(backend, self.region_rate)
+                return backend
+        return create()
+
     def _create_video(self, width, height):
         nvc = self.library
         self.dimensions = (width, height)
@@ -235,15 +407,7 @@ class GpuCodec:
                 raise ValueError(
                     f"{self.kind} dimensions {width}x{height} exceed this GPU's NVENC limits"
                 )
-            self.backend = nvc.CreateEncoder(
-                width,
-                height,
-                "NV12",
-                False,
-                gpu_id=self.config.codec_gpu,
-                cudastream=self.stream.ptr,
-                **encoder_options(self.config, width, height),
-            )
+            self.backend = self._create_encoder(width, height)
         else:
             self.backend = nvc.CreateDecoder(
                 gpuid=self.config.codec_gpu,
@@ -317,7 +481,7 @@ class GpuCodec:
             self.chain.reset()
             raise MissingReference("delta frame does not match the active decoder")
 
-    def decode(self, header: VideoHeader, data: bytes, *, on_device=False) -> Frame:
+    def decode(self, header: VideoHeader, data: bytes, *, on_device=False, prepare=None) -> Frame:
         """Return owned RGB device pixels for display, or BGR host pixels for diagnostics."""
         if header.codec != self.kind:
             raise RuntimeError(
@@ -332,13 +496,13 @@ class GpuCodec:
         if self.kind != "nvjpeg":
             self._check_reference(header, keyframe, size)
         try:
-            return self._decode(header, data, size, on_device)
+            return self._decode(header, data, size, on_device, prepare)
         except Exception:
             # The decoder may not hold this frame; later deltas must wait for an IDR.
             self.chain.reset()
             raise
 
-    def _decode(self, header, data, size, on_device):
+    def _decode(self, header, data, size, on_device, prepare=None):
         with self.device, self.stream:
             if self.kind == "nvjpeg":
                 image = self.cp.asarray(self.backend.decode(data))
@@ -361,6 +525,9 @@ class GpuCodec:
                 # NVDEC recycles its surfaces. Own a device copy until Holoviz has
                 # consumed it; no uncompressed pixels cross to host memory.
                 owned = image.copy()
+                if prepare is not None:
+                    # On this stream, so the wait below also covers the caller's work.
+                    prepare(owned)
                 self.stream.synchronize()
                 return Frame(header, owned)
             image = image[..., ::-1]
@@ -452,4 +619,6 @@ def probe(config):
             "round_trip": "passed",
             "probe_dimensions": [width, height],
             "first_frame_immediate": True,
+            # False means surgeons are not offered priority areas: rerun setup.sh.
+            "priority_area": bool(getattr(encoder, "supports_region", False)),
         }

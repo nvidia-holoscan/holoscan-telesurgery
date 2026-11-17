@@ -148,6 +148,7 @@ See [Versius controls](docs/robot-controls.md#versius-simulation) for the two-su
 ### Streams
 
 - See [camera configuration](docs/architecture.md#camera-configuration) for source and format settings.
+- On a camera view, a surgeon with control can draw a **Priority area** (a box or a freehand outline, the first tools in the zoom bar) to keep picture quality where they are working. Their view zooms in on it, the rest of the picture is encoded more coarsely, and a stream with bandwidth to spare uses less of it. Every viewer sees the outline and the softer surroundings. It needs an H.264 or H.265 stream; after updating an existing installation, rerun `./setup.sh` to build the encoder support.
 
 > For 720p or 1080p streams, try **Surgical Neural Tokenizer (trial)** in **Stream settings**.
 

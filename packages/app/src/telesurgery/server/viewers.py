@@ -10,9 +10,19 @@ import math
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from telesurgery_core.video.view import settings as zoom_settings
+
+# A still older than this was written for an earlier request.
+STILL_SECONDS = 3
+
+
+def _replace(path, document):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(document))
+    temporary.replace(path)
 
 
 class NativeViews:
@@ -21,6 +31,7 @@ class NativeViews:
         self.windows = {}
         self.zooms = {}
         self.displays = {}
+        self.areas = {}  # camera -> priority area points, as last reported by the patient
         self.opening = set()
         self.lock = asyncio.Lock()
 
@@ -55,12 +66,16 @@ class NativeViews:
                 raise RuntimeError("Too many native camera windows")
             temporary = tempfile.TemporaryDirectory(prefix="telesurgery-viewer-")
             path = Path(temporary.name) / "config.json"
+            # The window starts with this area; a change reported while it starts is
+            # compared against it and written afterwards.
+            area = self.areas.get(camera)
             path.write_text(
                 json.dumps(
                     {
                         **config,
                         "zoom": self.zooms.get(camera, zoom_settings()),
                         "display": self.displays.get(camera, {}) if config.get("depth") else {},
+                        "region": area,
                     }
                 )
             )
@@ -80,7 +95,12 @@ class NativeViews:
             except BaseException:
                 temporary.cleanup()
                 raise
-            self.windows[camera] = {"process": process, "config": path, "temporary": temporary}
+            self.windows[camera] = {
+                "process": process,
+                "config": path,
+                "temporary": temporary,
+                "region": area,
+            }
             window = self.windows[camera]
         try:
             # First neural viewing can download and build a GPU-specific engine.
@@ -149,10 +169,7 @@ class NativeViews:
                 "starting",
                 "running",
             }:
-                path = self.windows[camera]["config"].with_name("display.json")
-                temporary = path.with_suffix(".tmp")
-                temporary.write_text(json.dumps(values))
-                temporary.replace(path)
+                _replace(self.windows[camera]["config"].with_name("display.json"), values)
         return True
 
     async def zoom(self, camera, scale=1.0, x=0.5, y=0.5):
@@ -163,11 +180,44 @@ class NativeViews:
                 "starting",
                 "running",
             }:
-                path = self.windows[camera]["config"].with_name("zoom.json")
-                temporary = path.with_suffix(".tmp")
-                temporary.write_text(json.dumps(values))
-                temporary.replace(path)
+                _replace(self.windows[camera]["config"].with_name("zoom.json"), values)
         return values
+
+    def regions(self, areas):
+        """Give each open window its camera's priority area, so it can draw the outline.
+
+        areas maps camera to points or None, as the patient reports them. A window is
+        told only when its camera's area changes.
+        """
+        self.areas = {camera: points for camera, points in areas.items() if points}
+        for camera, window in self.windows.items():
+            points = self.areas.get(camera)
+            if points == window.get("region") or "finished" in window:
+                continue
+            if window["process"].returncode is None:
+                try:
+                    _replace(window["config"].with_name("region.json"), {"points": points})
+                except OSError:
+                    continue  # The window is closing; a new one starts with the area.
+            window["region"] = points
+
+    def preview(self, camera):
+        """A recent still of a camera open in Holoviz, or None until the window has one.
+
+        The dashboard draws a priority area on it. Each call renews the request; the
+        window stops producing stills soon after the calls stop.
+        """
+        window = self.windows.get(camera)
+        if window is None or self.status().get(camera, {}).get("status") != "running":
+            raise LookupError("This camera is not open in Holoviz")
+        window["config"].with_name("preview-request").touch()
+        path = window["config"].with_name("preview.jpg")
+        try:
+            if time.time() - path.stat().st_mtime > STILL_SECONDS:
+                return None
+            return path.read_bytes()
+        except OSError:
+            return None
 
     async def close(self, camera=None):
         async with self.lock:

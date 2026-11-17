@@ -46,6 +46,8 @@ repos:
         language: python
         additional_dependencies: ['clang-format==20.1.8']
         types_or: [c++, cuda]
+        # NVIDIA's converter stays comparable with its source.
+        exclude: '^native/cae/'
       - id: cmakelint
         name: cmakelint
         entry: cmakelint --linelength=100

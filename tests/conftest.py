@@ -4,6 +4,7 @@
 """Exercise node admission over real TLS without launching device subprocesses."""
 
 import asyncio
+import gc
 import os
 import secrets
 import select
@@ -14,8 +15,28 @@ import pytest
 import pytest_asyncio
 
 
+@pytest.fixture
+def virtual_display(virtual_display_server):
+    """A display for one native window test; its Tk objects are freed on this thread.
+
+    A window and its Tk interpreter form reference cycles, so they are freed by the
+    garbage collector, in whichever thread happens to trigger it. Tcl aborts the process
+    when an interpreter is deleted by another thread than its creator ("async handler
+    deleted by the wrong thread": a trap on Arm, an illegal instruction on x86). Hold
+    automatic collection for the test and collect here, on the test's own thread.
+    """
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield virtual_display_server
+    finally:
+        gc.collect()
+        if enabled:
+            gc.enable()
+
+
 @pytest.fixture(scope="session")
-def virtual_display(tmp_path_factory):
+def virtual_display_server(tmp_path_factory):
     """Native window tests must never map a window onto the developer's desktop."""
     executable = shutil.which("Xvfb")
     if not executable:

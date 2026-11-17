@@ -54,7 +54,8 @@ Commit 4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc, plus native/patches/hololink-sd
 Licensed under Apache-2.0 (https://github.com/nvidia-holoscan/holoscan-sensor-bridge/blob/4b192aee3fbf1cfa35a498c592c0f5d4081b4cdc/LICENSE)
 
 PyNvVideoCodec (https://pypi.org/project/pynvvideocodec/)
-Version 2.2.3, built from the NGC archive with the NVENC output-delay patch in scripts/builders/codecs.py and installed as 2.2.3+telesurgery.1.
+Version 2.2.3, built from the NGC archive with the NVENC output-delay and priority-area patches in scripts/builders/codecs.py and installed as 2.2.3+telesurgery.2.
+The priority-area patch compiles NVIDIA's policy-map converter in native/cae (Apache-2.0) into the binding.
 The unmodified PyPI package is published as MIT (https://pypi.org/project/pynvvideocodec/2.2.3/).
 The build replaces its bundled pybind11 2.10.0 with pybind11 2.13.6.
 

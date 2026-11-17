@@ -213,6 +213,7 @@ export function streamSettings(changed) {
         $("#stream-qp").value = item.qp ?? 24;
         $("#stream-extra").value = item.encoder_extra || "";
         $("#stream-advanced").open = Boolean(item.encoder_extra);
+        $("#stream-region-note").hidden = !item.region_supported;
         $("#stream-jpeg-quality").value = item.jpeg_quality ?? 85;
         options(
             $("#stream-codec"),

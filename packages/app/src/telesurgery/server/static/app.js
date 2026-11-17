@@ -29,6 +29,7 @@ import { feedStrip } from "./feeds.js";
 import { motionValues } from "./robot-input.js";
 import { setThemeRole, controllerAppearance } from "./theme.js";
 import { viewZoom, cameraZoom } from "./view-zoom.js";
+import { priorityArea, nativePriorityArea } from "./view-region.js";
 
 for (const control of document.querySelectorAll("[data-icon]"))
     setIcon(control, control.dataset.icon);
@@ -89,6 +90,7 @@ for (const [selector, method, done] of [
     };
 }
 const tiles = new Map(),
+    nativeAreas = new Map(),
     previews = new Set(),
     rendered = new Map();
 const layout = viewingLayout();
@@ -342,14 +344,17 @@ async function openVideo(camera) {
     if (state.role === "surgeon") layout.attach(tile, camera);
     $("#videos").append(tile);
     const peer = new RTCPeerConnection({ iceServers: [] });
-    tiles.set(camera.id, {
+    const item = {
         tile,
         peer,
         title,
         timing: frameTiming(peer, video),
         depth: depthView(peer, video, stage, caption, camera, state.view_displays?.[camera.id]),
         zoom: viewZoom(camera, { viewport, stage, surface, initial: state.view_zooms?.[camera.id] }),
-    });
+    };
+    item.area = priorityArea(camera, { viewport, stage, surface, caption, zoom: item.zoom });
+    tiles.set(camera.id, item);
+    item.area.update(camera, state);
     peer.ontrack = ({ track }) => {
         video.srcObject = new MediaStream([track]);
     };
@@ -404,6 +409,7 @@ function closeVideo(id) {
     item.timing.stop();
     item.depth.stop();
     item.zoom.stop();
+    item.area.stop();
     item.peer.close();
     item.tile.remove();
 }
@@ -933,16 +939,23 @@ function renderCurrent() {
         if (tiles.has(camera.id)) {
             tiles.get(camera.id).title.textContent = camera.name;
             tiles.get(camera.id).title.title = camera.name;
+            tiles.get(camera.id).area.update(camera, state);
         } else openVideo(camera);
     }
     const nativeCameras = cameras.filter(
         (c) => nativeViewing(c.id) && (isPatient || approved),
     );
+    for (const [id, area] of nativeAreas)
+        if (!nativeCameras.some((c) => c.id === id)) {
+            area.stop();
+            nativeAreas.delete(id);
+        }
     renderChanged(
         "native-tiles",
         nativeCameras.map((c) => [
             c.id,
             c.name,
+            c.codec,
             state.native_views[c.id].status,
         ]),
         () => {
@@ -953,10 +966,17 @@ function renderCurrent() {
                     `${codecName(camera.codec)} · Holoviz is open`,
                 );
                 tile.classList.add("native-tile");
-                tile.append(viewZoom(camera, {
+                const zoom = viewZoom(camera, {
                     native: true,
                     initial: state.view_zooms?.[camera.id],
-                }).element);
+                });
+                tile.append(zoom.element);
+                // Kept across re-renders: it may hold an open picture or a drawing.
+                if (!nativeAreas.has(camera.id))
+                    nativeAreas.set(camera.id, nativePriorityArea(camera));
+                // Its tools lead the zoom bar; the still picture to draw on opens below it.
+                nativeAreas.get(camera.id).attach(zoom);
+                tile.append(nativeAreas.get(camera.id).element);
                 nativeDepthControls(
                     camera,
                     tile,
@@ -999,6 +1019,8 @@ function renderCurrent() {
             }
         },
     );
+    for (const camera of nativeCameras)
+        nativeAreas.get(camera.id)?.update(camera, state);
     $("#view-toolbar").hidden = isPatient;
     $("#workspace-kicker").hidden = isPatient;
     $("#workspace-title").textContent = isPatient

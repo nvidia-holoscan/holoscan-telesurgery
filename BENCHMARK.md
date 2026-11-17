@@ -8,7 +8,7 @@ SDK 5 measurements collected 2026-10-17 / 2026-11-17 on public EA3. The SDK 4 ba
 
 HSB capture runs SDK 4.6.0; its coordinator and surgeon run SDK 5. All other refreshed sources run SDK 5.
 
-H.264/H.265 results, and every Logitech BRIO and IMX274 result, were measured on 2026-11-17 with the bitrate-limited encoder defaults. Simulation nvJPEG and BGR8 results are from 2026-10-17; that code path and scene are unchanged. [Encoder defaults before and after](docs/BENCHMARK_ENCODING.md) compares the same configurations with the former constant-QP defaults.
+H.264/H.265 results, and every Logitech BRIO and IMX274 result, were measured on 2026-11-17 with the bitrate-limited encoder defaults. Simulation nvJPEG and BGR8 results are from 2026-10-17; that code path and scene are unchanged. [Encoder defaults before and after](docs/BENCHMARK_ENCODING.md) compares the same configurations with the former constant-QP defaults. [Priority area](docs/BENCHMARK_PRIORITY_AREA.md) records what a surgeon-drawn area changes; without one, streams are byte-identical to these.
 
 Compare resolutions and codecs for each patient source. **The surgeon always runs on the x86 workstation.** The main tables use Holoviz; [WebRTC](#appendix-webrtc) is in the appendix. [SDK 4 report](docs/BENCHMARK_SDK4.md) · [SDK comparison](docs/BENCHMARK_COMPARISON.md).
 

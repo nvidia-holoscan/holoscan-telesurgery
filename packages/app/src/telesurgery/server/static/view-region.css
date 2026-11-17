@@ -1,0 +1,112 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0 */
+
+/* Priority area: an outline only, so the picture's colours stay true.
+   Its tools sit in the view's zoom bar (view-zoom.css). */
+.region-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 1;
+    --region-scale: 1;
+}
+.region-overlay[hidden] { display: none; }
+.depth-stage[data-depth="side"] .region-overlay { width: 50%; }
+.region-overlay polygon {
+    fill: none;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+.region-halo { stroke: #0c120fb0; stroke-width: calc(5px / var(--region-scale)); }
+.region-line { stroke: #b7ef66; stroke-width: calc(2px / var(--region-scale)); }
+.region-overlay[data-state="saving"] .region-line { stroke-dasharray: 6 5; }
+.view-viewport[data-region] { cursor: crosshair; touch-action: none; }
+/* The tools lead the view's zoom bar; a hairline separates the two groups. */
+.view-region { display: flex; align-items: center; }
+.view-region[hidden], .view-region .region-tool[hidden] { display: none; }
+.view-region::after {
+    content: "";
+    align-self: center;
+    width: 1px;
+    height: 16px;
+    margin: 0 3px 0 4px;
+    background: currentColor;
+    opacity: .28;
+}
+.view-region .region-tool {
+    width: 28px;
+    min-width: 28px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.view-region .region-tool .icon { width: 16px; height: 16px; }
+.view-region .region-tool[aria-pressed="true"],
+.view-region .region-tool[aria-pressed="true"]:hover { background: var(--green); color: #172700; }
+.view-region .region-tool:disabled { opacity: .35; cursor: default; background: transparent; }
+.video-caption > .region-status {
+    grid-column: 1 / -1;
+    order: -1; /* directly under the camera's description, before depth tools */
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+.video-caption > .region-status[hidden] { display: none; }
+/* A camera open in Holoviz: the same tools in its card's zoom bar, and a still picture to draw on. */
+.region-native { container-type: inline-size; }
+.region-native[hidden] { display: none; }
+.region-still {
+    position: relative;
+    width: min(100%, 640px);
+    margin-top: 10px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #0f1714;
+    user-select: none;
+}
+.region-still[hidden], .region-still-hide[hidden] { display: none; }
+.region-still[data-region] { cursor: crosshair; touch-action: none; }
+.region-still:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.region-still-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; }
+.region-still-stage img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    visibility: hidden;
+    -webkit-user-drag: none;
+}
+.region-still-stage[data-ready="true"] img { visibility: visible; }
+.region-still-waiting {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 0 12px;
+    color: #c9d3cd;
+    font-size: 12px;
+    text-align: center;
+}
+.region-still-stage[data-ready="true"] .region-still-waiting { display: none; }
+.region-still-hide { display: block; margin-top: 6px; font-size: 12px; }
+.region-native > .region-status {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+.region-native > .region-status[hidden] { display: none; }
+@media (pointer: coarse) {
+    .view-region .region-tool { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+}

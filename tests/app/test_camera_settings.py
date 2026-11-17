@@ -16,6 +16,7 @@ import pytest
 from telesurgery.nodes.camera_settings import modes, select
 from telesurgery_core.adapters import v4l2
 from telesurgery_core.configuration import save
+from telesurgery_core.video import region
 from telesurgery_core.video.config import Config
 
 
@@ -231,6 +232,65 @@ def test_inventory_exposes_stream_choices_without_device_addresses(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stream_changed_during_a_refresh_finds_its_camera_settings(tmp_path, monkeypatch):
+    import threading
+
+    from telesurgery.nodes import local
+
+    create_process = asyncio.create_subprocess_exec
+
+    async def worker(*args, **kwargs):
+        return await create_process(sys.executable, "-c", "import time; time.sleep(60)", **kwargs)
+
+    def discover(*args):
+        camera = {
+            "id": "sensor",
+            "name": "Camera",
+            "kind": "synthetic",
+            "source": "synthetic",
+            "width": 1280,
+            "height": 720,
+            "fps": 30,
+        }
+        return [camera], []
+
+    probing = threading.Event()
+    probing.set()
+
+    def codecs():
+        # The node's codec probe runs on another thread; discovery can be slow too.
+        probing.wait(5)
+        return ["h264", "nvjpeg"]
+
+    monkeypatch.setattr(local.asyncio, "create_subprocess_exec", worker)
+    monkeypatch.setattr(local, "discover", discover)
+    monkeypatch.setattr(local, "supported_codecs", codecs)
+    monkeypatch.setattr(local, "region_supported", lambda: False)
+    node = local.LocalNode(tmp_path, None)
+    try:
+        await node.refresh()
+        await node.start_camera("sensor", {"fps": 30})
+        node.workers["sensor"].update(updated=time.monotonic(), frames=1, active_codec="h264")
+        probing.clear()
+        refreshing = asyncio.create_task(node.refresh())
+        await asyncio.sleep(0.05)
+        assert not refreshing.done()
+        # Mid-refresh, the camera still carries the settings its stream runs with, so an
+        # encoding change is not mistaken for a capture change.
+        await node.start_camera("sensor", {"codec": "nvjpeg"})
+        probing.set()
+        await refreshing
+        # The change reached the running worker, and the finished refresh keeps it.
+        settings = json.loads(node.workers["sensor"]["settings"].read_text())
+        assert settings["camera"]["codec"] == "nvjpeg"
+        assert node.cameras["sensor"]["codec"] == "nvjpeg"
+        assert node.workers["sensor"]["process"].returncode is None
+    finally:
+        probing.set()
+        await node.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failed_codec", ["surgical-tokenizer", "nvjpeg"])
 async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restart(
     tmp_path, monkeypatch, failed_codec
@@ -265,17 +325,18 @@ async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restar
         assert node.inventory()["cameras"][0]["codec"] == "h264"
         error.write_text(f"Could not prepare {failed_codec}; continuing h264")
         # A direct API retry must not depend on inventory having observed the error.
-        stamp = active["settings"].stat().st_mtime_ns
+        # The worker notices a replaced file even when two writes share a timestamp.
+        stamp = region.stamp(active["settings"])
         await node.start_camera("sensor", {"codec": failed_codec})
-        assert active["settings"].stat().st_mtime_ns != stamp
+        assert region.stamp(active["settings"]) != stamp
         camera = node.inventory()["cameras"][0]
         assert camera["status"] == "live" and camera["error"] == ""
         assert camera["encoding_error"] == error.read_text()
         assert camera["codec"] == "h264"  # A failed native-only codec must not hide browser video.
         # Retry identical settings must notify the encoder without restarting capture.
-        stamp = active["settings"].stat().st_mtime_ns
+        stamp = region.stamp(active["settings"])
         await node.start_camera("sensor", {"codec": failed_codec})
-        assert active["settings"].stat().st_mtime_ns != stamp
+        assert region.stamp(active["settings"]) != stamp
         await node.start_camera("sensor", {"codec": "h264"})
         assert node.workers["sensor"] is active
         assert active["process"].returncode is None
