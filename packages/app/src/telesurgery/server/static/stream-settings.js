@@ -68,7 +68,11 @@ export function streamSettings(changed) {
             raw = codec === "raw-bgr8",
             neural = codec === "surgical-tokenizer";
         $("#stream-encoder").hidden = raw || neural;
-        const quality = $("#stream-rate").value === "cqp";
+        const rate = $("#stream-rate").value;
+        const quality = rate === "cqp";
+        const showMax = !jpeg && !raw && !neural && rate === "vbr";
+        $("#stream-max-field").hidden = !showMax;
+        $("#stream-max-bitrate").disabled = !showMax;
         const [pixelWidth, pixelHeight] = resolution.value.split("x").map(Number);
         // Mirrors automatic_bitrate() in telesurgery_core/video/encoder_settings.py.
         const pixels = pixelWidth * pixelHeight;
@@ -89,9 +93,9 @@ export function streamSettings(changed) {
             ? "Higher JPEG quality uses more bandwidth."
             : quality
               ? "Fixed QP keeps quality constant, so bandwidth and latency vary with the scene and each keyframe is large. Slower presets use more GPU time."
-              : $("#stream-rate").value === "vbr"
-                ? "The stream averages this bitrate; hard scenes may briefly use up to twice as much. Leave it empty to pick one for the resolution. Slower presets use more GPU time."
-                : "Frames are held near their share of this bitrate, so latency stays predictable; easy scenes use less. A keyframe, or a limit too low for the scene, can exceed it. Leave it empty to pick one for the resolution. Slower presets use more GPU time.";
+              : rate === "vbr"
+                ? "Max bitrate defaults to twice the average. Leave the average empty to use the resolution default."
+                : "NVENC targets this average bitrate. Leave it empty to use the resolution default.";
         const [width, height] = resolution.value.split("x").map(Number);
         $("#stream-viewing").textContent = raw
             ? `View in Holoviz. Raw BGR8 needs about ${((width * height * Number(fps.value) * 24) / 1e9).toFixed(2)} Gbit/s per viewer, before transport overhead. No stream compression.${["MJPG", "JPEG"].includes(format.value) ? " Camera capture is still JPEG-compressed." : ""}`
@@ -162,9 +166,15 @@ export function streamSettings(changed) {
                                 ...($("#stream-rate").value === "cqp"
                                     ? { qp: Number($("#stream-qp").value) }
                                     : {
-                                          // Empty selects the automatic limit.
+                                          // Empty selects the resolution default.
                                           bitrate_mbps:
                                               Number($("#stream-bitrate").value) || 0,
+                                          ...($("#stream-rate").value === "vbr"
+                                              ? {
+                                                    max_bitrate_mbps:
+                                                        Number($("#stream-max-bitrate").value) || 0,
+                                                }
+                                              : {}),
                                       }),
                                 encoder_preset: $("#stream-preset").value,
                                 encoder_extra: $("#stream-extra").value,
@@ -210,6 +220,7 @@ export function streamSettings(changed) {
         );
         $("#stream-rate").value = item.rate_control || "cbr";
         $("#stream-bitrate").value = item.bitrate_mbps || "";
+        $("#stream-max-bitrate").value = item.max_bitrate_mbps || "";
         $("#stream-qp").value = item.qp ?? 24;
         $("#stream-extra").value = item.encoder_extra || "";
         $("#stream-advanced").open = Boolean(item.encoder_extra);

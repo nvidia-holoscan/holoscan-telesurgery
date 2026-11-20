@@ -12,10 +12,10 @@ from telesurgery_core.video.encoder_settings import (
 )
 
 
-def test_default_limits_each_frame_to_its_share_without_nvenc_filler():
+def test_default_uses_cbr_with_a_one_frame_vbv():
     options = encoder_options(Config(bitrate_mbps=12, fps=30), 1920, 1080)
-    # NVENC's CBR mode pads H.264 with filler; VBR with peak == average does not.
-    assert options["rc"] == "vbr" and options["bitrate"] == options["maxbitrate"] == 12_000_000
+    assert (options["rc"], options["bitrate"]) == ("cbr", 12_000_000)
+    assert "maxbitrate" not in options
     assert options["vbvbufsize"] == options["vbvinit"] == 400_000
     assert options["gop"] == options["idrperiod"] == 300
     assert options["bf"] == 0 and options["lookahead"] == 0
@@ -40,6 +40,32 @@ def test_average_bitrate_allows_twice_the_peak_and_constant_qp_has_no_budget():
     cqp = encoder_options(Config(rate_control="cqp", qp=28), 1920, 1080)
     assert (cqp["rc"], cqp["constqp"]) == ("constqp", "28")
     assert not {"bitrate", "maxbitrate", "vbvbufsize", "vbvinit"} & cqp.keys()
+
+
+def test_native_cbr_passes_average_only_and_uses_a_one_frame_vbv():
+    config = Config(rate_control="cbr", bitrate_mbps=10, fps=60)
+    options = encoder_options(config, 1920, 1080)
+    assert (options["rc"], options["bitrate"]) == ("cbr", 10_000_000)
+    assert "maxbitrate" not in options
+    assert options["vbvbufsize"] == options["vbvinit"] == 166_667
+
+
+def test_explicit_vbr_max_bitrate_controls_max_bitrate_and_vbv():
+    config = Config(rate_control="vbr", bitrate_mbps=10, max_bitrate_mbps=13, fps=60)
+    options = encoder_options(config, 1920, 1080)
+    assert (options["rc"], options["bitrate"], options["maxbitrate"]) == (
+        "vbr",
+        10_000_000,
+        13_000_000,
+    )
+    assert options["vbvbufsize"] == options["vbvinit"] == 216_667
+
+
+@pytest.mark.parametrize("average", [0, 10])
+def test_vbr_max_bitrate_must_cover_the_explicit_or_automatic_average(average):
+    config = Config(rate_control="vbr", bitrate_mbps=average, max_bitrate_mbps=8)
+    with pytest.raises(ValueError, match="Max bitrate must be at least the average bitrate"):
+        encoder_options(config, 1920, 1080)
 
 
 def test_advanced_settings_reach_the_encoder():

@@ -120,7 +120,7 @@ def test_usb_modes_keep_format_specific_frame_rates(monkeypatch):
     )
     assert Config(**selected).fps == 60
     assert selected["bitrate_mbps"] == 12.5
-    # Streams saved while QP was the only control move to the constant-bitrate default;
+    # Streams saved while QP was the only control use the CBR default.
     # constant QP is now an explicit rate-control choice.
     legacy = select(camera, {"qp": 30, "fps": 60, "pixel_format": "MJPG"})
     assert (legacy["rate_control"], legacy["qp"]) == ("cbr", 30)
@@ -128,6 +128,10 @@ def test_usb_modes_keep_format_specific_frame_rates(monkeypatch):
     assert (fixed["rate_control"], fixed["qp"], fixed["bitrate_mbps"]) == ("cqp", 28, 0)
     advanced = select(camera, {"fps": 60, "pixel_format": "MJPG", "encoder_extra": "aq=8"})
     assert advanced["rate_control"] == "cbr" and advanced["encoder_extra"] == "aq=8"
+    vbr = select(camera, {"rate_control": "vbr", "bitrate_mbps": 8, "max_bitrate_mbps": 12})
+    assert Config(**vbr).max_bitrate_mbps == 12
+    with pytest.raises(ValueError, match="Max bitrate must be at least the average bitrate"):
+        select(camera, {"rate_control": "vbr", "max_bitrate_mbps": 8})
     for bad in (
         {"source": "elsewhere"},
         {"bitrate_mbps": 0.2},
@@ -280,10 +284,26 @@ async def test_failed_encoding_change_preserves_live_worker_and_clears_on_restar
         assert node.workers["sensor"] is active
         assert active["process"].returncode is None
         assert json.loads(active["settings"].read_text())["camera"]["codec"] == "h264"
+        await node.start_camera(
+            "sensor", {"rate_control": "vbr", "bitrate_mbps": 8, "max_bitrate_mbps": 12}
+        )
+        await node.start_camera("sensor", {"max_bitrate_mbps": 14})
+        assert node.workers["sensor"] is active
+        assert json.loads(active["settings"].read_text())["camera"]["max_bitrate_mbps"] == 14
+        with pytest.raises(ValueError, match="Max bitrate must be at least the average bitrate"):
+            await node.start_camera("sensor", {"max_bitrate_mbps": 7})
+        assert json.loads(active["settings"].read_text())["camera"]["max_bitrate_mbps"] == 14
+
         await node.stop_camera("sensor")
         assert not error.exists()
         await node.start_camera("sensor")
-        assert node.inventory()["cameras"][0]["encoding_error"] == ""
+        camera = node.inventory()["cameras"][0]
+        assert camera["encoding_error"] == ""
+        assert (camera["rate_control"], camera["bitrate_mbps"], camera["max_bitrate_mbps"]) == (
+            "vbr",
+            8,
+            14,
+        )
     finally:
         await node.close()
 

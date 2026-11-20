@@ -4,7 +4,7 @@
 """Validate capture choices against a camera's advertised modes."""
 
 from telesurgery_core.video.config import Config
-from telesurgery_core.video.encoder_settings import parse_extra, validate
+from telesurgery_core.video.encoder_settings import automatic_bitrate, parse_extra, validate
 from telesurgery_core.video.tokenizer_model import CODEC, token_shape
 
 DEFAULTS = {
@@ -17,6 +17,7 @@ DEFAULTS = {
         "codec",
         "rate_control",
         "bitrate_mbps",
+        "max_bitrate_mbps",
         "qp",
         "jpeg_quality",
         "encoder_preset",
@@ -69,21 +70,30 @@ def select(camera, settings=None):
         raise ValueError("This node does not support the selected codec")
     if selected["codec"] == CODEC:
         token_shape(selected["width"], selected["height"])
-    validate(selected["rate_control"], selected["bitrate_mbps"], selected["qp"])
     parse_extra(selected["encoder_extra"])
     if selected["encoder_preset"] not in ("P1", "P3", "P5"):
         raise ValueError("Choose a supported encoder speed")
     if type(selected["jpeg_quality"]) is not int or not 1 <= selected["jpeg_quality"] <= 100:
         raise ValueError("JPEG quality must be an integer from 1 to 100")
-    for mode in modes(camera):
-        if (
-            all(selected[key] == mode.get(key, "") for key in ("width", "height", "pixel_format"))
-            and selected["fps"] in mode["fps"]
-        ):
-            return selected
+    available = modes(camera)
+    matches = any(
+        all(selected[key] == mode.get(key, "") for key in ("width", "height", "pixel_format"))
+        and selected["fps"] in mode["fps"]
+        for mode in available
+    )
     # Devices without enumeration can still use their configured defaults.
-    if not modes(camera) and all(
-        selected[k] == defaults[k] for k in ("width", "height", "fps", "pixel_format")
+    if not matches and (
+        available
+        or any(selected[k] != defaults[k] for k in ("width", "height", "fps", "pixel_format"))
     ):
-        return selected
-    raise ValueError("This camera does not support that resolution, frame rate and capture format")
+        raise ValueError(
+            "This camera does not support that resolution, frame rate and capture format"
+        )
+    validate(
+        selected["rate_control"],
+        selected["bitrate_mbps"],
+        selected["qp"],
+        selected["max_bitrate_mbps"],
+        automatic_mbps=automatic_bitrate(selected["width"], selected["height"]),
+    )
+    return selected

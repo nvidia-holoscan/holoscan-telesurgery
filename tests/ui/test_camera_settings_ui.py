@@ -92,7 +92,7 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
             )
             await page.get_by_label("Stream codec", exact=True).select_option("h264")
             await page.get_by_text("Encoder settings", exact=True).click()
-            await page.get_by_label("Bitrate (Mbps)", exact=True).fill("12.5")
+            await page.get_by_label("Average bitrate (Mbps)", exact=True).fill("12.5")
             await page.get_by_label("Encoder speed", exact=True).select_option("P3")
             if codec == "surgical-tokenizer":
                 await expect(
@@ -106,7 +106,9 @@ async def test_stream_options_and_patient_owned_encoder_settings(kind, codec):
                 await expect(page.get_by_text("Encoder settings", exact=True)).not_to_be_visible()
                 await expect(page.locator("#stream-viewing")).to_contain_text("browser or Holoviz")
             if codec == "nvjpeg":
-                await expect(page.get_by_label("Bitrate (Mbps)", exact=True)).not_to_be_visible()
+                await expect(
+                    page.get_by_label("Average bitrate (Mbps)", exact=True)
+                ).not_to_be_visible()
                 await page.get_by_label("JPEG quality", exact=True).fill("92")
             if codec == "raw-bgr8":
                 await expect(page.get_by_text("Encoder settings", exact=True)).not_to_be_visible()
@@ -237,10 +239,12 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
             await page.get_by_role("button", name="Stream settings", exact=True).click()
             await page.get_by_text("Encoder settings", exact=True).click()
             rate = page.get_by_label("Rate control", exact=True)
-            bitrate = page.get_by_label("Bitrate (Mbps)", exact=True)
+            bitrate = page.locator("#stream-bitrate")
+            max_bitrate = page.get_by_label("Max bitrate (Mbps)", exact=True)
             quality = page.get_by_label("QP (lower is sharper)", exact=True)
             await expect(rate).to_have_value("cbr")
-            # No bitrate chosen: the limit follows the resolution.
+            await expect(max_bitrate).not_to_be_visible()
+            # With an empty bitrate, CBR uses the resolution default.
             await expect(bitrate).to_have_value("")
             await expect(bitrate).to_have_attribute("placeholder", "Automatic · 10")
             await page.get_by_label("Resolution", exact=True).select_option("3840x2160")
@@ -282,11 +286,27 @@ async def test_rate_control_automatic_bitrate_and_advanced_encoder_settings():
             await rate.select_option("vbr")
             await expect(quality).not_to_be_visible()
             await bitrate.fill("8")
-            await expect(page.locator("#stream-quality-note")).to_contain_text("twice as much")
+            await expect(page.get_by_label("Average bitrate (Mbps)", exact=True)).to_be_visible()
+            await max_bitrate.fill("13.5")
             await page.get_by_role("button", name="Apply encoding", exact=True).click()
             await expect(page.get_by_role("dialog", name="Change encoding")).not_to_be_visible()
             settings = actions[-1]["params"]["settings"]
             assert settings["rate_control"] == "vbr" and settings["bitrate_mbps"] == 8
+            assert settings["max_bitrate_mbps"] == 13.5
+
+            await refreshed()
+            await page.get_by_role("button", name="Stream settings", exact=True).click()
+            await page.get_by_text("Encoder settings", exact=True).click()
+            await expect(max_bitrate).to_have_value("13.5")
+            await rate.select_option("cbr")
+            await expect(page.get_by_label("Average bitrate (Mbps)", exact=True)).to_be_visible()
+            await expect(max_bitrate).not_to_be_visible()
+            await bitrate.fill("10")
+            await page.get_by_role("button", name="Apply encoding", exact=True).click()
+            await expect(page.get_by_role("dialog", name="Change encoding")).not_to_be_visible()
+            settings = actions[-1]["params"]["settings"]
+            assert settings["rate_control"] == "cbr" and settings["bitrate_mbps"] == 10
+            assert "max_bitrate_mbps" not in settings
             assert not errors
         finally:
             await browser.close()

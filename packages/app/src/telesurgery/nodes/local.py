@@ -229,6 +229,7 @@ class LocalNode:
                         "codec",
                         "rate_control",
                         "bitrate_mbps",
+                        "max_bitrate_mbps",
                         "qp",
                         "jpeg_quality",
                         "encoder_preset",
