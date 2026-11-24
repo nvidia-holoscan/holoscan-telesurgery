@@ -18,7 +18,12 @@ from dataclasses import replace
 import numpy as np
 from telesurgery_core.transport.protocol import MAX_VIDEO, VideoHeader
 from telesurgery_core.video import depth
-from telesurgery_core.video.encoder_settings import bitrate, parse_extra, validate
+from telesurgery_core.video.encoder_settings import (
+    automatic_bitrate,
+    bitrate,
+    parse_extra,
+    validate,
+)
 from telesurgery_core.video.formats import video_frame
 from telesurgery_core.video.gpu import nv12 as _nv12
 from telesurgery_core.video.model import Frame
@@ -126,14 +131,11 @@ def create_codec(config, *, encode):
 def encoder_options(config, width, height):
     """Shared application/benchmark settings; no additional NVENC output queue.
 
-    "cbr" (default) holds every predicted frame near its share of the link (bitrate /
-    fps), so transmit time and latency stay predictable; easy scenes use less. An IDR of
-    detailed content, or a limit too low for the scene, can exceed that share. It is
-    NVENC's VBR mode with the peak equal to the average and a one-frame buffer:
-    NVENC's own CBR mode produces the same pictures, then pads H.264 frames to the
-    full budget with filler data (over 40% of a simulation stream).
-    "vbr" lets hard frames use up to twice the average. "cqp" holds quality constant
-    and lets frame size, including each IDR, vary.
+    "cbr" (default) selects native NVENC CBR and supplies the average bitrate.
+    The default VBV is one frame's worth of bits at the average for CBR
+    and at the max bitrate for VBR.
+    "vbr" takes a max bitrate, defaulting to twice the average when left automatic.
+    "cqp" fixes the frame QP and lets frame size, including each IDR, vary.
     NVENC reads "bitrate" suffixes as powers of 1024, so pass exact bits per second.
     """
     extra = parse_extra(config.encoder_extra)
@@ -152,14 +154,26 @@ def encoder_options(config, width, height):
         "max_res": [width, height],
         "extra_output_delay": 0,
     }
-    validate(config.rate_control, config.bitrate_mbps, config.qp)
+    validate(
+        config.rate_control,
+        config.bitrate_mbps,
+        config.qp,
+        config.max_bitrate_mbps,
+        automatic_mbps=automatic_bitrate(width, height),
+    )
     if config.rate_control == "cqp":
         options.update(rc="constqp", constqp=str(config.qp))
     else:
         bits = round(bitrate(config, width, height) * 1_000_000)
-        peak = bits * 2 if config.rate_control == "vbr" else bits
-        vbv = max(1, round(peak / config.fps * extra.get("vbv_frames", 1)))
-        options.update(rc="vbr", bitrate=bits, maxbitrate=peak, vbvbufsize=vbv, vbvinit=vbv)
+        budget = bits
+        options.update(rc=config.rate_control, bitrate=bits)
+        if config.rate_control == "vbr":
+            budget = (
+                round(config.max_bitrate_mbps * 1_000_000) if config.max_bitrate_mbps else bits * 2
+            )
+            options["maxbitrate"] = budget
+        vbv = max(1, round(budget / config.fps * extra.get("vbv_frames", 1)))
+        options.update(vbvbufsize=vbv, vbvinit=vbv)
     for key in ("aq", "multipass", "qmax"):
         if key in extra:
             options[key] = str(extra[key])

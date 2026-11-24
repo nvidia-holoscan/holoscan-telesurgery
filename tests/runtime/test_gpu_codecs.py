@@ -336,19 +336,39 @@ def _encode_moving_noise(config, frames=45):
 
 
 @pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_cbr_initializes_nvenc_in_cbr_mode(codec):
+    import PyNvVideoCodec as nvc
+
+    config = Config(codec=codec, width=640, height=480, fps=30, rate_control="cbr", bitrate_mbps=2)
+    encoder = GpuCodec(config, encode=True)
+    try:
+        pixels = np.zeros((config.height, config.width, 3), dtype=np.uint8)
+        encoder.encode(Frame(VideoHeader(0, 1, config.width, config.height), pixels))
+        params = encoder.backend.GetEncodeReconfigureParams()
+        assert params.rateControlMode == nvc.NV_ENC_PARAMS_RC_MODE.CBR
+        assert params.averageBitrate == 2_000_000
+        frame_budget = round(2_000_000 / config.fps)
+        assert params.vbvBufferSize == frame_budget
+        assert params.vbvInitialDelay == frame_budget
+    finally:
+        encoder.close()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
 def test_rate_control_modes_and_advanced_settings_change_real_nvenc_output(codec):
     def run(**settings):
         return _encode_moving_noise(Config(codec=codec, width=640, height=480, fps=30, **settings))
 
     budget = 2_000_000 / 30 / 8
     cbr = run(rate_control="cbr", bitrate_mbps=2)
-    sizes = [size for size, _, _ in cbr]
-    # Constant bitrate holds predicted frames to their share of the link. NVENC lets an
-    # IDR of detailed content exceed it and repays the excess over the next frames.
+    assert [keyframe for _, keyframe, _ in cbr] == [True] + [False] * 44
+
+    # Check the per-frame budget with VBR when the max equals the average.
+    equal_rates = run(rate_control="vbr", bitrate_mbps=2, max_bitrate_mbps=2)
+    sizes = [size for size, _, _ in equal_rates]
     assert max(sizes[1:]) <= budget * 1.25
     assert sizes[0] <= budget * 3
     assert budget * 0.4 <= np.mean(sizes[5:]) <= budget * 1.1
-    assert [keyframe for _, keyframe, _ in cbr] == [True] + [False] * 44
 
     vbr = run(rate_control="vbr", bitrate_mbps=2)
     assert np.mean([size for size, _, _ in vbr][5:]) <= budget * 1.5
@@ -374,9 +394,16 @@ def test_rate_control_modes_and_advanced_settings_change_real_nvenc_output(codec
 
 
 @pytest.mark.parametrize("codec", ["h264", "h265"])
-def test_easy_scenes_use_less_than_the_bitrate_limit_and_carry_no_filler(codec):
-    # NVENC's own CBR mode pads every H.264 frame to the budget with filler NAL units.
-    config = Config(codec=codec, width=640, height=480, fps=30, bitrate_mbps=4)
+def test_vbr_easy_scenes_use_less_than_the_max_bitrate_and_carry_no_filler(codec):
+    config = Config(
+        codec=codec,
+        width=640,
+        height=480,
+        fps=30,
+        rate_control="vbr",
+        bitrate_mbps=4,
+        max_bitrate_mbps=4,
+    )
     encoder = GpuCodec(config, encode=True)
     try:
         pixels = np.full((480, 640, 3), [20, 90, 170], dtype=np.uint8)

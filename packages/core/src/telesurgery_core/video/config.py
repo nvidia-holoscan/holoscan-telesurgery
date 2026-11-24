@@ -16,7 +16,7 @@ class Config:
     codec: str = "h264"
     codec_gpu: int = 0
     rate_control: str = "cbr"
-    bitrate_mbps: float = 0  # 0 selects a limit for the resolution (encoder_settings).
+    bitrate_mbps: float = 0  # 0 selects an average for the resolution (encoder_settings).
     qp: int = 24
     jpeg_quality: int = 85
     encoder_preset: str = "P1"
@@ -27,3 +27,4 @@ class Config:
     receiver: str = "auto"
     depth: bool = False
     realsense_serial: str = ""
+    max_bitrate_mbps: float = 0  # VBR only. 0 uses twice the resolved average.

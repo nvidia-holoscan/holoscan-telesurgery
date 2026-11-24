@@ -662,19 +662,28 @@ SPDX-License-Identifier: Apache-2.0
                                 id="stream-rate"
                                 aria-label="Rate control"
                             >
-                                <option value="cbr">Bitrate limit</option>
-                                <option value="vbr">Average bitrate</option>
+                                <option value="cbr">CBR</option>
+                                <option value="vbr">VBR</option>
                                 <option value="cqp">Fixed quality · QP</option>
                             </select></label
                         >
                         <label id="stream-bitrate-field"
-                            >Bitrate (Mbps)<input
+                            >Average bitrate (Mbps)<input
                                 id="stream-bitrate"
                                 type="number"
                                 min="0.5"
                                 max="400"
                                 step="any"
                                 placeholder="Automatic"
+                        /></label>
+                        <label id="stream-max-field" hidden
+                            >Max bitrate (Mbps)<input
+                                id="stream-max-bitrate"
+                                type="number"
+                                min="0.5"
+                                max="400"
+                                step="any"
+                                placeholder="Automatic · 2× average"
                         /></label>
                         <label id="stream-qp-field" hidden
                             >QP (lower is sharper)<input

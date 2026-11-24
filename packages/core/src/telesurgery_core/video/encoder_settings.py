@@ -26,7 +26,7 @@ PROTECTED = {
     "profile": "fixed by the stream codec",
     "rc": "use the rate control setting",
     "bitrate": "use the bitrate setting",
-    "maxbitrate": "derived from the bitrate setting",
+    "maxbitrate": "use the VBR max bitrate setting",
     "constqp": "use the QP setting",
     "bf": "B-frames would reorder output; the stream is IPPP",
     "lookahead": "lookahead adds output delay",
@@ -120,7 +120,7 @@ def parse_extra(text):
 
 
 def automatic_bitrate(width, height):
-    """Bitrate limit in Mbps for a stream that did not choose one.
+    """Average bitrate in Mbps for a stream that did not choose one.
 
     About the picture quality of the former constant-QP 24 default on IMX274 and
     simulation footage, at roughly half its bandwidth on camera footage. Easy
@@ -137,11 +137,11 @@ def automatic_bitrate(width, height):
 
 
 def bitrate(config, width, height):
-    """The stream's bitrate limit in Mbps, resolving the automatic setting."""
+    """The stream's average bitrate in Mbps, resolving the automatic setting."""
     return config.bitrate_mbps or automatic_bitrate(width, height)
 
 
-def validate(rate_control, bitrate_mbps, qp):
+def validate(rate_control, bitrate_mbps, qp, max_bitrate_mbps=0, *, automatic_mbps=None):
     if rate_control not in RATE_CONTROLS:
         raise ValueError("Choose a supported rate control")
     if rate_control == "cqp":
@@ -153,3 +153,14 @@ def validate(rate_control, bitrate_mbps, qp):
         raise ValueError(
             f"Bitrate must be from {MIN_MBPS:g} to {MAX_MBPS:g} Mbps, or {AUTOMATIC} for automatic"
         )
+    if rate_control == "vbr":
+        if type(max_bitrate_mbps) not in (int, float) or not (
+            max_bitrate_mbps == AUTOMATIC or MIN_MBPS <= max_bitrate_mbps <= MAX_MBPS
+        ):
+            raise ValueError(
+                f"Max bitrate must be from {MIN_MBPS:g} to {MAX_MBPS:g} Mbps, "
+                f"or {AUTOMATIC} for automatic"
+            )
+        average = bitrate_mbps or automatic_mbps
+        if max_bitrate_mbps and average is not None and max_bitrate_mbps < average:
+            raise ValueError("Max bitrate must be at least the average bitrate")

@@ -56,12 +56,14 @@ H.264 browser viewing forwards encoded packets into WebRTC without re-encoding. 
 | HSB IMX274 | GPU acquisition, optical-black correction, white balance, demosaic and sRGB transfer |
 | USB | V4L2 capture; CPU pixels uploaded for GPU encoding. MJPEG capture also requires decoding |
 | Isaac Sim | GPU rendering, then CPU RGB readback and local IPC before GPU encoding |
-| H.264 / H.265 | NVENC encoding (bitrate-limited, one-frame VBV, IPPP); NVDEC in the native viewer |
+| H.264 / H.265 | NVENC encoding (CBR by default, one-frame VBV, IPPP); NVDEC in the native viewer |
 | nvJPEG | GPU JPEG encoding and decoding |
 | BGR8 | No codec. Packing may download GPU pixels; the native viewer uploads and converts BGR to RGB |
 | Surgical Neural Tokenizer (trial) | Public Cosmos-Tokenizer-Surg model, TensorRT encoding/decoding, packed uint16 tokens at 720p or 1080p |
 
-H.264 and H.265 are bitrate-limited by default. Rate control holds each predicted frame near its share of the limit (bitrate ÷ FPS), so transmit time stays predictable, and an easy scene uses less than the limit. This is a target, not a hard cap: a keyframe of detailed content, or a limit too low for the scene, can exceed it (see [encoding benchmark](BENCHMARK_ENCODING.md)), and `vbv_frames` widens it deliberately. Each stream's limit is set in Mbps; left unset, it follows the resolution (5 Mbps to 720p, 10 to 1080p, 16 to 1440p, 30 above). The stream dialog also offers an average bitrate that lets hard frames use up to twice as much, and a fixed QP that holds quality and lets frame size vary. NVENC's own CBR mode is not used: it produces the same pictures, then pads each H.264 frame to the full budget with filler data.
+H.264 and H.265 use native NVENC **CBR** by default. The Average bitrate field sets the encoder's target. If left empty, it follows the resolution (5 Mbps to 720p, 10 to 1080p, 16 to 1440p, 30 above). Native CBR can add filler bytes. Existing saved `cbr` settings now select native CBR.
+
+**VBR** accepts separate average and max bitrates. Leaving the max bitrate empty uses twice the resolved average for compatibility with existing VBR settings. The default VBV holds one frame's worth of bits at the CBR average or VBR max bitrate. **Fixed QP** lets frame size vary with the scene.
 
 Frames are IPPP: an IDR, then predicted frames for ten seconds of frames at the configured rate (300 frames at 30 FPS; longer in time if the source delivers fewer). Every frame header carries its GOP and position in it. A predicted frame is only useful after the frame before it, so each hop keeps frames in order while it can and repairs the stream with an IDR when it cannot:
 

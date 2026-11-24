@@ -15,7 +15,12 @@ from pathlib import Path
 import aiohttp
 from telesurgery_core.diagnostics.benchmark import write_report
 from telesurgery_core.video.config import Config
-from telesurgery_core.video.encoder_settings import parse_extra, validate
+from telesurgery_core.video.encoder_settings import (
+    RATE_CONTROLS,
+    automatic_bitrate,
+    parse_extra,
+    validate,
+)
 
 
 class Dashboard:
@@ -96,6 +101,7 @@ async def run(args):
             "pixel_format": args.pixel_format,
             "rate_control": args.rate_control,
             "bitrate_mbps": args.bitrate,
+            "max_bitrate_mbps": args.max_bitrate,
             "qp": args.qp,
             "encoder_preset": args.preset,
             "encoder_extra": args.encoder_extra,
@@ -256,11 +262,15 @@ def main():
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--pixel-format", default="")
     parser.add_argument("--codec", choices=["h264", "h265", "nvjpeg", "raw-bgr8"], default="h264")
-    parser.add_argument(
-        "--rate-control", choices=["cbr", "vbr", "cqp"], default=Config.rate_control
-    )
+    parser.add_argument("--rate-control", choices=RATE_CONTROLS, default=Config.rate_control)
     parser.add_argument(
         "--bitrate", type=float, default=Config.bitrate_mbps, help="Mbps; 0 picks one for the size"
+    )
+    parser.add_argument(
+        "--max-bitrate",
+        type=float,
+        default=Config.max_bitrate_mbps,
+        help="VBR max bitrate in Mbps; 0 uses twice the average",
     )
     parser.add_argument("--qp", type=int, default=Config.qp)
     parser.add_argument("--preset", choices=["P1", "P3", "P5"], default=Config.encoder_preset)
@@ -272,7 +282,13 @@ def main():
     args = parser.parse_args()
     try:
         # Reject bad encoder settings before any stream is stopped or restarted.
-        validate(args.rate_control, args.bitrate, args.qp)
+        validate(
+            args.rate_control,
+            args.bitrate,
+            args.qp,
+            args.max_bitrate,
+            automatic_mbps=automatic_bitrate(args.width, args.height),
+        )
         parse_extra(args.encoder_extra)
     except ValueError as exc:
         parser.error(str(exc))
